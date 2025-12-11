@@ -12,6 +12,8 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
     password: configService.get<string>('DB_PASSWORD'),
     database: configService.get<string>('DB_DATABASE'),
     autoLoadEntities: true,
-    synchronize: true, // TODO: set to false in production
+    synchronize: configService.get<string>('NODE_ENV') !== 'production', // Disable in production
+    migrations: ['dist/migrations/*.js'],
+    migrationsRun: configService.get<string>('NODE_ENV') === 'production', // Auto-run in production
   }),
 };

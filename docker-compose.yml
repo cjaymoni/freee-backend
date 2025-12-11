@@ -7,19 +7,32 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - ./docker_volumes/postgres_data:/var/lib/postgresql/data
     networks:
       - backend
-    
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    volumes:
+      - ./docker_volumes/pgadmin_data:/var/lib/pgadmin
+    ports:
+      - '5050:80'
+    networks:
+      - backend
+
   redis:
     image: redis:8.4.0-alpine
     container_name: marketplace-redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     volumes:
-      - redis_data:/data
+      - ./docker_volumes/redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
     networks:
@@ -28,6 +41,3 @@ services:
 networks:
   backend:
     driver: bridge
-
-volumes:
-  redis_data:

@@ -1,6 +1,14 @@
-import { Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
-import { v2 as cloudinary, UploadApiResponse, UploadApiErrorResponse } from 'cloudinary';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  v2 as cloudinary,
+  UploadApiResponse,
+  UploadApiErrorResponse,
+} from 'cloudinary';
 import { UploadImageResponseDto } from './dto/upload-image-response.dto';
+import {
+  UploadOptions,
+  DeleteOptions,
+} from './interfaces/cloudinary.interfaces';
 import * as streamifier from 'streamifier';
 
 @Injectable()
@@ -8,22 +16,34 @@ export class CloudinaryService {
   /**
    * Upload an image from a buffer (e.g., from multipart form data)
    * @param file - Express.Multer.File object
-   * @param folder - Cloudinary folder to organize uploads (default: 'uploads')
+   * @param options - Optional upload configuration (folder, publicId, tags, context, overwrite)
    * @returns Upload response with public ID and secure URL
    */
   async uploadImage(
     file: Express.Multer.File,
-    folder: string = 'uploads',
+    options?: UploadOptions,
   ): Promise<UploadImageResponseDto> {
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          folder,
+          folder: options?.folder || 'uploads',
           resource_type: 'image',
+          public_id: options?.publicId,
+          tags: options?.tags,
+          context: options?.context,
+          overwrite: options?.overwrite,
         },
-        (error: UploadApiErrorResponse | undefined, result: UploadApiResponse | undefined) => {
+        (
+          error: UploadApiErrorResponse | undefined,
+          result: UploadApiResponse | undefined,
+        ) => {
           if (error) {
-            reject(new InternalServerErrorException('Failed to upload image to Cloudinary'));
+            reject(
+              new InternalServerErrorException(
+                `Failed to upload image to Cloudinary: ${error.message}`,
+              ),
+            );
+            return;
           }
           if (result) {
             resolve({
@@ -34,7 +54,14 @@ export class CloudinaryService {
               format: result.format,
               bytes: result.bytes,
             });
+            return;
           }
+          // Handle edge case where neither error nor result is provided
+          reject(
+            new InternalServerErrorException(
+              'Upload failed with no result from Cloudinary',
+            ),
+          );
         },
       );
 
@@ -63,9 +90,17 @@ export class CloudinaryService {
             { quality: 'auto', fetch_format: 'auto' },
           ],
         },
-        (error: UploadApiErrorResponse | undefined, result: UploadApiResponse | undefined) => {
+        (
+          error: UploadApiErrorResponse | undefined,
+          result: UploadApiResponse | undefined,
+        ) => {
           if (error) {
-            reject(new InternalServerErrorException('Failed to upload avatar to Cloudinary'));
+            reject(
+              new InternalServerErrorException(
+                `Failed to upload avatar to Cloudinary: ${error.message}`,
+              ),
+            );
+            return;
           }
           if (result) {
             resolve({
@@ -76,7 +111,14 @@ export class CloudinaryService {
               format: result.format,
               bytes: result.bytes,
             });
+            return;
           }
+          // Handle edge case where neither error nor result is provided
+          reject(
+            new InternalServerErrorException(
+              'Avatar upload failed with no result from Cloudinary',
+            ),
+          );
         },
       );
 
@@ -85,16 +127,29 @@ export class CloudinaryService {
   }
 
   /**
-   * Delete an image from Cloudinary by public ID
-   * @param publicId - The public ID of the image to delete
+   * Delete an asset from Cloudinary by public ID
+   * @param publicId - The public ID of the asset to delete
+   * @param options - Optional delete options (resource type, invalidate CDN)
    * @returns Deletion result
    */
-  async deleteImage(publicId: string): Promise<{ result: string }> {
+  async deleteImage(
+    publicId: string,
+    options?: DeleteOptions,
+  ): Promise<{ result: string }> {
     try {
-      const result = await cloudinary.uploader.destroy(publicId);
+      const result = (await cloudinary.uploader.destroy(publicId, {
+        resource_type: options?.resourceType || 'image',
+        invalidate: options?.invalidate || false,
+      })) as {
+        result: string;
+      };
       return result;
-    } catch (error) {
-      throw new InternalServerErrorException('Failed to delete image from Cloudinary');
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new InternalServerErrorException(
+        `Failed to delete asset from Cloudinary: ${errorMessage}`,
+      );
     }
   }
 
@@ -106,7 +161,13 @@ export class CloudinaryService {
    * @returns Transformed image URL
    */
   getImageUrl(publicId: string, width?: number, height?: number): string {
-    const transformation: any = {
+    const transformation: {
+      quality: string;
+      fetch_format: string;
+      width?: number;
+      height?: number;
+      crop?: string;
+    } = {
       quality: 'auto',
       fetch_format: 'auto',
     };
