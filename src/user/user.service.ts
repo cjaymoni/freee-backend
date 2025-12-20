@@ -1,27 +1,44 @@
-import { BadRequestException, ConflictException, HttpException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Repository } from 'typeorm';
+import { Repository, FindOptionsWhere } from 'typeorm';
 import { UserEntity } from './entities/user.entity';
 import { UserResponseDto } from './dto/user-response.dto';
 import { ServiceResponseDto } from 'src/common/service-response.dto';
 import * as bcrypt from 'bcrypt';
+import { FindUserDto } from './dto/find-user.dto';
+import { AppError } from 'src/common/app-error';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import { Express } from 'express';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
-  
- async create(createUserDto: CreateUserDto): Promise<ServiceResponseDto<UserResponseDto>> {
+
+  private readonly logger = new Logger(UserService.name);
+
+  async create(
+    createUserDto: CreateUserDto,
+    file?: Express.Multer.File,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
     try {
+      this.logger.log(`Creating user with email: ${createUserDto.email}`);
+
       // Check if user exists by email OR phone number
       const existingUser = await this.userRepository.findOne({
         where: [
           { email: createUserDto.email },
-          { phone_number: createUserDto.phone_number }
+          { phone_number: createUserDto.phone_number },
         ],
       });
 
@@ -36,11 +53,29 @@ export class UserService {
 
       // Hash password before saving
       const saltRounds = 12; // bcrypt rounds (as per your schema notes)
-      const hashedPassword = await bcrypt.hash(createUserDto.password_hash!, saltRounds);
+      const hashedPassword = await bcrypt.hash(
+        createUserDto.password_hash!,
+        saltRounds,
+      );
+
+      let avatarData = {};
+      if (file) {
+        const uploadResult = await this.cloudinaryService.uploadImage(file, {
+          folder: 'users',
+        });
+        this.logger.log(
+          `Avatar uploaded to Cloudinary: ${uploadResult.secureUrl}`,
+        );
+        avatarData = {
+          cloudinary_avatar_public_id: uploadResult.publicId,
+          cloudinary_avatar_url: uploadResult.secureUrl,
+        };
+      }
 
       // Create new user with hashed password
       const user = this.userRepository.create({
         ...createUserDto,
+        ...avatarData,
         password_hash: hashedPassword,
         // Set default values
         is_verified: false,
@@ -54,10 +89,11 @@ export class UserService {
       // delete user.password_hash; // Remove plain password if it exists
 
       const result = await this.userRepository.save(user);
+      this.logger.log(`User created successfully with ID: ${result.id}`);
 
       // Map to response DTO (exclude sensitive fields)
       const responseDto = new UserResponseDto();
-      Object.assign(responseDto,result);
+      Object.assign(responseDto, result);
 
       return {
         message: 'User created successfully',
@@ -65,35 +101,129 @@ export class UserService {
         state: true,
         statusCode: 201,
       };
-
     } catch (error) {
-      // Handle known exceptions
-      if (error instanceof ConflictException || error instanceof BadRequestException) {
-        throw error;
+      if (error instanceof Error) {
+        this.logger.error(`Error creating user: ${error.message}`, error.stack);
       }
-
-      // Log the error for debugging
-      console.error('Error creating user:', error);
-
-      // Throw generic error to client
-      throw new InternalServerErrorException('Failed to create user. Please try again later.');
+      throw new AppError(error);
     }
   }
 
+  async findAll(
+    findUserDto: FindUserDto,
+  ): Promise<ServiceResponseDto<UserResponseDto[]>> {
+    try {
+      const { page, limit, search, ...query } = findUserDto;
+      void search; // Suppress unused variable warning
 
-  findAll() {
-    return `This action returns all user`;
+      const where = { ...query } as unknown as FindOptionsWhere<UserEntity>;
+
+      if (query.date_of_birth) {
+        where.date_of_birth = new Date(query.date_of_birth);
+      }
+
+      const [users] = await this.userRepository.findAndCount({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+      });
+      this.logger.log(`Found ${users.length} users`);
+      const responseDto = users.map((user) => {
+        const responseDto = new UserResponseDto();
+        Object.assign(responseDto, user);
+        return responseDto;
+      });
+      return {
+        message: 'Users found successfully',
+        data: responseDto,
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(`Error finding users: ${error.message}`, error.stack);
+      }
+      throw new AppError(error);
+    }
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} user`;
+  async findOne(id: string): Promise<ServiceResponseDto<UserResponseDto>> {
+    try {
+      this.logger.log(`Finding user with ID: ${id}`);
+      const user = await this.userRepository.findOne({ where: { id } });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      const responseDto = new UserResponseDto();
+      Object.assign(responseDto, user);
+      return {
+        message: 'User found successfully',
+        data: responseDto,
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(
+          `Error finding user ${id}: ${error.message}`,
+          error.stack,
+        );
+      }
+      throw new AppError(error);
+    }
   }
 
-  update(id: number, updateUserDto: UpdateUserDto) {
-    return `This action updates a #${id} user`;
+  async update(id: string, updateUserDto: UpdateUserDto) {
+    try {
+      this.logger.log(`Updating user with ID: ${id}`);
+      const user = await this.userRepository.findOne({ where: { id } });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      const updatedUser = await this.userRepository.update(id, updateUserDto);
+      const responseDto = new UserResponseDto();
+      Object.assign(responseDto, updatedUser);
+      return {
+        message: 'User updated successfully',
+        data: responseDto,
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(
+          `Error updating user ${id}: ${error.message}`,
+          error.stack,
+        );
+      }
+      throw new AppError(error);
+    }
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} user`;
+  async remove(id: string) {
+    try {
+      this.logger.log(`Deleting user with ID: ${id}`);
+      const user = await this.userRepository.findOne({ where: { id } });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      const deletedUser = await this.userRepository.softDelete(id);
+      const responseDto = new UserResponseDto();
+      Object.assign(responseDto, deletedUser);
+      return {
+        message: 'User deleted successfully',
+        data: responseDto,
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(
+          `Error deleting user ${id}: ${error.message}`,
+          error.stack,
+        );
+      }
+      throw new AppError(error);
+    }
   }
 }

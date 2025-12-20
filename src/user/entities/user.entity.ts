@@ -70,8 +70,6 @@ export class UserEntity {
   @Column({ type: 'boolean', default: true })
   notification_enabled: boolean;
 
-  
-
   @Column({ type: 'int', default: 0 })
   failed_login_attempts: number;
 

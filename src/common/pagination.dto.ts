@@ -41,7 +41,4 @@ export class PaginationQueryDto {
   @IsString()
   @IsOptional()
   search?: string;
-
-
-
 }

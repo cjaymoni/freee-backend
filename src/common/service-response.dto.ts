@@ -7,11 +7,10 @@ export class ServiceResponseDto<T> {
   @ApiProperty()
   data: T;
 
-
   @ApiProperty({ example: 'operation successful' })
   message: string;
 
-    @ApiProperty({ example: 200 })
+  @ApiProperty({ example: 200 })
   statusCode?: number;
 
   @ApiPropertyOptional()

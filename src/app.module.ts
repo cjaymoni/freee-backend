@@ -8,7 +8,6 @@ import { RedisModule } from './redis/redis.module';
 import { UserModule } from './user/user.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 
-
 @Module({
   imports: [
     ConfigModule.forRoot({

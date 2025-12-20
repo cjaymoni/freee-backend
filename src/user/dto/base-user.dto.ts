@@ -17,12 +17,12 @@ import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class BaseUserDto {
-    @ApiProperty({
-        description: 'User ID',
-        required: false,
-        type: String,
-        example: '123e4567-e89b-12d3-a456-426614174000',
-    })
+  @ApiProperty({
+    description: 'User ID',
+    required: false,
+    type: String,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
   @IsOptional()
   @IsUUID()
   id?: string;
@@ -47,7 +47,7 @@ export class BaseUserDto {
   @MaxLength(255)
   email?: string;
 
-    @ApiProperty({
+  @ApiProperty({
     example: 'password',
   })
   @IsString()
@@ -77,7 +77,10 @@ export class BaseUserDto {
   @MaxLength(20)
   gender?: string;
 
-  @ApiProperty({ required: false, example: '123e4567-e89b-12d3-a456-426614174000' })
+  @ApiProperty({
+    required: false,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(255)
@@ -96,13 +99,13 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   member_since?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   last_active?: Date;
 
   @ApiProperty({ required: false, example: true })
@@ -129,10 +132,13 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   deleted_at?: Date;
 
-  @ApiProperty({ required: false, example: '123e4567-e89b-12d3-a456-426614174000' })
+  @ApiProperty({
+    required: false,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
   @IsOptional()
   @IsUUID()
   deleted_by?: string;
@@ -142,7 +148,7 @@ export class BaseUserDto {
   @IsString()
   deletion_reason?: string;
 
-  @ApiProperty({ required: false, example: 0 }) 
+  @ApiProperty({ required: false, example: 0 })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -151,13 +157,13 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   account_locked_until?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   last_password_change?: Date;
 
   @ApiProperty({ required: false, example: true })
@@ -168,12 +174,12 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   created_at?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-@Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => new Date(value).toISOString())
   updated_at?: Date;
 }
