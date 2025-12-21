@@ -12,6 +12,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { CacheModule } from '@nestjs/cache-manager';
 import { redisStore } from 'cache-manager-redis-store';
 import { ConfigService } from '@nestjs/config';
+import { HealthModule } from './health/health.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -48,6 +49,7 @@ import { envValidationSchema } from './config/env.validation';
     CloudinaryModule,
     UserModule,
     AuthModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
