@@ -38,6 +38,18 @@ services:
     networks:
       - backend
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: redis-insight
+    ports:
+      - '5540:5540'
+    volumes:
+      - ./docker_volumes/redis_insight_data:/data
+    networks:
+      - backend
+    depends_on:
+      - redis
+
 networks:
   backend:
     driver: bridge

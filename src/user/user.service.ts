@@ -3,11 +3,19 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Repository, FindOptionsWhere } from 'typeorm';
+import {
+  Repository,
+  FindOptionsWhere,
+  DataSource,
+  EntityManager,
+} from 'typeorm';
 import { UserEntity } from './entities/user.entity';
 import { UserResponseDto } from './dto/user-response.dto';
 import { ServiceResponseDto } from 'src/common/service-response.dto';
@@ -23,19 +31,40 @@ export class UserService {
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
     private readonly cloudinaryService: CloudinaryService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly dataSource: DataSource,
   ) {}
 
   private readonly logger = new Logger(UserService.name);
 
   async findByEmail(email: string): Promise<UserEntity | null> {
-    return this.userRepository.findOne({ where: { email } });
+    const cacheKey = `user:email:${email}`;
+    const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
+    if (cachedUser) {
+      this.logger.log(`Cache hit for user email: ${email}`);
+      return cachedUser;
+    }
+
+    const user = await this.userRepository.findOne({ where: { email } });
+    if (user) {
+      await this.cacheManager.set(cacheKey, user, 3600); // Cache for 1 hour
+    }
+    return user;
   }
 
   async create(
     createUserDto: CreateUserDto,
     file?: Express.Multer.File,
     options: { is_active?: boolean; is_verified?: boolean } = {},
+    manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    const queryRunner = !manager ? this.dataSource.createQueryRunner() : null;
+    if (queryRunner) {
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+    }
+    const entityManager = manager || queryRunner!.manager;
+
     try {
       this.logger.log(`Creating user with email: ${createUserDto.email}`);
 
@@ -48,7 +77,7 @@ export class UserService {
       }
 
       // Check if user exists by email OR phone number
-      const existingUser = await this.userRepository.findOne({
+      const existingUser = await entityManager.findOne(UserEntity, {
         where: whereConditions,
       });
 
@@ -86,7 +115,7 @@ export class UserService {
       }
 
       // Create new user with hashed password
-      const user = this.userRepository.create({
+      const user = entityManager.create(UserEntity, {
         ...createUserDto,
         ...avatarData,
         password_hash: hashedPassword,
@@ -101,8 +130,13 @@ export class UserService {
       // Don't include password in DTO
       // delete user.password_hash; // Remove plain password if it exists
 
-      const result = await this.userRepository.save(user);
+      const result = await entityManager.save(UserEntity, user);
+      if (queryRunner) {
+        await queryRunner.commitTransaction();
+      }
       this.logger.log(`User created successfully with ID: ${result.id}`);
+
+      // Invalidate list cache if any (or just let it expire)
 
       // Map to response DTO (exclude sensitive fields)
       const responseDto = new UserResponseDto();
@@ -115,10 +149,17 @@ export class UserService {
         statusCode: 201,
       };
     } catch (error) {
+      if (queryRunner) {
+        await queryRunner.rollbackTransaction();
+      }
       if (error instanceof Error) {
-        this.logger.error(`Error creating user: ${error.message}`, error.stack);
+        this.logger.error(`Error creating user: ${error.message}`);
       }
       throw new AppError(error);
+    } finally {
+      if (queryRunner) {
+        await queryRunner.release();
+      }
     }
   }
 
@@ -163,7 +204,20 @@ export class UserService {
   async findOne(id: string): Promise<ServiceResponseDto<UserResponseDto>> {
     try {
       this.logger.log(`Finding user with ID: ${id}`);
-      const user = await this.userRepository.findOne({ where: { id } });
+      const cacheKey = `user:id:${id}`;
+      const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
+
+      let user: UserEntity | null = null;
+      if (cachedUser) {
+        this.logger.log(`Cache hit for user ID: ${id}`);
+        user = cachedUser;
+      } else {
+        user = await this.userRepository.findOne({ where: { id } });
+        if (user) {
+          await this.cacheManager.set(cacheKey, user, 3600);
+        }
+      }
+
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
@@ -186,10 +240,15 @@ export class UserService {
     }
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto) {
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    manager?: EntityManager,
+  ) {
     try {
       this.logger.log(`Updating user with ID: ${id}`);
-      const user = await this.userRepository.findOne({ where: { id } });
+      const entityManager = manager || this.userRepository.manager;
+      const user = await entityManager.findOne(UserEntity, { where: { id } });
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
@@ -200,7 +259,21 @@ export class UserService {
           saltRounds,
         );
       }
-      const updatedUser = await this.userRepository.update(id, updateUserDto);
+      const updatedUser = await entityManager.update(
+        UserEntity,
+        id,
+        updateUserDto,
+      );
+
+      // Invalidate cache
+      const freshUser = await entityManager.findOne(UserEntity, {
+        where: { id },
+      });
+      if (freshUser) {
+        await this.cacheManager.del(`user:id:${id}`);
+        await this.cacheManager.del(`user:email:${freshUser.email}`);
+      }
+
       const responseDto = new UserResponseDto();
       Object.assign(responseDto, updatedUser);
       return {
@@ -220,14 +293,22 @@ export class UserService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, manager?: EntityManager) {
     try {
       this.logger.log(`Deleting user with ID: ${id}`);
-      const user = await this.userRepository.findOne({ where: { id } });
+      const entityManager = manager || this.userRepository.manager;
+      const user = await entityManager.findOne(UserEntity, { where: { id } });
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
-      const deletedUser = await this.userRepository.softDelete(id);
+      const deletedUser = await entityManager.softDelete(UserEntity, id);
+
+      // Invalidate cache
+      await this.cacheManager.del(`user:id:${id}`);
+      if (user.email) {
+        await this.cacheManager.del(`user:email:${user.email}`);
+      }
+
       const responseDto = new UserResponseDto();
       Object.assign(responseDto, deletedUser);
       return {

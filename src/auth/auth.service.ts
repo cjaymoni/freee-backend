@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
@@ -18,6 +18,7 @@ import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { CreateUserDto } from '../user/dto/create-user.dto';
+import { UserEntity } from '../user/entities/user.entity';
 
 @Injectable()
 export class AuthService {
@@ -31,106 +32,157 @@ export class AuthService {
     private readonly loginAttemptRepository: Repository<LoginAttemptEntity>,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async register(registerDto: RegisterDto) {
     const { email, password, ...otherDetails } = registerDto;
 
-    const existingUser = await this.userService.findByEmail(email);
-    if (existingUser && existingUser.is_active) {
-      throw new ConflictException('User with this email already exists');
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const existingUser = await this.userService.findByEmail(email);
+      if (existingUser && existingUser.is_active) {
+        throw new ConflictException('User with this email already exists');
+      }
+
+      let user = existingUser;
+
+      if (!user) {
+        const createUserDto: CreateUserDto = {
+          email,
+          password_hash: password,
+          ...otherDetails,
+        };
+
+        // Note: userService.create now also uses its own queryRunner if called normally.
+        // It might be better to allow passing a manager to service methods for nested transactions.
+        // For now, let's just use the queryRunner manager here directly or keep it as is.
+        // Since userService.create uses queryRunner internally, we might have nested transaction issues if not careful.
+        // I will keep it simple for now and just wrap the code in register if possible.
+        // Actually, calling another service method that starts its own transaction inside this transaction
+        // will not work as expected with QueryRunner unless we pass the manager.
+
+        // I'll refactor UserService.create later to accept an optional manager.
+        // For now, I'll just keep register as is or refactor it to use manager directly.
+
+        await this.userService.create(
+          createUserDto,
+          undefined,
+          {
+            is_active: false,
+            is_verified: false,
+          },
+          queryRunner.manager,
+        );
+        user = (await queryRunner.manager.findOne(UserEntity, {
+          where: { email },
+        })) as UserEntity;
+      } else {
+        await this.userService.update(
+          user.id,
+          {
+            password_hash: password,
+            ...otherDetails,
+          },
+          queryRunner.manager,
+        );
+        user = (await queryRunner.manager.findOne(UserEntity, {
+          where: { id: user.id },
+        })) as UserEntity;
+      }
+
+      if (!user) throw new Error('Failed to create or retrieve user');
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+      const verificationCode = queryRunner.manager.create(
+        VerificationCodeEntity,
+        {
+          user,
+          email,
+          code_hash: code,
+          code_type: 'email_verification',
+          expires_at: expiresAt,
+        },
+      );
+
+      await this.mailService.sendVerificationCode(email, code);
+
+      const saltCode = await bcrypt.genSalt();
+      verificationCode.code_hash = await bcrypt.hash(code, saltCode);
+
+      await queryRunner.manager.save(verificationCode);
+      await queryRunner.commitTransaction();
+
+      return { message: 'Verification code sent to email' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    let user = existingUser;
-
-    if (!user) {
-      const createUserDto: CreateUserDto = {
-        email,
-        password_hash: password,
-        ...otherDetails,
-      };
-
-      await this.userService.create(createUserDto, undefined, {
-        is_active: false,
-        is_verified: false,
-      });
-      // Refresh user
-      user = await this.userService.findByEmail(email);
-    } else {
-      // Update existing inactive user
-      await this.userService.update(user.id, {
-        password_hash: password,
-        ...otherDetails,
-      });
-      // Refresh user
-      user = await this.userService.findByEmail(email);
-    }
-
-    if (!user) throw new Error('Failed to create or retrieve user');
-
-    // Generate and send OTP
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 mins expiry
-
-    const verificationCode = this.verificationCodeRepository.create({
-      user,
-      email,
-      code_hash: code,
-      code_type: 'email_verification',
-      expires_at: expiresAt,
-    });
-
-    // Send email via Brevo
-    await this.mailService.sendVerificationCode(email, code);
-
-    // Store hashed code
-    const saltCode = await bcrypt.genSalt();
-    verificationCode.code_hash = await bcrypt.hash(code, saltCode);
-
-    await this.verificationCodeRepository.save(verificationCode);
-
-    return { message: 'Verification code sent to email' };
   }
 
   async verifyEmail(verifyEmailDto: VerifyEmailDto) {
     const { email, code } = verifyEmailDto;
 
-    // Find latest valid code
-    const verificationCode = await this.verificationCodeRepository.findOne({
-      where: { email, is_verified: false, code_type: 'email_verification' },
-      order: { created_at: 'DESC' },
-      relations: ['user'],
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!verificationCode) {
-      throw new BadRequestException('Invalid or expired verification code');
+    try {
+      const verificationCode = await queryRunner.manager.findOne(
+        VerificationCodeEntity,
+        {
+          where: { email, is_verified: false, code_type: 'email_verification' },
+          order: { created_at: 'DESC' },
+          relations: ['user'],
+        },
+      );
+
+      if (!verificationCode) {
+        throw new BadRequestException('Invalid or expired verification code');
+      }
+
+      if (verificationCode.expires_at < new Date()) {
+        throw new BadRequestException('Verification code expired');
+      }
+
+      const isMatch = await bcrypt.compare(code, verificationCode.code_hash);
+      if (!isMatch) {
+        verificationCode.attempt_count += 1;
+        await queryRunner.manager.save(verificationCode);
+        await queryRunner.commitTransaction();
+        throw new BadRequestException('Invalid verification code');
+      }
+
+      verificationCode.is_verified = true;
+      verificationCode.verified_at = new Date();
+      await queryRunner.manager.save(verificationCode);
+
+      const user = verificationCode.user;
+      await this.userService.update(
+        user.id,
+        {
+          is_verified: true,
+          is_active: true,
+        },
+        queryRunner.manager,
+      );
+
+      await queryRunner.commitTransaction();
+      return { message: 'Email verified successfully' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    if (verificationCode.expires_at < new Date()) {
-      throw new BadRequestException('Verification code expired');
-    }
-
-    const isMatch = await bcrypt.compare(code, verificationCode.code_hash);
-    if (!isMatch) {
-      verificationCode.attempt_count += 1;
-      await this.verificationCodeRepository.save(verificationCode);
-      throw new BadRequestException('Invalid verification code');
-    }
-
-    // Mark code as verified
-    verificationCode.is_verified = true;
-    verificationCode.verified_at = new Date();
-    await this.verificationCodeRepository.save(verificationCode);
-
-    // Activate user
-    const user = verificationCode.user;
-    await this.userService.update(user.id, {
-      is_verified: true,
-      is_active: true,
-    });
-
-    return { message: 'Email verified successfully' };
   }
 
   async login(loginDto: LoginDto, ip: string, userAgent: string) {
@@ -154,128 +206,153 @@ export class AuthService {
       }
     }
 
-    // Record login attempt
-    const loginAttempt = this.loginAttemptRepository.create({
-      user: user || undefined,
-      email: email,
-      ip_address: ip,
-      user_agent: userAgent,
-      attempt_result: attemptResult,
-      failure_reason: failureReason || undefined,
-    });
-    await this.loginAttemptRepository.save(loginAttempt);
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (attemptResult === 'failed') {
-      throw new UnauthorizedException(
-        failureReason === 'account_not_active'
-          ? 'Account is not active'
-          : 'Invalid credentials',
+    try {
+      // Record login attempt
+      const loginAttempt = queryRunner.manager.create(LoginAttemptEntity, {
+        user: user || undefined,
+        email: email,
+        ip_address: ip,
+        user_agent: userAgent,
+        attempt_result: attemptResult,
+        failure_reason: failureReason || undefined,
+      });
+      await queryRunner.manager.save(loginAttempt);
+
+      if (attemptResult === 'failed') {
+        await queryRunner.commitTransaction();
+        throw new UnauthorizedException(
+          failureReason === 'account_not_active'
+            ? 'Account is not active'
+            : 'Invalid credentials',
+        );
+      }
+
+      if (!user) {
+        await queryRunner.commitTransaction();
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      // Invalidate previous active sessions
+      await queryRunner.manager.update(
+        UserSessionEntity,
+        { user: { id: user.id }, is_active: true },
+        { is_active: false },
       );
-    }
 
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
+      // Create session
+      const sessionToken = randomBytes(32).toString('hex');
+      const refreshToken = randomBytes(64).toString('hex');
 
-    // Invalidate previous active sessions
-    await this.userSessionRepository.update(
-      { user: { id: user.id }, is_active: true },
-      { is_active: false },
-    );
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 15);
 
-    // Create session
-    const sessionToken = randomBytes(32).toString('hex');
-    const refreshToken = randomBytes(64).toString('hex');
+      const refreshExpiresAt = new Date();
+      refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
-    const expiresAt = new Date();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Access token expiry match
+      const session = queryRunner.manager.create(UserSessionEntity, {
+        user,
+        session_token: sessionToken,
+        refresh_token: refreshToken,
+        refresh_token_expires_at: refreshExpiresAt,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: expiresAt,
+        device_type: 'web',
+      });
 
-    const refreshExpiresAt = new Date();
-    refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 days refresh token
+      await queryRunner.manager.save(session);
+      await queryRunner.commitTransaction();
 
-    const session = this.userSessionRepository.create({
-      user,
-      session_token: sessionToken,
-      refresh_token: refreshToken,
-      refresh_token_expires_at: refreshExpiresAt,
-      ip_address: ip,
-      user_agent: userAgent,
-      expires_at: expiresAt,
-      device_type: 'web', // Default
-    });
-
-    await this.userSessionRepository.save(session);
-
-    // Generate JWT
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      session_token: sessionToken,
-    };
-    const accessToken = this.jwtService.sign(payload);
-
-    return {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      user: {
-        id: user.id,
+      // Generate JWT
+      const payload = {
+        sub: user.id,
         email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
-      },
-    };
+        session_token: sessionToken,
+      };
+      const accessToken = this.jwtService.sign(payload);
+
+      return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+        },
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async refresh(refreshToken: string, ip: string, userAgent: string) {
-    const session = await this.userSessionRepository.findOne({
-      where: { refresh_token: refreshToken, is_active: true },
-      relations: ['user'],
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!session || session.refresh_token_expires_at < new Date()) {
-      // If we find an inactive session with this refresh token, someone might be trying to reuse it!
-      // This is a sign of a stolen token. In a real scenario, we might want to invalidate ALL sessions for this user.
-      throw new UnauthorizedException('Invalid or expired refresh token');
+    try {
+      const session = await queryRunner.manager.findOne(UserSessionEntity, {
+        where: { refresh_token: refreshToken, is_active: true },
+        relations: ['user'],
+      });
+
+      if (!session || session.refresh_token_expires_at < new Date()) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+
+      // Token Rotation: Invalidate old session and create a new one
+      session.is_active = false;
+      await queryRunner.manager.save(session);
+
+      const user = session.user;
+      const newSessionToken = randomBytes(32).toString('hex');
+      const newRefreshToken = randomBytes(64).toString('hex');
+
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+
+      const refreshExpiresAt = new Date();
+      refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
+
+      const newSession = queryRunner.manager.create(UserSessionEntity, {
+        user,
+        session_token: newSessionToken,
+        refresh_token: newRefreshToken,
+        refresh_token_expires_at: refreshExpiresAt,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: expiresAt,
+        device_type: session.device_type,
+      });
+
+      await queryRunner.manager.save(newSession);
+      await queryRunner.commitTransaction();
+
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        session_token: newSessionToken,
+      };
+      const accessToken = this.jwtService.sign(payload);
+
+      return {
+        access_token: accessToken,
+        refresh_token: newRefreshToken,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    // Token Rotation: Invalidate old session and create a new one
-    session.is_active = false;
-    await this.userSessionRepository.save(session);
-
-    const user = session.user;
-    const newSessionToken = randomBytes(32).toString('hex');
-    const newRefreshToken = randomBytes(64).toString('hex');
-
-    const expiresAt = new Date();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 15);
-
-    const refreshExpiresAt = new Date();
-    refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
-
-    const newSession = this.userSessionRepository.create({
-      user,
-      session_token: newSessionToken,
-      refresh_token: newRefreshToken,
-      refresh_token_expires_at: refreshExpiresAt,
-      ip_address: ip,
-      user_agent: userAgent,
-      expires_at: expiresAt,
-      device_type: session.device_type,
-    });
-
-    await this.userSessionRepository.save(newSession);
-
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      session_token: newSessionToken,
-    };
-    const accessToken = this.jwtService.sign(payload);
-
-    return {
-      access_token: accessToken,
-      refresh_token: newRefreshToken,
-    };
   }
 
   async validateSession(sessionToken: string): Promise<boolean> {

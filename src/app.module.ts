@@ -9,6 +9,9 @@ import { UserModule } from './user/user.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { AuthModule } from './auth/auth.module';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-store';
+import { ConfigService } from '@nestjs/config';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -25,6 +28,21 @@ import { envValidationSchema } from './config/env.validation';
         limit: 10,
       },
     ]),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        store: (await redisStore({
+          socket: {
+            host: configService.get<string>('REDIS_HOST'),
+            port: configService.get<number>('REDIS_PORT'),
+          },
+          password: configService.get<string>('REDIS_PASSWORD'),
+          ttl: 600, // 10 minutes default
+        })) as any,
+      }),
+      inject: [ConfigService],
+    }),
     TypeOrmModule.forRootAsync(typeOrmConfig),
     RedisModule,
     CloudinaryModule,
