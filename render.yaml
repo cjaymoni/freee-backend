@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
-    startCommand: npm run start:prod
+    startCommand: node --max-old-space-size=450 dist/main
     envVars:
       - key: NODE_ENV
         value: production
