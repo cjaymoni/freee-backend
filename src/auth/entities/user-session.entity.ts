@@ -56,6 +56,12 @@ export class UserSessionEntity {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
+  refresh_token: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  refresh_token_expires_at: Date;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   last_activity: Date;
 

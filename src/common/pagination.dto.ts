@@ -10,14 +10,14 @@ export class PaginationResponseDto<T> {
   total: number;
 
   @ApiProperty({ example: 10 })
-  @Transform(({ value }) => parseInt(value))
+  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
   @IsNumber()
   @Min(1)
   @Max(50)
   limit: number;
 
   @ApiProperty({ example: 1 })
-  @Transform(({ value }) => parseInt(value))
+  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
   @IsNumber()
   @Min(1)
   page: number;
@@ -25,14 +25,14 @@ export class PaginationResponseDto<T> {
 
 export class PaginationQueryDto {
   @ApiProperty({ example: 10 })
-  @Transform(({ value }) => parseInt(value))
+  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
   @IsNumber()
   @Min(1)
   @Max(50)
   limit: number;
 
   @ApiProperty({ example: 1 })
-  @Transform(({ value }) => parseInt(value))
+  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
   @IsNumber()
   @Min(1)
   page: number;

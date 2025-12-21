@@ -12,9 +12,14 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserAgent } from '../common/decorators/user-agent.decorator';
+import { UseGuards } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
+
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
+@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
@@ -39,5 +44,20 @@ export class AuthController {
     @UserAgent() userAgent: string,
   ) {
     return this.authService.login(loginDto, ip, userAgent);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh access token' })
+  async refresh(
+    @Body() refreshTokenDto: RefreshTokenDto,
+    @Ip() ip: string,
+    @UserAgent() userAgent: string,
+  ) {
+    return this.authService.refresh(
+      refreshTokenDto.refresh_token,
+      ip,
+      userAgent,
+    );
   }
 }

@@ -185,12 +185,19 @@ export class AuthService {
 
     // Create session
     const sessionToken = randomBytes(32).toString('hex');
+    const refreshToken = randomBytes(64).toString('hex');
+
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days session
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // Access token expiry match
+
+    const refreshExpiresAt = new Date();
+    refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 days refresh token
 
     const session = this.userSessionRepository.create({
       user,
       session_token: sessionToken,
+      refresh_token: refreshToken,
+      refresh_token_expires_at: refreshExpiresAt,
       ip_address: ip,
       user_agent: userAgent,
       expires_at: expiresAt,
@@ -209,12 +216,65 @@ export class AuthService {
 
     return {
       access_token: accessToken,
+      refresh_token: refreshToken,
       user: {
         id: user.id,
         email: user.email,
         first_name: user.first_name,
         last_name: user.last_name,
       },
+    };
+  }
+
+  async refresh(refreshToken: string, ip: string, userAgent: string) {
+    const session = await this.userSessionRepository.findOne({
+      where: { refresh_token: refreshToken, is_active: true },
+      relations: ['user'],
+    });
+
+    if (!session || session.refresh_token_expires_at < new Date()) {
+      // If we find an inactive session with this refresh token, someone might be trying to reuse it!
+      // This is a sign of a stolen token. In a real scenario, we might want to invalidate ALL sessions for this user.
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    // Token Rotation: Invalidate old session and create a new one
+    session.is_active = false;
+    await this.userSessionRepository.save(session);
+
+    const user = session.user;
+    const newSessionToken = randomBytes(32).toString('hex');
+    const newRefreshToken = randomBytes(64).toString('hex');
+
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+
+    const refreshExpiresAt = new Date();
+    refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
+
+    const newSession = this.userSessionRepository.create({
+      user,
+      session_token: newSessionToken,
+      refresh_token: newRefreshToken,
+      refresh_token_expires_at: refreshExpiresAt,
+      ip_address: ip,
+      user_agent: userAgent,
+      expires_at: expiresAt,
+      device_type: session.device_type,
+    });
+
+    await this.userSessionRepository.save(newSession);
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      session_token: newSessionToken,
+    };
+    const accessToken = this.jwtService.sign(payload);
+
+    return {
+      access_token: accessToken,
+      refresh_token: newRefreshToken,
     };
   }
 

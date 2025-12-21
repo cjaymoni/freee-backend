@@ -20,8 +20,10 @@ export class MailService {
         html: `<b>Your verification code is: ${code}</b><p>It expires in 10 minutes.</p>`,
       });
       this.logger.log(`Verification code sent to ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to send email to ${email}`, error.stack);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.stack : 'Unknown error';
+      this.logger.error(`Failed to send email to ${email}`, errorMessage);
       throw error;
     }
   }
