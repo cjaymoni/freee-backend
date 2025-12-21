@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  UseGuards,
   UseInterceptors,
   UploadedFile,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import {
+  ApiBearerAuth,
   ApiConsumes,
   ApiCreatedResponse,
   ApiExtraModels,
@@ -31,8 +33,10 @@ import { UserEntity } from './entities/user.entity';
 import { CreateUserResponseDto } from './dto/create-user-response.dto';
 import { FindUserDto } from './dto/find-user.dto';
 import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @ApiTags('user')
+@ApiBearerAuth()
 @ApiExtraModels(
   ServiceResponseDto,
   UserResponseDto,
@@ -42,6 +46,7 @@ import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
   ErrorResponseDto,
 )
 @Controller('user')
+@UseGuards(JwtAuthGuard)
 export class UserController {
   constructor(private readonly userService: UserService) {}
 

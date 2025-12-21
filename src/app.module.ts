@@ -7,6 +7,7 @@ import { typeOrmConfig } from './config/typeorm.config';
 import { RedisModule } from './redis/redis.module';
 import { UserModule } from './user/user.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
     RedisModule,
     CloudinaryModule,
     UserModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

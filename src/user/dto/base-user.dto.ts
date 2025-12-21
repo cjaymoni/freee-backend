@@ -99,13 +99,13 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   member_since?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   last_active?: Date;
 
   @ApiProperty({ required: false, example: true })
@@ -132,7 +132,7 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   deleted_at?: Date;
 
   @ApiProperty({
@@ -157,13 +157,13 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   account_locked_until?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   last_password_change?: Date;
 
   @ApiProperty({ required: false, example: true })
@@ -174,12 +174,12 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   created_at?: Date;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => new Date(value).toISOString())
+  @Transform(({ value }) => (value ? new Date(value).toISOString() : null))
   updated_at?: Date;
 }

@@ -27,26 +27,39 @@ export class UserService {
 
   private readonly logger = new Logger(UserService.name);
 
+  async findByEmail(email: string): Promise<UserEntity | null> {
+    return this.userRepository.findOne({ where: { email } });
+  }
+
   async create(
     createUserDto: CreateUserDto,
     file?: Express.Multer.File,
+    options: { is_active?: boolean; is_verified?: boolean } = {},
   ): Promise<ServiceResponseDto<UserResponseDto>> {
     try {
       this.logger.log(`Creating user with email: ${createUserDto.email}`);
 
       // Check if user exists by email OR phone number
+      const whereConditions: FindOptionsWhere<UserEntity>[] = [
+        { email: createUserDto.email },
+      ];
+      if (createUserDto.phone_number) {
+        whereConditions.push({ phone_number: createUserDto.phone_number });
+      }
+
+      // Check if user exists by email OR phone number
       const existingUser = await this.userRepository.findOne({
-        where: [
-          { email: createUserDto.email },
-          { phone_number: createUserDto.phone_number },
-        ],
+        where: whereConditions,
       });
 
       if (existingUser) {
         if (existingUser.email === createUserDto.email) {
           throw new ConflictException('Email already exists');
         }
-        if (existingUser.phone_number === createUserDto.phone_number) {
+        if (
+          createUserDto.phone_number &&
+          existingUser.phone_number === createUserDto.phone_number
+        ) {
           throw new ConflictException('Phone number already exists');
         }
       }
@@ -78,8 +91,8 @@ export class UserService {
         ...avatarData,
         password_hash: hashedPassword,
         // Set default values
-        is_verified: false,
-        is_active: true,
+        is_verified: options.is_verified ?? false,
+        is_active: options.is_active ?? true,
         notification_enabled: true,
         failed_login_attempts: 0,
         member_since: new Date(),
@@ -179,6 +192,13 @@ export class UserService {
       const user = await this.userRepository.findOne({ where: { id } });
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      if (updateUserDto.password_hash) {
+        const saltRounds = 12;
+        updateUserDto.password_hash = await bcrypt.hash(
+          updateUserDto.password_hash,
+          saltRounds,
+        );
       }
       const updatedUser = await this.userRepository.update(id, updateUserDto);
       const responseDto = new UserResponseDto();

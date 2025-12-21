@@ -7,7 +7,9 @@ import {
   Index,
   ManyToOne,
   JoinColumn,
+  OneToMany,
 } from 'typeorm';
+import { UserSessionEntity } from '../../auth/entities/user-session.entity';
 
 @Entity('users')
 @Index(['created_at'])
@@ -17,10 +19,10 @@ export class UserEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 20, unique: true })
+  @Column({ type: 'varchar', length: 20, unique: true, nullable: true })
   phone_number: string;
 
-  @Column({ type: 'varchar', length: 5 })
+  @Column({ type: 'varchar', length: 5, nullable: true })
   phone_country_code: string;
 
   @Column({ type: 'varchar', length: 255, unique: true, nullable: true })
@@ -100,4 +102,7 @@ export class UserEntity {
 
   @Column({ type: 'text', nullable: true })
   deletion_reason: string;
+
+  @OneToMany(() => UserSessionEntity, (session) => session.user)
+  sessions: UserSessionEntity[];
 }
