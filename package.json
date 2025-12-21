@@ -28,6 +28,7 @@
     "schema:sync": "npm run typeorm -- schema:sync -d src/config/data-source.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "@nestjs/cache-manager": "^3.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -41,6 +42,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.0",
     "@nestjs/websockets": "^11.1.9",
+    "@upstash/redis": "^1.35.8",
     "bcrypt": "^6.0.0",
     "cache-manager": "^7.2.7",
     "cache-manager-redis-store": "^3.0.1",

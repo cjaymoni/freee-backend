@@ -13,6 +13,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { redisStore } from 'cache-manager-redis-store';
 import { ConfigService } from '@nestjs/config';
 import { HealthModule } from './health/health.module';
+import { CommonModule } from './common/common.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -32,16 +33,53 @@ import { envValidationSchema } from './config/env.validation';
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        store: (await redisStore({
-          socket: {
-            host: configService.get<string>('REDIS_HOST'),
-            port: configService.get<number>('REDIS_PORT'),
-          },
-          password: configService.get<string>('REDIS_PASSWORD'),
-          ttl: 600, // 10 minutes default
-        })) as any,
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const upstashUrl = configService.get<string>('UPSTASH_REDIS_REST_URL');
+        const upstashToken = configService.get<string>(
+          'UPSTASH_REDIS_REST_TOKEN',
+        );
+
+        if (upstashUrl && upstashToken) {
+          const { Redis } = await import('@upstash/redis');
+          const client = new Redis({
+            url: upstashUrl,
+            token: upstashToken,
+          });
+
+          return {
+            store: {
+              get: async (key: string) => {
+                const val = await client.get(key);
+                return val;
+              },
+              set: async (key: string, value: any, ttl?: number) => {
+                if (ttl) {
+                  await client.set(key, value, { px: ttl * 1000 });
+                } else {
+                  await client.set(key, value);
+                }
+              },
+              del: async (key: string) => {
+                await client.del(key);
+              },
+              reset: async () => {
+                await client.flushall();
+              },
+            },
+          };
+        }
+
+        return {
+          store: (await redisStore({
+            socket: {
+              host: configService.get<string>('REDIS_HOST'),
+              port: configService.get<number>('REDIS_PORT'),
+            },
+            password: configService.get<string>('REDIS_PASSWORD'),
+            ttl: 600, // 10 minutes default
+          })) as any,
+        };
+      },
       inject: [ConfigService],
     }),
     TypeOrmModule.forRootAsync(typeOrmConfig),
@@ -50,6 +88,7 @@ import { envValidationSchema } from './config/env.validation';
     UserModule,
     AuthModule,
     HealthModule,
+    CommonModule,
   ],
   controllers: [AppController],
   providers: [AppService],
