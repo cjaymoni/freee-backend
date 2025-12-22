@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -18,6 +19,8 @@ import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { CreateUserDto } from '../user/dto/create-user.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UserEntity } from '../user/entities/user.entity';
 
 @Injectable()
@@ -36,65 +39,108 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
-    const { email, password, ...otherDetails } = registerDto;
+    const { email, password, phone_number, ...otherDetails } = registerDto;
+
+    // 1. Initial existence check (fail fast)
+    const existingUser = await this.userService.findByEmailOrPhone(
+      email,
+      phone_number,
+    );
+    if (existingUser) {
+      throw new ConflictException('User already exists');
+    }
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const existingUser = await this.userService.findByEmail(email);
-      if (existingUser && existingUser.is_active) {
-        throw new ConflictException('User with this email already exists');
-      }
+      // 2. Persist User Record (strictly DB creation)
+      const createUserDto: CreateUserDto = {
+        email,
+        password: password,
+        phone_number,
+        ...otherDetails,
+      };
 
-      let user = existingUser;
+      const userServiceResponse = await this.userService.create(
+        createUserDto,
+        undefined,
+        { is_active: false, is_verified: false },
+        queryRunner.manager,
+      );
+
+      // Extract the created user entity from the response data
+      // (Note: UserResponseDto is returned by create, but we need the Entity id for relations)
+      const userId = userServiceResponse.data.id;
+
+      const user = await queryRunner.manager.findOne(UserEntity, {
+        where: { id: userId },
+      });
 
       if (!user) {
-        const createUserDto: CreateUserDto = {
-          email,
-          password_hash: password,
-          ...otherDetails,
-        };
-
-        // Note: userService.create now also uses its own queryRunner if called normally.
-        // It might be better to allow passing a manager to service methods for nested transactions.
-        // For now, let's just use the queryRunner manager here directly or keep it as is.
-        // Since userService.create uses queryRunner internally, we might have nested transaction issues if not careful.
-        // I will keep it simple for now and just wrap the code in register if possible.
-        // Actually, calling another service method that starts its own transaction inside this transaction
-        // will not work as expected with QueryRunner unless we pass the manager.
-
-        // I'll refactor UserService.create later to accept an optional manager.
-        // For now, I'll just keep register as is or refactor it to use manager directly.
-
-        await this.userService.create(
-          createUserDto,
-          undefined,
-          {
-            is_active: false,
-            is_verified: false,
-          },
-          queryRunner.manager,
-        );
-        user = (await queryRunner.manager.findOne(UserEntity, {
-          where: { email },
-        })) as UserEntity;
-      } else {
-        await this.userService.update(
-          user.id,
-          {
-            password_hash: password,
-            ...otherDetails,
-          },
-          queryRunner.manager,
-        );
-        user = (await queryRunner.manager.findOne(UserEntity, {
-          where: { id: user.id },
-        })) as UserEntity;
+        throw new Error('Failed to retrieve created user');
       }
 
-      if (!user) throw new Error('Failed to create or retrieve user');
+      // 3. Initiate Verification Flow (Business Logic)
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+      const verificationCode = queryRunner.manager.create(
+        VerificationCodeEntity,
+        {
+          user,
+          email,
+          code_hash: code,
+          code_type: 'email_verification',
+          expires_at: expiresAt,
+        },
+      );
+
+      // Send the email first (if this fails, transaction rolls back)
+      await this.mailService.sendVerificationCode(email, code);
+
+      // Hash the code before saving to DB
+      const saltCode = await bcrypt.genSalt();
+      verificationCode.code_hash = await bcrypt.hash(code, saltCode);
+
+      await queryRunner.manager.save(verificationCode);
+      await queryRunner.commitTransaction();
+
+      return {
+        message: 'Registration successful. Verification code sent to email.',
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async resendVerificationCode(email: string) {
+    const user = await this.userService.findByEmail(email);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.is_verified) {
+      throw new BadRequestException('User is already verified');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Invalidate existing codes
+      await queryRunner.manager.update(
+        VerificationCodeEntity,
+        { email, is_verified: false, code_type: 'email_verification' },
+        { expires_at: new Date() },
+      );
 
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const expiresAt = new Date();
@@ -119,7 +165,7 @@ export class AuthService {
       await queryRunner.manager.save(verificationCode);
       await queryRunner.commitTransaction();
 
-      return { message: 'Verification code sent to email' };
+      return { message: 'Verification code resent successfully' };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;
@@ -361,5 +407,119 @@ export class AuthService {
     });
 
     return !!(session && session.is_active && session.expires_at > new Date());
+  }
+
+  async getMe(userId: string) {
+    return await this.userService.findOne(userId);
+  }
+
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+    const { email } = forgotPasswordDto;
+    const user = await this.userService.findByEmail(email);
+
+    if (!user) {
+      // For security, don't reveal if user exists
+      return { message: 'If an account exists, a reset code has been sent.' };
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Invalidate existing reset codes
+      await queryRunner.manager.update(
+        VerificationCodeEntity,
+        { email, is_verified: false, code_type: 'password_reset' },
+        { expires_at: new Date() },
+      );
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+      const verificationCode = queryRunner.manager.create(
+        VerificationCodeEntity,
+        {
+          user,
+          email,
+          code_hash: code,
+          code_type: 'password_reset',
+          expires_at: expiresAt,
+        },
+      );
+
+      await this.mailService.sendPasswordResetCode(email, code);
+
+      const saltCode = await bcrypt.genSalt();
+      verificationCode.code_hash = await bcrypt.hash(code, saltCode);
+
+      await queryRunner.manager.save(verificationCode);
+      await queryRunner.commitTransaction();
+
+      return { message: 'Password reset code sent to email.' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async resetPassword(resetPasswordDto: ResetPasswordDto) {
+    const { email, code, password } = resetPasswordDto;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const verificationCode = await queryRunner.manager.findOne(
+        VerificationCodeEntity,
+        {
+          where: { email, is_verified: false, code_type: 'password_reset' },
+          order: { created_at: 'DESC' },
+          relations: ['user'],
+        },
+      );
+
+      if (!verificationCode) {
+        throw new BadRequestException('Invalid or expired reset code');
+      }
+
+      if (verificationCode.expires_at < new Date()) {
+        throw new BadRequestException('Reset code expired');
+      }
+
+      const isMatch = await bcrypt.compare(code, verificationCode.code_hash);
+      if (!isMatch) {
+        verificationCode.attempt_count += 1;
+        await queryRunner.manager.save(verificationCode);
+        await queryRunner.commitTransaction();
+        throw new BadRequestException('Invalid reset code');
+      }
+
+      verificationCode.is_verified = true;
+      verificationCode.verified_at = new Date();
+      await queryRunner.manager.save(verificationCode);
+
+      const user = verificationCode.user;
+      await this.userService.update(user.id, { password }, queryRunner.manager);
+
+      // Invalidate all sessions for this user after password reset
+      await queryRunner.manager.update(
+        UserSessionEntity,
+        { user: { id: user.id }, is_active: true },
+        { is_active: false },
+      );
+
+      await queryRunner.commitTransaction();
+      return { message: 'Password reset successfully' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }

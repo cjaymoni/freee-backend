@@ -1,9 +1,10 @@
 import {
+  BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
-  Inject,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
@@ -16,6 +17,7 @@ import {
   DataSource,
   EntityManager,
 } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { UserEntity } from './entities/user.entity';
 import { UserResponseDto } from './dto/user-response.dto';
 import { ServiceResponseDto } from 'src/common/service-response.dto';
@@ -52,6 +54,20 @@ export class UserService {
     return user;
   }
 
+  async findByEmailOrPhone(
+    email: string,
+    phoneNumber?: string,
+  ): Promise<UserEntity | null> {
+    const whereConditions: FindOptionsWhere<UserEntity>[] = [{ email }];
+    if (phoneNumber) {
+      whereConditions.push({ phone_number: phoneNumber });
+    }
+
+    return this.userRepository.findOne({
+      where: whereConditions,
+    });
+  }
+
   async create(
     createUserDto: CreateUserDto,
     file?: Express.Multer.File,
@@ -66,20 +82,16 @@ export class UserService {
     const entityManager = manager || queryRunner!.manager;
 
     try {
+      if (!createUserDto.email || !createUserDto.password) {
+        throw new BadRequestException('Email and password are required');
+      }
       this.logger.log(`Creating user with email: ${createUserDto.email}`);
 
-      // Check if user exists by email OR phone number
-      const whereConditions: FindOptionsWhere<UserEntity>[] = [
-        { email: createUserDto.email },
-      ];
-      if (createUserDto.phone_number) {
-        whereConditions.push({ phone_number: createUserDto.phone_number });
-      }
-
-      // Check if user exists by email OR phone number
-      const existingUser = await entityManager.findOne(UserEntity, {
-        where: whereConditions,
-      });
+      // Internal safety check: ensure email/phone is unique
+      const existingUser = await this.findByEmailOrPhone(
+        createUserDto.email,
+        createUserDto.phone_number,
+      );
 
       if (existingUser) {
         if (existingUser.email === createUserDto.email) {
@@ -93,33 +105,31 @@ export class UserService {
         }
       }
 
-      // Hash password before saving
-      const saltRounds = 12; // bcrypt rounds (as per your schema notes)
+      // Hash password
+      const saltRounds = 12;
       const hashedPassword = await bcrypt.hash(
-        createUserDto.password_hash!,
+        createUserDto.password,
         saltRounds,
       );
 
+      // Handle Avatar
       let avatarData = {};
       if (file) {
         const uploadResult = await this.cloudinaryService.uploadImage(file, {
           folder: 'users',
         });
-        this.logger.log(
-          `Avatar uploaded to Cloudinary: ${uploadResult.secureUrl}`,
-        );
         avatarData = {
           cloudinary_avatar_public_id: uploadResult.publicId,
           cloudinary_avatar_url: uploadResult.secureUrl,
         };
       }
 
-      // Create new user with hashed password
+      const userData = { ...createUserDto } as Record<string, any>;
+      delete userData.password;
       const user = entityManager.create(UserEntity, {
-        ...createUserDto,
+        ...userData,
         ...avatarData,
         password_hash: hashedPassword,
-        // Set default values
         is_verified: options.is_verified ?? false,
         is_active: options.is_active ?? true,
         notification_enabled: true,
@@ -127,18 +137,14 @@ export class UserService {
         member_since: new Date(),
       });
 
-      // Don't include password in DTO
-      // delete user.password_hash; // Remove plain password if it exists
-
       const result = await entityManager.save(UserEntity, user);
+
       if (queryRunner) {
         await queryRunner.commitTransaction();
       }
-      this.logger.log(`User created successfully with ID: ${result.id}`);
 
-      // Invalidate list cache if any (or just let it expire)
+      this.logger.log(`User record persisted with ID: ${result.id}`);
 
-      // Map to response DTO (exclude sensitive fields)
       const responseDto = new UserResponseDto();
       Object.assign(responseDto, result);
 
@@ -152,10 +158,7 @@ export class UserService {
       if (queryRunner) {
         await queryRunner.rollbackTransaction();
       }
-      if (error instanceof Error) {
-        this.logger.error(`Error creating user: ${error.message}`);
-      }
-      throw new AppError(error);
+      throw error;
     } finally {
       if (queryRunner) {
         await queryRunner.release();
@@ -252,18 +255,20 @@ export class UserService {
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
-      if (updateUserDto.password_hash) {
+      const { password, ...otherData } = updateUserDto;
+      const updateData = {
+        ...(otherData as any),
+      } as QueryDeepPartialEntity<UserEntity>;
+
+      if (password) {
         const saltRounds = 12;
-        updateUserDto.password_hash = await bcrypt.hash(
-          updateUserDto.password_hash,
-          saltRounds,
-        );
+        updateData.password_hash = await bcrypt.hash(password, saltRounds);
       }
-      const updatedUser = await entityManager.update(
-        UserEntity,
-        id,
-        updateUserDto,
-      );
+
+      await entityManager.update(UserEntity, id, updateData);
+      const updatedUser = await entityManager.findOne(UserEntity, {
+        where: { id },
+      });
 
       // Invalidate cache
       const freshUser = await entityManager.findOne(UserEntity, {

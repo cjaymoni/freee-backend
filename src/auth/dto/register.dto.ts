@@ -6,10 +6,12 @@ import {
   IsOptional,
   IsPhoneNumber,
 } from 'class-validator';
+import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
 
 export class RegisterDto {
   @ApiProperty()
   @IsEmail()
+  @IsNotDisposableEmail()
   email: string;
 
   @ApiProperty({ minLength: 6 })
@@ -31,8 +33,4 @@ export class RegisterDto {
   @IsOptional()
   @IsPhoneNumber()
   phone_number?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  phone_country_code?: string;
 }

@@ -27,4 +27,24 @@ export class MailService {
       throw error;
     }
   }
+
+  async sendPasswordResetCode(email: string, code: string) {
+    try {
+      await this.mailerService.sendMail({
+        to: email,
+        subject: 'Password Reset Code',
+        text: `Your password reset code is: ${code}. It expires in 10 minutes.`,
+        html: `<b>Your password reset code is: ${code}</b><p>It expires in 10 minutes.</p>`,
+      });
+      this.logger.log(`Password reset code sent to ${email}`);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.stack : 'Unknown error';
+      this.logger.error(
+        `Failed to send password reset email to ${email}`,
+        errorMessage,
+      );
+      throw error;
+    }
+  }
 }

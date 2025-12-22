@@ -10,18 +10,44 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { LoginDto } from './dto/login.dto';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiExtraModels,
+} from '@nestjs/swagger';
 import { UserAgent } from '../common/decorators/user-agent.decorator';
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Get } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GetUser } from '../common/decorators/get-user.decorator';
+import { ServiceResponseDto } from '../common/service-response.dto';
+import { UserResponseDto } from '../user/dto/user-response.dto';
 
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @ApiTags('Auth')
+@ApiExtraModels(ServiceResponseDto, UserResponseDto)
 @Controller('auth')
 @UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current user info' })
+  @ApiOkResponse({
+    description: 'Current user profile retrieved successfully',
+    type: UserResponseDto,
+  })
+  async getMe(@GetUser('userId') userId: string) {
+    return await this.authService.getMe(userId);
+  }
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -33,6 +59,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Verify email with OTP' })
   async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto) {
     return this.authService.verifyEmail(verifyEmailDto);
+  }
+
+  @Post('resend-verification')
+  @ApiOperation({ summary: 'Resend verification email' })
+  async resendVerification(@Body() resendDto: ResendVerificationDto) {
+    return await this.authService.resendVerificationCode(resendDto.email);
   }
 
   @Post('login')
@@ -59,5 +91,19 @@ export class AuthController {
       ip,
       userAgent,
     );
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Initiate password reset' })
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Complete password reset' })
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
   }
 }

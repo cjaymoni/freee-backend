@@ -8,13 +8,12 @@ import {
   IsUUID,
   IsInt,
   MaxLength,
-  MinLength,
-  Matches,
   Min,
   IsPhoneNumber,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
 
 export class BaseUserDto {
   @ApiProperty({
@@ -32,27 +31,20 @@ export class BaseUserDto {
   @IsOptional()
   phone_number?: string;
 
-  @ApiProperty({ required: false, example: '+233' })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(5)
-  @Matches(/^\+\d{1,4}$/, {
-    message: 'Phone country code must start with + followed by 1-4 digits',
-  })
-  phone_country_code?: string;
-
-  @ApiProperty({ required: false, example: 'judeclottey@gmail.com' })
+  @ApiProperty({ required: false, example: 'johndoe@gmail.com' })
   @IsOptional()
   @IsEmail()
+  @IsNotDisposableEmail()
   @MaxLength(255)
   email?: string;
 
   @ApiProperty({
-    example: 'password',
+    example: 'password123',
+    description: 'User password (plain text)',
   })
   @IsString()
   @IsOptional()
-  password_hash?: string;
+  password?: string;
 
   @ApiProperty({ required: false, example: 'Jude' })
   @IsOptional()

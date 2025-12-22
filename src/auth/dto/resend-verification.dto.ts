@@ -1,15 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail } from 'class-validator';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
 
-export class LoginDto {
-  @ApiProperty()
+export class ResendVerificationDto {
+  @ApiProperty({ example: 'johndoe@gmail.com' })
   @IsEmail()
   @IsNotDisposableEmail()
   email: string;
-
-  @ApiProperty()
-  @IsString()
-  @MinLength(6)
-  password: string;
 }

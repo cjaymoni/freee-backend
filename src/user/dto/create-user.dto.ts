@@ -8,12 +8,11 @@ export class CreateUserDto extends PickType(BaseUserDto, [
   'email',
   'phone_number',
 
-  'phone_country_code',
   'gender',
   'bio',
 
   'date_of_birth',
-  'password_hash',
+  'password',
 ]) {
   @ApiProperty({ type: 'string', format: 'binary', required: false })
   @IsOptional()
