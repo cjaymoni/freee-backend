@@ -34,6 +34,9 @@ import { CreateUserResponseDto } from './dto/create-user-response.dto';
 import { FindUserDto } from './dto/find-user.dto';
 import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { UserRole } from './entities/user.entity';
 
 @ApiTags('user')
 @ApiBearerAuth()
@@ -82,12 +85,19 @@ export class UserController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all users' })
+  @ApiOperation({ summary: 'Get all users (Admin only)' })
   @ApiResponse({
     status: 200,
     description: 'Users found successfully',
     type: [UserResponseDto],
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Requires admin role',
+    type: ErrorResponseDto,
   })
   @ApiResponse({
     status: 500,

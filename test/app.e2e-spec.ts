@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { DataSource } from 'typeorm';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -14,6 +15,23 @@ describe('AppController (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+  });
+
+  afterEach(async () => {
+    try {
+      // Close database connections
+      const dataSource = app.get(DataSource);
+      if (dataSource?.isInitialized) {
+        await dataSource.destroy();
+      }
+    } catch {
+      // Silently catch errors if already closed
+    }
+
+    // Close the application and wait for all connections to close
+    if (app) {
+      await app.close();
+    }
   });
 
   it('/ (GET)', () => {

@@ -11,6 +11,11 @@ import {
 } from 'typeorm';
 import { UserSessionEntity } from '../../auth/entities/user-session.entity';
 
+export enum UserRole {
+  USER = 'USER',
+  ADMIN = 'ADMIN',
+}
+
 @Entity('users')
 @Index(['created_at'])
 @Index('idx_users_active', ['is_active', 'is_deleted', 'last_active'])
@@ -18,6 +23,13 @@ import { UserSessionEntity } from '../../auth/entities/user-session.entity';
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({
+    type: 'enum',
+    enum: UserRole,
+    default: UserRole.USER,
+  })
+  role: UserRole;
 
   @Column({ type: 'varchar', length: 20, unique: true, nullable: true })
   phone_number: string;

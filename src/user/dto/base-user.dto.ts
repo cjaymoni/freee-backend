@@ -10,6 +10,7 @@ import {
   MaxLength,
   Min,
   IsPhoneNumber,
+  IsEnum,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
@@ -46,17 +47,26 @@ export class BaseUserDto {
   @IsOptional()
   password?: string;
 
-  @ApiProperty({ required: false, example: 'Jude' })
+  @ApiProperty({ required: false, example: 'John' })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   first_name?: string;
 
-  @ApiProperty({ required: false, example: 'Clottey' })
+  @ApiProperty({ required: false, example: 'Doe' })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   last_name?: string;
+
+  @ApiProperty({
+    example: 'USER',
+    description: 'User role',
+    enum: ['USER', 'ADMIN'],
+  })
+  @IsEnum(['USER', 'ADMIN'])
+  @IsOptional()
+  role?: string;
 
   @ApiProperty({ required: false, example: '2000-01-01' })
   @IsOptional()

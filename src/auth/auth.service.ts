@@ -21,6 +21,7 @@ import { LoginDto } from './dto/login.dto';
 import { CreateUserDto } from '../user/dto/create-user.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserEntity } from '../user/entities/user.entity';
 
 @Injectable()
@@ -317,6 +318,7 @@ export class AuthService {
       const payload = {
         sub: user.id,
         email: user.email,
+        role: user.role,
         session_token: sessionToken,
       };
       const accessToken = this.jwtService.sign(payload);
@@ -385,6 +387,7 @@ export class AuthService {
       const payload = {
         sub: user.id,
         email: user.email,
+        role: user.role,
         session_token: newSessionToken,
       };
       const accessToken = this.jwtService.sign(payload);
@@ -411,6 +414,32 @@ export class AuthService {
 
   async getMe(userId: string) {
     return await this.userService.findOne(userId);
+  }
+
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
+    const { currentPassword, newPassword } = changePasswordDto;
+    const user = await this.userService.findOneEntity(userId);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      throw new BadRequestException('Invalid current password');
+    }
+
+    await this.userService.update(userId, { password: newPassword });
+
+    return { message: 'Password changed successfully' };
+  }
+
+  async logout(userId: string, sessionToken: string) {
+    await this.userSessionRepository.update(
+      { user: { id: userId }, session_token: sessionToken, is_active: true },
+      { is_active: false },
+    );
+    return { message: 'Logged out successfully' };
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
