@@ -249,9 +249,7 @@ describe('Auth Controller (e2e)', () => {
 
   describe('/auth/logout (POST)', () => {
     it('should fail without authentication', () => {
-      return request(app.getHttpServer())
-        .post('/auth/logout')
-        .expect(401);
+      return request(app.getHttpServer()).post('/auth/logout').expect(401);
     });
 
     it('should fail with invalid token', () => {
