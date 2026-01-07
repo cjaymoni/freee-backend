@@ -32,11 +32,13 @@ import { UserResponseDto } from './dto/user-response.dto';
 import { UserEntity } from './entities/user.entity';
 import { CreateUserResponseDto } from './dto/create-user-response.dto';
 import { FindUserDto } from './dto/find-user.dto';
+import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { UserRole } from './entities/user.entity';
+import { GetUser } from '../common/decorators/get-user.decorator';
 
 @ApiTags('user')
 @ApiBearerAuth()
@@ -142,6 +144,20 @@ export class UserController {
   })
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
     return this.userService.update(id, updateUserDto);
+  }
+
+  @Patch('fcm-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update FCM token for push notifications' })
+  @ApiResponse({
+    status: 200,
+    description: 'FCM token updated successfully',
+  })
+  async updateFcmToken(
+    @GetUser('userId') userId: string,
+    @Body() fcmTokenDto: UpdateFcmTokenDto,
+  ) {
+    return this.userService.update(userId, fcmTokenDto);
   }
 
   @Delete(':id')

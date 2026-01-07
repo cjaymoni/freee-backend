@@ -14,6 +14,9 @@ export class CreateUserDto extends PickType(BaseUserDto, [
   'date_of_birth',
   'password',
 ]) {
+  @IsOptional()
+  firebase_uid?: string;
+
   @ApiProperty({ type: 'string', format: 'binary', required: false })
   @IsOptional()
   file?: any;

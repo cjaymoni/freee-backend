@@ -47,4 +47,18 @@ export class MailService {
       throw error;
     }
   }
+  async sendFirebaseLink(email: string, link: string, type: string) {
+    try {
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `${type} Link`,
+        text: `Please click the following link to complete your ${type}: ${link}`,
+        html: `<h3>${type}</h3><p>Please click the button below to complete your ${type}:</p><a href="${link}" style="padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">Complete ${type}</a><p>If the button doesn't work, copy and paste this link: <br/> ${link}</p>`,
+      });
+      this.logger.log(`${type} link sent to ${email}`);
+    } catch (error: unknown) {
+      this.logger.error(`Failed to send ${type} email to ${email}`);
+      throw error;
+    }
+  }
 }

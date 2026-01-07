@@ -37,6 +37,13 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 255, unique: true, nullable: true })
   email: string;
 
+  @Column({ type: 'varchar', length: 128, unique: true, nullable: true })
+  @Index('idx_users_firebase_uid')
+  firebase_uid: string;
+
+  @Column({ type: 'boolean', default: false })
+  is_onboarded: boolean;
+
   @Column({
     type: 'varchar',
     length: 255,
@@ -73,7 +80,13 @@ export class UserEntity {
   last_active: Date;
 
   @Column({ type: 'boolean', default: false })
-  is_verified: boolean;
+  is_email_verified: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  is_phone_verified: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  fcm_token: string;
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;

@@ -117,7 +117,17 @@ export class BaseUserDto {
   @ApiProperty({ required: false, example: true })
   @IsOptional()
   @IsBoolean()
-  is_verified?: boolean;
+  is_email_verified?: boolean;
+
+  @ApiProperty({ required: false, example: true })
+  @IsOptional()
+  @IsBoolean()
+  is_phone_verified?: boolean;
+
+  @ApiProperty({ required: false, example: 'fcm-token-123' })
+  @IsOptional()
+  @IsString()
+  fcm_token?: string;
 
   @ApiProperty({ required: false, example: true })
   @IsOptional()
@@ -133,6 +143,11 @@ export class BaseUserDto {
   @IsOptional()
   @IsBoolean()
   is_deleted?: boolean;
+
+  @ApiProperty({ required: false, example: false })
+  @IsOptional()
+  @IsBoolean()
+  is_onboarded?: boolean;
 
   @ApiProperty({ required: false, example: '2022-01-01' })
   @ApiProperty({ required: false, example: '2022-01-01' })

@@ -28,6 +28,9 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { UserResponseDto } from '../user/dto/user-response.dto';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
+import { UserRole } from '../user/entities/user.entity';
 
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 
@@ -51,7 +54,10 @@ export class AuthController {
   }
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new user' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Register a new user (Admin Only)' })
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }

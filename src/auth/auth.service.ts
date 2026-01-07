@@ -4,7 +4,9 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
+import * as admin from 'firebase-admin';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -23,9 +25,14 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserEntity } from '../user/entities/user.entity';
+import { FirebaseService } from '../firebase/firebase.service';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
+import { FirebaseAuthDto } from './dto/firebase-auth.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userService: UserService,
     @InjectRepository(VerificationCodeEntity)
@@ -37,6 +44,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly dataSource: DataSource,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -67,7 +75,7 @@ export class AuthService {
       const userServiceResponse = await this.userService.create(
         createUserDto,
         undefined,
-        { is_active: false, is_verified: false },
+        { is_active: false, is_email_verified: false },
         queryRunner.manager,
       );
 
@@ -127,7 +135,7 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    if (user.is_verified) {
+    if (user.is_email_verified) {
       throw new BadRequestException('User is already verified');
     }
 
@@ -216,7 +224,7 @@ export class AuthService {
       await this.userService.update(
         user.id,
         {
-          is_verified: true,
+          is_email_verified: true,
           is_active: true,
         },
         queryRunner.manager,
@@ -230,6 +238,166 @@ export class AuthService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  async firebaseAuthenticate(
+    firebaseAuthDto: FirebaseAuthDto,
+    ip: string,
+    userAgent: string,
+  ) {
+    const { idToken } = firebaseAuthDto;
+    let decodedToken: admin.auth.DecodedIdToken;
+
+    try {
+      decodedToken = await this.firebaseService.verifyIdToken(idToken);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Firebase token verification failed: ${errorMessage}`);
+      throw new UnauthorizedException(`Authentication failed: ${errorMessage}`);
+    }
+
+    const { email, phone_number, uid: firebase_uid } = decodedToken;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let user: UserEntity | null = null;
+
+    try {
+      // 1. Precise Find or Link Strategy
+      // First, try by UID
+      user = await queryRunner.manager.findOne(UserEntity, {
+        where: { firebase_uid },
+      });
+
+      if (!user) {
+        // Not found by UID, try by Email or Phone
+        user = await this.userService.findByEmailOrPhone(email, phone_number);
+
+        if (user) {
+          // Link UID and sync data
+          user.firebase_uid = firebase_uid;
+          if (email && !user.email) user.email = email;
+          if (phone_number && !user.phone_number)
+            user.phone_number = phone_number;
+          await queryRunner.manager.save(user);
+        }
+      } else {
+        // Found by UID, sync missing email/phone if provided
+        let needsUpdate = false;
+        if (email && !user.email) {
+          user.email = email;
+          needsUpdate = true;
+        }
+        if (phone_number && !user.phone_number) {
+          user.phone_number = phone_number;
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
+          await queryRunner.manager.save(user);
+        }
+      }
+
+      if (!user) {
+        // 2. Create minimal user
+        const createUserDto: CreateUserDto = {
+          email: email || undefined,
+          phone_number: phone_number,
+          firebase_uid,
+        };
+
+        const userServiceResponse = await this.userService.create(
+          createUserDto,
+          undefined,
+          {
+            is_active: true,
+            is_email_verified: decodedToken.email_verified || false,
+            is_phone_verified: !!phone_number,
+          },
+          queryRunner.manager,
+        );
+
+        user = (await queryRunner.manager.findOne(UserEntity, {
+          where: { id: userServiceResponse.data.id },
+        })) as UserEntity;
+      } else {
+        // 3. Status Synchronization
+        let needsStatusUpdate = false;
+        if (decodedToken.email_verified && !user.is_email_verified) {
+          user.is_email_verified = true;
+          needsStatusUpdate = true;
+        }
+        if (phone_number && !user.is_phone_verified) {
+          user.is_phone_verified = true;
+          needsStatusUpdate = true;
+        }
+        if (needsStatusUpdate) {
+          await queryRunner.manager.save(user);
+        }
+      }
+
+      // Issue Local JWT
+      const sessionToken = randomBytes(32).toString('hex');
+      const refreshToken = randomBytes(64).toString('hex');
+
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+
+      const refreshExpiresAt = new Date();
+      refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
+
+      const session = queryRunner.manager.create(UserSessionEntity, {
+        user,
+        session_token: sessionToken,
+        refresh_token: refreshToken,
+        refresh_token_expires_at: refreshExpiresAt,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: expiresAt,
+        device_type: 'mobile',
+      });
+
+      await queryRunner.manager.save(session);
+      await queryRunner.commitTransaction();
+
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        session_token: sessionToken,
+      };
+
+      return {
+        access_token: this.jwtService.sign(payload),
+        refresh_token: refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          is_onboarded: user.is_onboarded,
+        },
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async firebaseLogin(
+    firebaseLoginDto: FirebaseLoginDto,
+    ip: string,
+    userAgent: string,
+  ) {
+    // Wrap the new robust method to maintain backward compatibility
+    return this.firebaseAuthenticate(
+      { idToken: firebaseLoginDto.idToken },
+      ip,
+      userAgent,
+    );
   }
 
   async login(loginDto: LoginDto, ip: string, userAgent: string) {

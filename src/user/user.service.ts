@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -54,18 +53,38 @@ export class UserService {
     return user;
   }
 
+  async findByFirebaseUid(firebaseUid: string): Promise<UserEntity | null> {
+    const cacheKey = `user:firebase_uid:${firebaseUid}`;
+    const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
+    if (cachedUser) {
+      this.logger.log(`Cache hit for user firebase_uid: ${firebaseUid}`);
+      return cachedUser;
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { firebase_uid: firebaseUid },
+    });
+    if (user) {
+      await this.cacheManager.set(cacheKey, user, 3600);
+    }
+    return user;
+  }
+
   async findOneEntity(id: string): Promise<UserEntity | null> {
     return await this.userRepository.findOne({ where: { id } });
   }
 
   async findByEmailOrPhone(
-    email: string,
+    email?: string,
     phoneNumber?: string,
   ): Promise<UserEntity | null> {
-    const whereConditions: FindOptionsWhere<UserEntity>[] = [{ email }];
+    const whereConditions: FindOptionsWhere<UserEntity>[] = [];
+    if (email) whereConditions.push({ email });
     if (phoneNumber) {
       whereConditions.push({ phone_number: phoneNumber });
     }
+
+    if (whereConditions.length === 0) return null;
 
     return this.userRepository.findOne({
       where: whereConditions,
@@ -75,7 +94,11 @@ export class UserService {
   async create(
     createUserDto: CreateUserDto,
     file?: Express.Multer.File,
-    options: { is_active?: boolean; is_verified?: boolean } = {},
+    options: {
+      is_active?: boolean;
+      is_email_verified?: boolean;
+      is_phone_verified?: boolean;
+    } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
     const queryRunner = !manager ? this.dataSource.createQueryRunner() : null;
@@ -86,9 +109,6 @@ export class UserService {
     const entityManager = manager || queryRunner!.manager;
 
     try {
-      if (!createUserDto.email || !createUserDto.password) {
-        throw new BadRequestException('Email and password are required');
-      }
       this.logger.log(`Creating user with email: ${createUserDto.email}`);
 
       // Internal safety check: ensure email/phone is unique
@@ -110,11 +130,11 @@ export class UserService {
       }
 
       // Hash password
-      const saltRounds = 12;
-      const hashedPassword = await bcrypt.hash(
-        createUserDto.password,
-        saltRounds,
-      );
+      let hashedPassword = '';
+      if (createUserDto.password) {
+        const saltRounds = 12;
+        hashedPassword = await bcrypt.hash(createUserDto.password, saltRounds);
+      }
 
       // Handle Avatar
       let avatarData = {};
@@ -133,8 +153,10 @@ export class UserService {
       const user = entityManager.create(UserEntity, {
         ...userData,
         ...avatarData,
-        password_hash: hashedPassword,
-        is_verified: options.is_verified ?? false,
+        firebase_uid: createUserDto.firebase_uid,
+        password_hash: createUserDto.password ? hashedPassword : undefined,
+        is_email_verified: options.is_email_verified ?? false,
+        is_phone_verified: options.is_phone_verified ?? false,
         is_active: options.is_active ?? true,
         notification_enabled: true,
         failed_login_attempts: 0,

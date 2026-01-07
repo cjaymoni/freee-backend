@@ -14,6 +14,7 @@ import { redisStore } from 'cache-manager-redis-store';
 import { ConfigService } from '@nestjs/config';
 import { HealthModule } from './health/health.module';
 import { CommonModule } from './common/common.module';
+import { FirebaseModule } from './firebase/firebase.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -89,6 +90,7 @@ import { envValidationSchema } from './config/env.validation';
     UserModule,
     HealthModule,
     CommonModule,
+    FirebaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

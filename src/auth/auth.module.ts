@@ -5,6 +5,8 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { FirebaseAuthController } from './firebase-auth.controller';
+import { FirebaseAuthService } from './firebase-auth.service';
 import { VerificationCodeEntity } from './entities/verification-code.entity';
 import { UserSessionEntity } from './entities/user-session.entity';
 import { LoginAttemptEntity } from './entities/login-attempt.entity';
@@ -32,8 +34,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController, FirebaseAuthController],
+  providers: [AuthService, FirebaseAuthService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}
