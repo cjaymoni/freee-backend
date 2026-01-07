@@ -58,3 +58,7 @@ postgres-data/*
 .history/
 postgres_data/*
 docker_volumes/*
+
+*.html
+check-db.js
+generate-custom-token.js
