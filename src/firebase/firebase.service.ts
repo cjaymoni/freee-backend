@@ -17,65 +17,83 @@ export class FirebaseService implements OnModuleInit {
       'FIREBASE_SERVICE_ACCOUNT_JSON',
     );
 
+    const credentialSource = serviceAccountJson || serviceAccountPath;
+
+    if (!credentialSource) {
+      this.logger.warn(
+        'Firebase credentials not found. Firebase features will be unavailable.',
+      );
+      return;
+    }
+
     try {
-      let credential: any;
+      const credential = this.tryParseCredential(credentialSource);
 
-      if (serviceAccountJson) {
-        credential = JSON.parse(serviceAccountJson);
-        this.logger.log('Firebase: Using credentials from JSON variable');
-      } else if (serviceAccountPath) {
-        let trimmedPath = serviceAccountPath.trim();
-        // Handle cases where the variable might be wrapped in extra quotes
-        if (
-          trimmedPath.startsWith('"') &&
-          trimmedPath.endsWith('"') &&
-          trimmedPath.length > 2
-        ) {
-          trimmedPath = trimmedPath.substring(1, trimmedPath.length - 1).trim();
-        }
-
-        if (trimmedPath.startsWith('{')) {
-          try {
-            credential = JSON.parse(trimmedPath);
-            this.logger.log(
-              'Firebase: Using credentials from JSON in path variable',
-            );
-          } catch (e) {
-            this.logger.error(
-              'Firebase: Detected JSON-like string in path but failed to parse',
-              e,
-            );
-            credential = serviceAccountPath; // Fallback to path
-          }
-        } else {
-          credential = serviceAccountPath;
-          this.logger.log(
-            `Firebase: Using credentials from path: ${serviceAccountPath}`,
-          );
-        }
-      }
-
-      if (credential) {
-        // Fix private key formatting if we have an object
-        if (typeof credential === 'object' && credential.private_key) {
-          credential.private_key = credential.private_key.replace(/\\n/g, '\n');
-        }
-
+      if (typeof credential === 'string') {
+        // If it's still a string, it must be a path
+        this.logger.log(`Firebase: Initializing via path: ${credential}`);
         this.firebaseApp = admin.initializeApp({
           credential: admin.credential.cert(credential),
         });
-        this.logger.log('Firebase Admin initialized successfully');
-      } else {
-        this.logger.warn(
-          'Firebase credentials not found. Firebase features will be unavailable.',
-        );
+      } else if (typeof credential === 'object' && credential !== null) {
+        // If it's an object, it's the parsed JSON
+        this.logger.log('Firebase: Initializing via parsed JSON object');
+
+        const serviceAccount = credential;
+        // Fix private key formatting
+        if (serviceAccount.privateKey) {
+          serviceAccount.privateKey = serviceAccount.privateKey.replace(
+            /\\n/g,
+            '\n',
+          );
+        }
+
+        this.firebaseApp = admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+        });
       }
+
+      this.logger.log('Firebase Admin initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize Firebase Admin SDK', error);
-      // Log the first few characters of the source to help debugging
-      const source = serviceAccountJson || serviceAccountPath || 'none';
-      this.logger.error(`Source begins with: ${source.substring(0, 20)}...`);
+      this.logger.error(
+        `Credential source begins with: ${credentialSource.substring(0, 50)}...`,
+      );
     }
+  }
+
+  private tryParseCredential(input: string): string | admin.ServiceAccount {
+    let current: any = input.trim();
+
+    // Remove surrounding quotes if Render/Docker wrapped the whole thing
+    if (
+      typeof current === 'string' &&
+      current.startsWith('"') &&
+      current.endsWith('"') &&
+      current.length > 2
+    ) {
+      current = current.substring(1, current.length - 1).trim();
+    }
+
+    // Attempt recursive parsing for double-encoded JSON
+    while (typeof current === 'string' && current.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(current);
+        // If it's a string, keep going. If it's an object, we're done.
+        if (typeof parsed === 'string') {
+          current = parsed.trim();
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          return parsed as admin.ServiceAccount;
+        } else {
+          break;
+        }
+      } catch {
+        // Not valid JSON, treat as path
+        break;
+      }
+    }
+
+    return current as string;
   }
 
   async verifyIdToken(idToken: string): Promise<admin.auth.DecodedIdToken> {
