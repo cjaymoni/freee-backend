@@ -18,27 +18,36 @@ export class FirebaseService implements OnModuleInit {
     );
 
     try {
+      let credential: any;
+
       if (serviceAccountJson) {
-        const serviceAccount = JSON.parse(
-          serviceAccountJson,
-        ) as admin.ServiceAccount;
-        if (serviceAccount.privateKey) {
-          serviceAccount.privateKey = serviceAccount.privateKey.replace(
-            /\\n/g,
-            '\n',
+        credential = JSON.parse(serviceAccountJson);
+        this.logger.log('Firebase: Using credentials from JSON variable');
+      } else if (serviceAccountPath) {
+        const trimmedPath = serviceAccountPath.trim();
+        if (trimmedPath.startsWith('{')) {
+          credential = JSON.parse(trimmedPath);
+          this.logger.log(
+            'Firebase: Using credentials from JSON in path variable',
+          );
+        } else {
+          credential = serviceAccountPath;
+          this.logger.log(
+            `Firebase: Using credentials from path: ${serviceAccountPath}`,
           );
         }
+      }
+
+      if (credential) {
+        // Fix private key formatting if we have an object
+        if (typeof credential === 'object' && credential.private_key) {
+          credential.private_key = credential.private_key.replace(/\\n/g, '\n');
+        }
+
         this.firebaseApp = admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount),
+          credential: admin.credential.cert(credential),
         });
-        this.logger.log('Firebase Admin initialized via JSON');
-      } else if (serviceAccountPath) {
-        this.firebaseApp = admin.initializeApp({
-          credential: admin.credential.cert(serviceAccountPath),
-        });
-        this.logger.log(
-          `Firebase Admin initialized via path: ${serviceAccountPath}`,
-        );
+        this.logger.log('Firebase Admin initialized successfully');
       } else {
         this.logger.warn(
           'Firebase credentials not found. Firebase features will be unavailable.',
@@ -46,6 +55,9 @@ export class FirebaseService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error('Failed to initialize Firebase Admin SDK', error);
+      // Log the first few characters of the source to help debugging
+      const source = serviceAccountJson || serviceAccountPath || 'none';
+      this.logger.error(`Source begins with: ${source.substring(0, 20)}...`);
     }
   }
 

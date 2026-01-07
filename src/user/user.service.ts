@@ -291,6 +291,15 @@ export class UserService {
         updateData.password_hash = await bcrypt.hash(password, saltRounds);
       }
 
+      // Check for onboarding completion
+      if (
+        updateUserDto.first_name &&
+        updateUserDto.last_name &&
+        !user.is_onboarded
+      ) {
+        updateData.is_onboarded = true;
+      }
+
       await entityManager.update(UserEntity, id, updateData);
       const updatedUser = await entityManager.findOne(UserEntity, {
         where: { id },
