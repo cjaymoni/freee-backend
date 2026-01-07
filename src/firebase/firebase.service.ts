@@ -24,12 +24,29 @@ export class FirebaseService implements OnModuleInit {
         credential = JSON.parse(serviceAccountJson);
         this.logger.log('Firebase: Using credentials from JSON variable');
       } else if (serviceAccountPath) {
-        const trimmedPath = serviceAccountPath.trim();
+        let trimmedPath = serviceAccountPath.trim();
+        // Handle cases where the variable might be wrapped in extra quotes
+        if (
+          trimmedPath.startsWith('"') &&
+          trimmedPath.endsWith('"') &&
+          trimmedPath.length > 2
+        ) {
+          trimmedPath = trimmedPath.substring(1, trimmedPath.length - 1).trim();
+        }
+
         if (trimmedPath.startsWith('{')) {
-          credential = JSON.parse(trimmedPath);
-          this.logger.log(
-            'Firebase: Using credentials from JSON in path variable',
-          );
+          try {
+            credential = JSON.parse(trimmedPath);
+            this.logger.log(
+              'Firebase: Using credentials from JSON in path variable',
+            );
+          } catch (e) {
+            this.logger.error(
+              'Firebase: Detected JSON-like string in path but failed to parse',
+              e,
+            );
+            credential = serviceAccountPath; // Fallback to path
+          }
         } else {
           credential = serviceAccountPath;
           this.logger.log(
