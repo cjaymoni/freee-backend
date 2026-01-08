@@ -13,6 +13,17 @@ export class ServiceResponseDto<T> {
   @ApiProperty({ example: 200 })
   statusCode?: number;
 
+  @ApiPropertyOptional({ description: 'Total count for paginated responses' })
+  total?: number;
+
+  @ApiPropertyOptional({
+    description: 'Current page number for paginated responses',
+  })
+  page?: number;
+
+  @ApiPropertyOptional({ description: 'Page size for paginated responses' })
+  limit?: number;
+
   @ApiPropertyOptional()
   error?: string;
 

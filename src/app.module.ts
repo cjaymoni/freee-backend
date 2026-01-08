@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { typeOrmConfig } from './config/typeorm.config';
@@ -18,6 +19,9 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { ItemModule } from './item/item.module';
 import { CategoryModule } from './category/category.module';
 import { AuditModule } from './audit/audit.module';
+import { SavedItemModule } from './saved-item/saved-item.module';
+import { ItemViewModule } from './item-view/item-view.module';
+import { ItemRequestModule } from './item-request/item-request.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -34,6 +38,7 @@ import { envValidationSchema } from './config/env.validation';
         limit: 10,
       },
     ]),
+    ScheduleModule.forRoot(),
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
@@ -94,6 +99,9 @@ import { envValidationSchema } from './config/env.validation';
     ItemModule,
     CategoryModule,
     AuditModule,
+    SavedItemModule,
+    ItemViewModule,
+    ItemRequestModule,
     HealthModule,
     CommonModule,
     FirebaseModule,
