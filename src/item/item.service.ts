@@ -1,0 +1,228 @@
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ItemEntity, ItemStatus } from './entities/item.entity';
+import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
+import { ItemResponseDto } from './dto/item-response.dto';
+
+@Injectable()
+export class ItemService {
+  constructor(
+    @InjectRepository(ItemEntity)
+    private readonly itemRepository: Repository<ItemEntity>,
+  ) {}
+
+  /**
+   * Create a new item
+   */
+  async create(
+    userId: string,
+    createDto: CreateItemDto,
+  ): Promise<ItemResponseDto> {
+    // Validate price logic
+    if (createDto.is_free && createDto.price && createDto.price > 0) {
+      throw new BadRequestException(
+        'Item cannot be marked as free if price is greater than 0',
+      );
+    }
+
+    const item = this.itemRepository.create({
+      ...createDto,
+      user_id: userId,
+      price: createDto.is_free ? 0 : createDto.price || 0,
+    });
+
+    const saved = await this.itemRepository.save(item);
+    return ItemResponseDto.fromEntity(saved);
+  }
+
+  /**
+   * Get all items (with filters)
+   */
+  async findAll(filters?: {
+    user_id?: string;
+    category_id?: string;
+    status?: ItemStatus;
+    is_featured?: boolean;
+    is_free?: boolean;
+  }): Promise<ItemResponseDto[]> {
+    const query = this.itemRepository
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.location', 'location')
+      .leftJoinAndSelect('item.category', 'category')
+      .leftJoinAndSelect(
+        'item.images',
+        'images',
+        'images.is_deleted = :images_deleted',
+        { images_deleted: false },
+      )
+      .where('item.is_deleted = :is_deleted', { is_deleted: false });
+
+    if (filters?.user_id) {
+      query.andWhere('item.user_id = :user_id', { user_id: filters.user_id });
+    }
+
+    if (filters?.category_id) {
+      query.andWhere('item.category_id = :category_id', {
+        category_id: filters.category_id,
+      });
+    }
+
+    if (filters?.status) {
+      query.andWhere('item.status = :status', { status: filters.status });
+    }
+
+    if (filters?.is_featured !== undefined) {
+      query.andWhere('item.is_featured = :is_featured', {
+        is_featured: filters.is_featured,
+      });
+    }
+
+    if (filters?.is_free !== undefined) {
+      query.andWhere('item.is_free = :is_free', { is_free: filters.is_free });
+    }
+
+    query.orderBy('item.created_at', 'DESC');
+
+    const items = await query.getMany();
+    return items.map((item) => ItemResponseDto.fromEntity(item));
+  }
+
+  /**
+   * Get a single item by ID
+   */
+  async findOne(id: string): Promise<ItemResponseDto> {
+    const item = await this.itemRepository.findOne({
+      where: { id, is_deleted: false },
+      relations: ['location', 'user', 'category', 'images'],
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${id} not found`);
+    }
+
+    // Increment view count
+    await this.itemRepository.update(id, {
+      view_count: () => 'view_count + 1',
+    });
+
+    return ItemResponseDto.fromEntity(item);
+  }
+
+  /**
+   * Update an item
+   */
+  async update(
+    userId: string,
+    itemId: string,
+    updateDto: UpdateItemDto,
+  ): Promise<ItemResponseDto> {
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId, is_deleted: false },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    // Check ownership
+    if (item.user_id !== userId) {
+      throw new ForbiddenException('You can only update your own items');
+    }
+
+    // Validate price logic
+    if (updateDto.is_free && updateDto.price && updateDto.price > 0) {
+      throw new BadRequestException(
+        'Item cannot be marked as free if price is greater than 0',
+      );
+    }
+
+    Object.assign(item, updateDto);
+
+    // If marked as free, set price to 0
+    if (updateDto.is_free) {
+      item.price = 0;
+    }
+
+    const updated = await this.itemRepository.save(item);
+    return ItemResponseDto.fromEntity(updated);
+  }
+
+  /**
+   * Soft delete an item
+   */
+  async remove(
+    userId: string,
+    itemId: string,
+    reason?: string,
+  ): Promise<ItemResponseDto> {
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId, is_deleted: false },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    // Check ownership
+    if (item.user_id !== userId) {
+      throw new ForbiddenException('You can only delete your own items');
+    }
+
+    item.is_deleted = true;
+    item.deleted_at = new Date();
+    item.deleted_by = userId;
+    item.deletion_reason = reason || 'Deleted by owner';
+    item.status = ItemStatus.UNAVAILABLE;
+
+    const deleted = await this.itemRepository.save(item);
+    return ItemResponseDto.fromEntity(deleted);
+  }
+
+  /**
+   * Feature an item (Admin only)
+   */
+  async feature(
+    itemId: string,
+    featuredUntil?: Date,
+  ): Promise<ItemResponseDto> {
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId, is_deleted: false },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    item.is_featured = true;
+    item.featured_until = featuredUntil || null;
+
+    const updated = await this.itemRepository.save(item);
+    return ItemResponseDto.fromEntity(updated);
+  }
+
+  /**
+   * Unfeature an item (Admin only)
+   */
+  async unfeature(itemId: string): Promise<ItemResponseDto> {
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId, is_deleted: false },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    item.is_featured = false;
+    item.featured_until = null;
+
+    const updated = await this.itemRepository.save(item);
+    return ItemResponseDto.fromEntity(updated);
+  }
+}

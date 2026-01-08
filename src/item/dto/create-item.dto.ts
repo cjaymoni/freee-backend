@@ -1,0 +1,72 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsEnum,
+  IsNumber,
+  IsBoolean,
+  IsUUID,
+  IsDate,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { ItemCondition } from '../entities/item.entity';
+
+export class CreateItemDto {
+  @ApiProperty({ description: 'Item title', maxLength: 255 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  title: string;
+
+  @ApiPropertyOptional({ description: 'Item description' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Category ID' })
+  @IsUUID()
+  @IsOptional()
+  category_id?: string;
+
+  @ApiProperty({
+    description: 'Item condition',
+    enum: ItemCondition,
+  })
+  @IsEnum(ItemCondition)
+  condition: ItemCondition;
+
+  @ApiPropertyOptional({
+    description: 'Item price (set to 0 if free)',
+    default: 0,
+    minimum: 0,
+  })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Type(() => Number)
+  price?: number;
+
+  @ApiPropertyOptional({
+    description: 'Whether the item is free',
+    default: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  is_free?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Location ID from saved locations or temporary location',
+  })
+  @IsUUID()
+  @IsOptional()
+  location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Pickup date' })
+  @IsDate()
+  @IsOptional()
+  @Type(() => Date)
+  pickup_date?: Date;
+}

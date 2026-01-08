@@ -15,6 +15,8 @@ import { ConfigService } from '@nestjs/config';
 import { HealthModule } from './health/health.module';
 import { CommonModule } from './common/common.module';
 import { FirebaseModule } from './firebase/firebase.module';
+import { ItemModule } from './item/item.module';
+import { CategoryModule } from './category/category.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -88,6 +90,8 @@ import { envValidationSchema } from './config/env.validation';
     CloudinaryModule,
     AuthModule,
     UserModule,
+    ItemModule,
+    CategoryModule,
     HealthModule,
     CommonModule,
     FirebaseModule,
