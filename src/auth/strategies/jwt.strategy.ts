@@ -21,6 +21,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: {
     sub: string;
     email: string;
+    role: string;
     session_token: string;
   }) {
     const { session_token } = payload;
@@ -39,6 +40,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       userId: payload.sub,
       email: payload.email,
+      role: payload.role,
       sessionToken: session_token,
     };
   }

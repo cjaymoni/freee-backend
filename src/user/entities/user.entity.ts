@@ -8,8 +8,11 @@ import {
   ManyToOne,
   JoinColumn,
   OneToMany,
+  OneToOne,
 } from 'typeorm';
 import { UserSessionEntity } from '../../auth/entities/user-session.entity';
+import { LocationEntity } from './location.entity';
+import { UserPreferenceEntity } from './user-preference.entity';
 
 export enum UserRole {
   USER = 'USER',
@@ -127,4 +130,10 @@ export class UserEntity {
 
   @OneToMany(() => UserSessionEntity, (session) => session.user)
   sessions: UserSessionEntity[];
+
+  @OneToMany(() => LocationEntity, (location) => location.user)
+  locations: LocationEntity[];
+
+  @OneToOne(() => UserPreferenceEntity, (preference) => preference.user)
+  preference: UserPreferenceEntity;
 }
