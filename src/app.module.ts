@@ -17,6 +17,7 @@ import { CommonModule } from './common/common.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { ItemModule } from './item/item.module';
 import { CategoryModule } from './category/category.module';
+import { AuditModule } from './audit/audit.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -92,6 +93,7 @@ import { envValidationSchema } from './config/env.validation';
     UserModule,
     ItemModule,
     CategoryModule,
+    AuditModule,
     HealthModule,
     CommonModule,
     FirebaseModule,

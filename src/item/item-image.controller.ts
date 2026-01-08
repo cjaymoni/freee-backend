@@ -21,6 +21,7 @@ import { CreateItemImageDto } from './dto/create-item-image.dto';
 import { ItemImageResponseDto } from './dto/item-image-response.dto';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @ApiTags('Item Images')
 @ApiBearerAuth()
@@ -34,8 +35,20 @@ export class ItemImageController {
   @ApiParam({ name: 'itemId', description: 'Item ID' })
   @ApiResponse({
     status: 201,
-    description: 'Image added successfully',
-    type: ItemImageResponseDto,
+    description:
+      'Image added successfully. Returns wrapped response with state, data (ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Image added successfully' },
+            statusCode: { type: 'number', example: 201 },
+            data: { $ref: '#/components/schemas/ItemImageResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -44,7 +57,7 @@ export class ItemImageController {
     @GetUser('userId') userId: string,
     @Param('itemId') itemId: string,
     @Body() createDto: CreateItemImageDto,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     return this.imageService.create(userId, itemId, createDto);
   }
 
@@ -53,13 +66,31 @@ export class ItemImageController {
   @ApiParam({ name: 'itemId', description: 'Item ID' })
   @ApiResponse({
     status: 200,
-    description: 'Images retrieved successfully',
-    type: [ItemImageResponseDto],
+    description:
+      'Images retrieved successfully. Returns wrapped response with state, data (array of ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Images retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ItemImageResponseDto' },
+            },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findAll(
     @Param('itemId') itemId: string,
-  ): Promise<ItemImageResponseDto[]> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto[]>> {
     return this.imageService.findAllByItemId(itemId);
   }
 
@@ -69,14 +100,29 @@ export class ItemImageController {
   @ApiParam({ name: 'imageId', description: 'Image ID' })
   @ApiResponse({
     status: 200,
-    description: 'Image retrieved successfully',
-    type: ItemImageResponseDto,
+    description:
+      'Image retrieved successfully. Returns wrapped response with state, data (ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Image retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemImageResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Image not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findOne(
     @Param('imageId') imageId: string,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     return this.imageService.findOne(imageId);
   }
 
@@ -86,8 +132,23 @@ export class ItemImageController {
   @ApiParam({ name: 'imageId', description: 'Image ID' })
   @ApiResponse({
     status: 200,
-    description: 'Primary image set successfully',
-    type: ItemImageResponseDto,
+    description:
+      'Primary image set successfully. Returns wrapped response with state, data (ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Image set as primary successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemImageResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Image not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -95,7 +156,7 @@ export class ItemImageController {
   async setPrimary(
     @GetUser('userId') userId: string,
     @Param('imageId') imageId: string,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     return this.imageService.setPrimary(userId, imageId);
   }
 
@@ -114,8 +175,23 @@ export class ItemImageController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Display order updated successfully',
-    type: ItemImageResponseDto,
+    description:
+      'Display order updated successfully. Returns wrapped response with state, data (ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Display order updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemImageResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Image not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -124,7 +200,7 @@ export class ItemImageController {
     @GetUser('userId') userId: string,
     @Param('imageId') imageId: string,
     @Body('display_order') displayOrder: number,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     return this.imageService.updateDisplayOrder(userId, imageId, displayOrder);
   }
 
@@ -134,8 +210,20 @@ export class ItemImageController {
   @ApiParam({ name: 'imageId', description: 'Image ID' })
   @ApiResponse({
     status: 200,
-    description: 'Image deleted successfully',
-    type: ItemImageResponseDto,
+    description:
+      'Image deleted successfully. Returns wrapped response with state, data (ItemImageResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Image deleted successfully' },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemImageResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Image not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -144,7 +232,7 @@ export class ItemImageController {
   async remove(
     @GetUser('userId') userId: string,
     @Param('imageId') imageId: string,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     return this.imageService.remove(userId, imageId);
   }
 }

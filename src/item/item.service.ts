@@ -10,6 +10,7 @@ import { ItemEntity, ItemStatus } from './entities/item.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @Injectable()
 export class ItemService {
@@ -24,7 +25,7 @@ export class ItemService {
   async create(
     userId: string,
     createDto: CreateItemDto,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     // Validate price logic
     if (createDto.is_free && createDto.price && createDto.price > 0) {
       throw new BadRequestException(
@@ -39,7 +40,12 @@ export class ItemService {
     });
 
     const saved = await this.itemRepository.save(item);
-    return ItemResponseDto.fromEntity(saved);
+    return {
+      message: 'Item created successfully',
+      data: ItemResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
@@ -51,7 +57,7 @@ export class ItemService {
     status?: ItemStatus;
     is_featured?: boolean;
     is_free?: boolean;
-  }): Promise<ItemResponseDto[]> {
+  }): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     const query = this.itemRepository
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
@@ -91,13 +97,18 @@ export class ItemService {
     query.orderBy('item.created_at', 'DESC');
 
     const items = await query.getMany();
-    return items.map((item) => ItemResponseDto.fromEntity(item));
+    return {
+      message: 'Items retrieved successfully',
+      data: items.map((item) => ItemResponseDto.fromEntity(item)),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get a single item by ID
    */
-  async findOne(id: string): Promise<ItemResponseDto> {
+  async findOne(id: string): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id, is_deleted: false },
       relations: ['location', 'user', 'category', 'images'],
@@ -112,7 +123,12 @@ export class ItemService {
       view_count: () => 'view_count + 1',
     });
 
-    return ItemResponseDto.fromEntity(item);
+    return {
+      message: 'Item retrieved successfully',
+      data: ItemResponseDto.fromEntity(item),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -122,7 +138,7 @@ export class ItemService {
     userId: string,
     itemId: string,
     updateDto: UpdateItemDto,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
     });
@@ -151,7 +167,12 @@ export class ItemService {
     }
 
     const updated = await this.itemRepository.save(item);
-    return ItemResponseDto.fromEntity(updated);
+    return {
+      message: 'Item updated successfully',
+      data: ItemResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -161,7 +182,7 @@ export class ItemService {
     userId: string,
     itemId: string,
     reason?: string,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
     });
@@ -182,7 +203,12 @@ export class ItemService {
     item.status = ItemStatus.UNAVAILABLE;
 
     const deleted = await this.itemRepository.save(item);
-    return ItemResponseDto.fromEntity(deleted);
+    return {
+      message: 'Item deleted successfully',
+      data: ItemResponseDto.fromEntity(deleted),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -191,7 +217,7 @@ export class ItemService {
   async feature(
     itemId: string,
     featuredUntil?: Date,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
     });
@@ -204,13 +230,20 @@ export class ItemService {
     item.featured_until = featuredUntil || null;
 
     const updated = await this.itemRepository.save(item);
-    return ItemResponseDto.fromEntity(updated);
+    return {
+      message: 'Item featured successfully',
+      data: ItemResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Unfeature an item (Admin only)
    */
-  async unfeature(itemId: string): Promise<ItemResponseDto> {
+  async unfeature(
+    itemId: string,
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
     });
@@ -223,6 +256,11 @@ export class ItemService {
     item.featured_until = null;
 
     const updated = await this.itemRepository.save(item);
-    return ItemResponseDto.fromEntity(updated);
+    return {
+      message: 'Item unfeatured successfully',
+      data: ItemResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 }

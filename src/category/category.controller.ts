@@ -25,6 +25,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @ApiTags('Categories')
 @Controller('categories')
@@ -38,14 +39,29 @@ export class CategoryController {
   @ApiOperation({ summary: 'Create a new category (Admin only)' })
   @ApiResponse({
     status: 201,
-    description: 'Category created successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category created successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category created successfully',
+            },
+            statusCode: { type: 'number', example: 201 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 409, description: 'Category slug already exists' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
   async create(
     @Body() createDto: CreateCategoryDto,
-  ): Promise<CategoryResponseDto> {
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.create(createDto);
   }
 
@@ -65,13 +81,31 @@ export class CategoryController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Categories retrieved successfully',
-    type: [CategoryResponseDto],
+    description:
+      'Categories retrieved successfully. Returns wrapped response with state, data (array of CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Categories retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/CategoryResponseDto' },
+            },
+          },
+        },
+      ],
+    },
   })
   async findAll(
     @Query('active_only') activeOnly?: boolean,
     @Query('include_subcategories') includeSubcategories?: boolean,
-  ): Promise<CategoryResponseDto[]> {
+  ): Promise<ServiceResponseDto<CategoryResponseDto[]>> {
     const onlyActive = activeOnly !== false; // default true
     const includeSubs = includeSubcategories !== false; // default true
     return this.categoryService.findAll(onlyActive, includeSubs);
@@ -82,11 +116,28 @@ export class CategoryController {
   @ApiParam({ name: 'slug', description: 'Category slug' })
   @ApiResponse({
     status: 200,
-    description: 'Category retrieved successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category retrieved successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
-  async findBySlug(@Param('slug') slug: string): Promise<CategoryResponseDto> {
+  async findBySlug(
+    @Param('slug') slug: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.findBySlug(slug);
   }
 
@@ -95,11 +146,28 @@ export class CategoryController {
   @ApiParam({ name: 'id', description: 'Category ID' })
   @ApiResponse({
     status: 200,
-    description: 'Category retrieved successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category retrieved successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
-  async findOne(@Param('id') id: string): Promise<CategoryResponseDto> {
+  async findOne(
+    @Param('id') id: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.findOne(id);
   }
 
@@ -111,15 +179,30 @@ export class CategoryController {
   @ApiParam({ name: 'id', description: 'Category ID' })
   @ApiResponse({
     status: 200,
-    description: 'Category updated successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category updated successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
   async update(
     @Param('id') id: string,
     @Body() updateDto: UpdateCategoryDto,
-  ): Promise<CategoryResponseDto> {
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.update(id, updateDto);
   }
 
@@ -131,12 +214,29 @@ export class CategoryController {
   @ApiParam({ name: 'id', description: 'Category ID' })
   @ApiResponse({
     status: 200,
-    description: 'Category deleted successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category deleted successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category deleted successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
-  async remove(@Param('id') id: string): Promise<CategoryResponseDto> {
+  async remove(
+    @Param('id') id: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.remove(id);
   }
 
@@ -148,12 +248,29 @@ export class CategoryController {
   @ApiParam({ name: 'id', description: 'Category ID' })
   @ApiResponse({
     status: 200,
-    description: 'Category status toggled successfully',
-    type: CategoryResponseDto,
+    description:
+      'Category status toggled successfully. Returns wrapped response with state, data (CategoryResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Category status toggled successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/CategoryResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
-  async toggleActive(@Param('id') id: string): Promise<CategoryResponseDto> {
+  async toggleActive(
+    @Param('id') id: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.toggleActive(id);
   }
 }

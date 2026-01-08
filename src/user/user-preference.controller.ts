@@ -23,6 +23,7 @@ import { UpdateUserPreferenceDto } from './dto/update-user-preference.dto';
 import { UserPreferenceResponseDto } from './dto/user-preference-response.dto';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @ApiTags('User Preferences')
 @ApiBearerAuth()
@@ -57,7 +58,7 @@ export class UserPreferenceController {
   async create(
     @GetUser('userId') userId: string,
     @Body() createDto: CreateUserPreferenceDto,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.create(userId, createDto);
   }
 
@@ -68,8 +69,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Preferences retrieved successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Preferences retrieved successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'User preferences retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -81,7 +97,7 @@ export class UserPreferenceController {
   })
   async findOne(
     @GetUser('userId') userId: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.findByUserId(userId);
   }
 
@@ -93,8 +109,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Preferences retrieved or created successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Preferences retrieved or created successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'User preferences retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -102,7 +133,7 @@ export class UserPreferenceController {
   })
   async getOrCreate(
     @GetUser('userId') userId: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.getOrCreate(userId);
   }
 
@@ -113,8 +144,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Preferences updated successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Preferences updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'User preferences updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 400,
@@ -131,7 +177,7 @@ export class UserPreferenceController {
   async update(
     @GetUser('userId') userId: string,
     @Body() updateDto: UpdateUserPreferenceDto,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.update(userId, updateDto);
   }
 
@@ -149,8 +195,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Categories updated successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Categories updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Preferred categories updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -163,7 +224,7 @@ export class UserPreferenceController {
   async updateCategories(
     @GetUser('userId') userId: string,
     @Body() categories: Record<string, any>,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateCategories(userId, categories);
   }
 
@@ -181,8 +242,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Notification settings updated successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Notification settings updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Notification settings updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -195,7 +271,7 @@ export class UserPreferenceController {
   async updateNotificationSettings(
     @GetUser('userId') userId: string,
     @Body() settings: Record<string, any>,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateNotificationSettings(userId, settings);
   }
 
@@ -218,8 +294,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Language updated successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Language updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Language preference updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -232,7 +323,7 @@ export class UserPreferenceController {
   async updateLanguage(
     @GetUser('userId') userId: string,
     @Body('language') language: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateLanguage(userId, language);
   }
 
@@ -255,8 +346,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Theme updated successfully',
-    type: UserPreferenceResponseDto,
+    description:
+      'Theme updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Theme preference updated successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -269,7 +375,7 @@ export class UserPreferenceController {
   async updateTheme(
     @GetUser('userId') userId: string,
     @Body('theme') theme: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateTheme(userId, theme);
   }
 
@@ -282,7 +388,23 @@ export class UserPreferenceController {
   })
   @ApiResponse({
     status: 204,
-    description: 'Preferences deleted successfully',
+    description:
+      'Preferences deleted successfully. Returns wrapped response with state, data (null), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'User preferences deleted successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { type: 'null', example: null },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({
     status: 401,
@@ -292,7 +414,9 @@ export class UserPreferenceController {
     status: 404,
     description: 'Preferences not found',
   })
-  async remove(@GetUser('userId') userId: string): Promise<void> {
+  async remove(
+    @GetUser('userId') userId: string,
+  ): Promise<ServiceResponseDto<null>> {
     return this.preferenceService.remove(userId);
   }
 }

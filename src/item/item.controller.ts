@@ -27,6 +27,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @ApiTags('Items')
 @ApiBearerAuth()
@@ -39,15 +40,27 @@ export class ItemController {
   @ApiOperation({ summary: 'Create a new item listing' })
   @ApiResponse({
     status: 201,
-    description: 'Item created successfully',
-    type: ItemResponseDto,
+    description:
+      'Item created successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Item created successfully' },
+            statusCode: { type: 'number', example: 201 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async create(
     @GetUser('userId') userId: string,
     @Body() createDto: CreateItemDto,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     return this.itemService.create(userId, createDto);
   }
 
@@ -83,8 +96,26 @@ export class ItemController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Items retrieved successfully',
-    type: [ItemResponseDto],
+    description:
+      'Items retrieved successfully. Returns wrapped response with state, data (array of ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Items retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ItemResponseDto' },
+            },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findAll(
@@ -93,7 +124,7 @@ export class ItemController {
     @Query('status') status?: ItemStatus,
     @Query('is_featured') is_featured?: boolean,
     @Query('is_free') is_free?: boolean,
-  ): Promise<ItemResponseDto[]> {
+  ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     return this.itemService.findAll({
       user_id,
       category_id,
@@ -107,13 +138,31 @@ export class ItemController {
   @ApiOperation({ summary: 'Get all items for the authenticated user' })
   @ApiResponse({
     status: 200,
-    description: 'User items retrieved successfully',
-    type: [ItemResponseDto],
+    description:
+      'User items retrieved successfully. Returns wrapped response with state, data (array of ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Items retrieved successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ItemResponseDto' },
+            },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findMyItems(
     @GetUser('userId') userId: string,
-  ): Promise<ItemResponseDto[]> {
+  ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     return this.itemService.findAll({ user_id: userId });
   }
 
@@ -122,12 +171,26 @@ export class ItemController {
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
     status: 200,
-    description: 'Item retrieved successfully',
-    type: ItemResponseDto,
+    description:
+      'Item retrieved successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Item retrieved successfully' },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async findOne(@Param('id') id: string): Promise<ItemResponseDto> {
+  async findOne(
+    @Param('id') id: string,
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     return this.itemService.findOne(id);
   }
 
@@ -136,8 +199,20 @@ export class ItemController {
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
     status: 200,
-    description: 'Item updated successfully',
-    type: ItemResponseDto,
+    description:
+      'Item updated successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Item updated successfully' },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -146,7 +221,7 @@ export class ItemController {
     @GetUser('userId') userId: string,
     @Param('id') id: string,
     @Body() updateDto: UpdateItemDto,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     return this.itemService.update(userId, id, updateDto);
   }
 
@@ -160,8 +235,20 @@ export class ItemController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Item deleted successfully',
-    type: ItemResponseDto,
+    description:
+      'Item deleted successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Item deleted successfully' },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - not item owner' })
@@ -170,7 +257,7 @@ export class ItemController {
     @GetUser('userId') userId: string,
     @Param('id') id: string,
     @Query('reason') reason?: string,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     return this.itemService.remove(userId, id, reason);
   }
 
@@ -186,8 +273,20 @@ export class ItemController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Item featured successfully',
-    type: ItemResponseDto,
+    description:
+      'Item featured successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Item featured successfully' },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
@@ -195,7 +294,7 @@ export class ItemController {
   async feature(
     @Param('id') id: string,
     @Query('featured_until') featured_until?: string,
-  ): Promise<ItemResponseDto> {
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const featuredUntil = featured_until ? new Date(featured_until) : undefined;
     return this.itemService.feature(id, featuredUntil);
   }
@@ -207,13 +306,30 @@ export class ItemController {
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
     status: 200,
-    description: 'Item unfeatured successfully',
-    type: ItemResponseDto,
+    description:
+      'Item unfeatured successfully. Returns wrapped response with state, data (ItemResponseDto), message, and statusCode.',
+    schema: {
+      allOf: [
+        {
+          properties: {
+            state: { type: 'boolean', example: true },
+            message: {
+              type: 'string',
+              example: 'Item unfeatured successfully',
+            },
+            statusCode: { type: 'number', example: 200 },
+            data: { $ref: '#/components/schemas/ItemResponseDto' },
+          },
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Requires admin role' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async unfeature(@Param('id') id: string): Promise<ItemResponseDto> {
+  async unfeature(
+    @Param('id') id: string,
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     return this.itemService.unfeature(id);
   }
 }

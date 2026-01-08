@@ -9,6 +9,7 @@ import { LocationEntity } from './entities/location.entity';
 import { CreateUserLocationDto } from './dto/create-user-location.dto';
 import { UpdateUserLocationDto } from './dto/update-user-location.dto';
 import { UserLocationResponseDto } from './dto/user-location-response.dto';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @Injectable()
 export class UserLocationService {
@@ -23,7 +24,7 @@ export class UserLocationService {
   async create(
     userId: string,
     createDto: CreateUserLocationDto,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     // If setting as primary, unset other primary locations
     if (createDto.is_primary) {
       await this.locationRepository.update(
@@ -46,7 +47,12 @@ export class UserLocationService {
     });
 
     const saved = await this.locationRepository.save(location);
-    return UserLocationResponseDto.fromEntity(saved);
+    return {
+      message: 'Location created successfully',
+      data: UserLocationResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
@@ -54,42 +60,61 @@ export class UserLocationService {
    */
   async createTemporary(
     createDto: CreateUserLocationDto,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     const location = new LocationEntity();
     Object.assign(location, createDto);
     location.user_id = null; // No user association
 
     const saved = await this.locationRepository.save(location);
-    return UserLocationResponseDto.fromEntity(saved);
+    return {
+      message: 'Temporary location created successfully',
+      data: UserLocationResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
    * Get all locations across all users (Admin only)
    */
-  async findAllForAdmin(): Promise<UserLocationResponseDto[]> {
+  async findAllForAdmin(): Promise<
+    ServiceResponseDto<UserLocationResponseDto[]>
+  > {
     const locations = await this.locationRepository.find({
       where: { is_deleted: false },
       relations: ['user'],
       order: { created_at: 'DESC' },
     });
 
-    return locations.map((location) =>
-      UserLocationResponseDto.fromEntity(location),
-    );
+    return {
+      message: 'All locations retrieved successfully',
+      data: locations.map((location) =>
+        UserLocationResponseDto.fromEntity(location),
+      ),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get all locations for a user (excluding deleted ones)
    */
-  async findAllByUserId(userId: string): Promise<UserLocationResponseDto[]> {
+  async findAllByUserId(
+    userId: string,
+  ): Promise<ServiceResponseDto<UserLocationResponseDto[]>> {
     const locations = await this.locationRepository.find({
       where: { user_id: userId, is_deleted: false },
       order: { is_primary: 'DESC', is_current: 'DESC', created_at: 'DESC' },
     });
 
-    return locations.map((location) =>
-      UserLocationResponseDto.fromEntity(location),
-    );
+    return {
+      message: 'User locations retrieved successfully',
+      data: locations.map((location) =>
+        UserLocationResponseDto.fromEntity(location),
+      ),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -98,7 +123,7 @@ export class UserLocationService {
   async findOne(
     userId: string,
     locationId: string,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     const location = await this.locationRepository.findOne({
       where: { id: locationId, user_id: userId, is_deleted: false },
     });
@@ -109,7 +134,12 @@ export class UserLocationService {
       );
     }
 
-    return UserLocationResponseDto.fromEntity(location);
+    return {
+      message: 'Location retrieved successfully',
+      data: UserLocationResponseDto.fromEntity(location),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -145,7 +175,7 @@ export class UserLocationService {
     userId: string,
     locationId: string,
     updateDto: UpdateUserLocationDto,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     const location = await this.locationRepository.findOne({
       where: { id: locationId, user_id: userId, is_deleted: false },
     });
@@ -175,7 +205,12 @@ export class UserLocationService {
     Object.assign(location, updateDto);
     const updated = await this.locationRepository.save(location);
 
-    return UserLocationResponseDto.fromEntity(updated);
+    return {
+      message: 'Location updated successfully',
+      data: UserLocationResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -184,7 +219,7 @@ export class UserLocationService {
   async setPrimary(
     userId: string,
     locationId: string,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     const location = await this.locationRepository.findOne({
       where: { id: locationId, user_id: userId, is_deleted: false },
     });
@@ -204,7 +239,12 @@ export class UserLocationService {
     location.is_primary = true;
     const updated = await this.locationRepository.save(location);
 
-    return UserLocationResponseDto.fromEntity(updated);
+    return {
+      message: 'Location set as primary successfully',
+      data: UserLocationResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -213,7 +253,7 @@ export class UserLocationService {
   async setCurrent(
     userId: string,
     locationId: string,
-  ): Promise<UserLocationResponseDto> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto>> {
     const location = await this.locationRepository.findOne({
       where: { id: locationId, user_id: userId, is_deleted: false },
     });
@@ -233,13 +273,21 @@ export class UserLocationService {
     location.is_current = true;
     const updated = await this.locationRepository.save(location);
 
-    return UserLocationResponseDto.fromEntity(updated);
+    return {
+      message: 'Location set as current successfully',
+      data: UserLocationResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Soft delete a location
    */
-  async remove(userId: string, locationId: string): Promise<void> {
+  async remove(
+    userId: string,
+    locationId: string,
+  ): Promise<ServiceResponseDto<null>> {
     const location = await this.locationRepository.findOne({
       where: { id: locationId, user_id: userId, is_deleted: false },
     });
@@ -264,6 +312,13 @@ export class UserLocationService {
     location.is_deleted = true;
     location.deleted_at = new Date();
     await this.locationRepository.save(location);
+
+    return {
+      message: 'Location deleted successfully',
+      data: null,
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -272,7 +327,7 @@ export class UserLocationService {
   async findByCountryCode(
     userId: string,
     countryCode: string,
-  ): Promise<UserLocationResponseDto[]> {
+  ): Promise<ServiceResponseDto<UserLocationResponseDto[]>> {
     const locations = await this.locationRepository.find({
       where: {
         user_id: userId,
@@ -282,8 +337,13 @@ export class UserLocationService {
       order: { created_at: 'DESC' },
     });
 
-    return locations.map((location) =>
-      UserLocationResponseDto.fromEntity(location),
-    );
+    return {
+      message: 'Locations retrieved successfully',
+      data: locations.map((location) =>
+        UserLocationResponseDto.fromEntity(location),
+      ),
+      state: true,
+      statusCode: 200,
+    };
   }
 }

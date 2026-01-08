@@ -9,6 +9,7 @@ import { UserPreferenceEntity } from './entities/user-preference.entity';
 import { CreateUserPreferenceDto } from './dto/create-user-preference.dto';
 import { UpdateUserPreferenceDto } from './dto/update-user-preference.dto';
 import { UserPreferenceResponseDto } from './dto/user-preference-response.dto';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @Injectable()
 export class UserPreferenceService {
@@ -23,7 +24,7 @@ export class UserPreferenceService {
   async create(
     userId: string,
     createDto: CreateUserPreferenceDto,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     // Check if preferences already exist
     const existing = await this.preferenceRepository.findOne({
       where: { user_id: userId },
@@ -43,13 +44,20 @@ export class UserPreferenceService {
     preference.theme = createDto.theme || 'light';
 
     const saved = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(saved);
+    return {
+      message: 'User preferences created successfully',
+      data: UserPreferenceResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
    * Get user preferences
    */
-  async findByUserId(userId: string): Promise<UserPreferenceResponseDto> {
+  async findByUserId(
+    userId: string,
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -58,13 +66,20 @@ export class UserPreferenceService {
       throw new NotFoundException(`Preferences not found for user ${userId}`);
     }
 
-    return UserPreferenceResponseDto.fromEntity(preference);
+    return {
+      message: 'User preferences retrieved successfully',
+      data: UserPreferenceResponseDto.fromEntity(preference),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get or create user preferences
    */
-  async getOrCreate(userId: string): Promise<UserPreferenceResponseDto> {
+  async getOrCreate(
+    userId: string,
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     let preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -77,7 +92,12 @@ export class UserPreferenceService {
       preference = await this.preferenceRepository.save(preference);
     }
 
-    return UserPreferenceResponseDto.fromEntity(preference);
+    return {
+      message: 'User preferences retrieved successfully',
+      data: UserPreferenceResponseDto.fromEntity(preference),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -86,7 +106,7 @@ export class UserPreferenceService {
   async update(
     userId: string,
     updateDto: UpdateUserPreferenceDto,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -110,7 +130,12 @@ export class UserPreferenceService {
     }
 
     const updated = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(updated);
+    return {
+      message: 'User preferences updated successfully',
+      data: UserPreferenceResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -119,7 +144,7 @@ export class UserPreferenceService {
   async updateCategories(
     userId: string,
     categories: Record<string, any>,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -135,7 +160,12 @@ export class UserPreferenceService {
     };
 
     const updated = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(updated);
+    return {
+      message: 'Preferred categories updated successfully',
+      data: UserPreferenceResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -144,7 +174,7 @@ export class UserPreferenceService {
   async updateNotificationSettings(
     userId: string,
     settings: Record<string, any>,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -160,7 +190,12 @@ export class UserPreferenceService {
     };
 
     const updated = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(updated);
+    return {
+      message: 'Notification settings updated successfully',
+      data: UserPreferenceResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -169,7 +204,7 @@ export class UserPreferenceService {
   async updateLanguage(
     userId: string,
     language: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -180,7 +215,12 @@ export class UserPreferenceService {
 
     preference.language = language;
     const updated = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(updated);
+    return {
+      message: 'Language preference updated successfully',
+      data: UserPreferenceResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -189,7 +229,7 @@ export class UserPreferenceService {
   async updateTheme(
     userId: string,
     theme: string,
-  ): Promise<UserPreferenceResponseDto> {
+  ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
     });
@@ -200,17 +240,29 @@ export class UserPreferenceService {
 
     preference.theme = theme;
     const updated = await this.preferenceRepository.save(preference);
-    return UserPreferenceResponseDto.fromEntity(updated);
+    return {
+      message: 'Theme preference updated successfully',
+      data: UserPreferenceResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Delete user preferences (hard delete, use with caution)
    */
-  async remove(userId: string): Promise<void> {
+  async remove(userId: string): Promise<ServiceResponseDto<null>> {
     const result = await this.preferenceRepository.delete({ user_id: userId });
 
     if (result.affected === 0) {
       throw new NotFoundException(`Preferences not found for user ${userId}`);
     }
+
+    return {
+      message: 'User preferences deleted successfully',
+      data: null,
+      state: true,
+      statusCode: 200,
+    };
   }
 }

@@ -10,6 +10,7 @@ import { ItemImageEntity } from './entities/item-image.entity';
 import { ItemEntity } from './entities/item.entity';
 import { CreateItemImageDto } from './dto/create-item-image.dto';
 import { ItemImageResponseDto } from './dto/item-image-response.dto';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @Injectable()
 export class ItemImageService {
@@ -27,7 +28,7 @@ export class ItemImageService {
     userId: string,
     itemId: string,
     createDto: CreateItemImageDto,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     // Verify item exists and user owns it
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
@@ -61,25 +62,39 @@ export class ItemImageService {
     });
 
     const saved = await this.imageRepository.save(image);
-    return ItemImageResponseDto.fromEntity(saved);
+    return {
+      message: 'Image added successfully',
+      data: ItemImageResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
    * Get all images for an item
    */
-  async findAllByItemId(itemId: string): Promise<ItemImageResponseDto[]> {
+  async findAllByItemId(
+    itemId: string,
+  ): Promise<ServiceResponseDto<ItemImageResponseDto[]>> {
     const images = await this.imageRepository.find({
       where: { item_id: itemId, is_deleted: false },
       order: { is_primary: 'DESC', display_order: 'ASC', created_at: 'ASC' },
     });
 
-    return images.map((image) => ItemImageResponseDto.fromEntity(image));
+    return {
+      message: 'Images retrieved successfully',
+      data: images.map((image) => ItemImageResponseDto.fromEntity(image)),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get a single image by ID
    */
-  async findOne(imageId: string): Promise<ItemImageResponseDto> {
+  async findOne(
+    imageId: string,
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     const image = await this.imageRepository.findOne({
       where: { id: imageId, is_deleted: false },
     });
@@ -88,7 +103,12 @@ export class ItemImageService {
       throw new NotFoundException(`Image with ID ${imageId} not found`);
     }
 
-    return ItemImageResponseDto.fromEntity(image);
+    return {
+      message: 'Image retrieved successfully',
+      data: ItemImageResponseDto.fromEntity(image),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -97,7 +117,7 @@ export class ItemImageService {
   async setPrimary(
     userId: string,
     imageId: string,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     const image = await this.imageRepository.findOne({
       where: { id: imageId, is_deleted: false },
       relations: ['item'],
@@ -122,7 +142,12 @@ export class ItemImageService {
     image.is_primary = true;
     const updated = await this.imageRepository.save(image);
 
-    return ItemImageResponseDto.fromEntity(updated);
+    return {
+      message: 'Image set as primary successfully',
+      data: ItemImageResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -132,7 +157,7 @@ export class ItemImageService {
     userId: string,
     imageId: string,
     displayOrder: number,
-  ): Promise<ItemImageResponseDto> {
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     const image = await this.imageRepository.findOne({
       where: { id: imageId, is_deleted: false },
       relations: ['item'],
@@ -151,13 +176,21 @@ export class ItemImageService {
     image.display_order = displayOrder;
     const updated = await this.imageRepository.save(image);
 
-    return ItemImageResponseDto.fromEntity(updated);
+    return {
+      message: 'Display order updated successfully',
+      data: ItemImageResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Soft delete an image
    */
-  async remove(userId: string, imageId: string): Promise<ItemImageResponseDto> {
+  async remove(
+    userId: string,
+    imageId: string,
+  ): Promise<ServiceResponseDto<ItemImageResponseDto>> {
     const image = await this.imageRepository.findOne({
       where: { id: imageId, is_deleted: false },
       relations: ['item'],
@@ -201,6 +234,11 @@ export class ItemImageService {
     }
 
     const deleted = await this.imageRepository.save(image);
-    return ItemImageResponseDto.fromEntity(deleted);
+    return {
+      message: 'Image deleted successfully',
+      data: ItemImageResponseDto.fromEntity(deleted),
+      state: true,
+      statusCode: 200,
+    };
   }
 }

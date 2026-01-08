@@ -10,6 +10,7 @@ import { CategoryEntity } from './entities/category.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CategoryResponseDto } from './dto/category-response.dto';
+import { ServiceResponseDto } from '../common/service-response.dto';
 
 @Injectable()
 export class CategoryService {
@@ -21,7 +22,9 @@ export class CategoryService {
   /**
    * Create a new category
    */
-  async create(createDto: CreateCategoryDto): Promise<CategoryResponseDto> {
+  async create(
+    createDto: CreateCategoryDto,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     // Check if slug already exists
     const existing = await this.categoryRepository.findOne({
       where: { slug: createDto.slug, is_deleted: false },
@@ -49,7 +52,12 @@ export class CategoryService {
     const category = this.categoryRepository.create(createDto);
     const saved = await this.categoryRepository.save(category);
 
-    return CategoryResponseDto.fromEntity(saved);
+    return {
+      message: 'Category created successfully',
+      data: CategoryResponseDto.fromEntity(saved),
+      state: true,
+      statusCode: 201,
+    };
   }
 
   /**
@@ -58,7 +66,7 @@ export class CategoryService {
   async findAll(
     onlyActive = true,
     includeSubcategories = true,
-  ): Promise<CategoryResponseDto[]> {
+  ): Promise<ServiceResponseDto<CategoryResponseDto[]>> {
     const query = this.categoryRepository
       .createQueryBuilder('category')
       .leftJoinAndSelect('category.subcategories', 'subcategories')
@@ -80,15 +88,20 @@ export class CategoryService {
 
     const categories = await query.getMany();
 
-    return categories.map((category) =>
-      CategoryResponseDto.fromEntity(category, includeSubcategories),
-    );
+    return {
+      message: 'Categories retrieved successfully',
+      data: categories.map((category) =>
+        CategoryResponseDto.fromEntity(category, includeSubcategories),
+      ),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get a single category by ID
    */
-  async findOne(id: string): Promise<CategoryResponseDto> {
+  async findOne(id: string): Promise<ServiceResponseDto<CategoryResponseDto>> {
     const category = await this.categoryRepository.findOne({
       where: { id, is_deleted: false },
       relations: ['subcategories', 'parentCategory'],
@@ -98,13 +111,20 @@ export class CategoryService {
       throw new NotFoundException(`Category with ID ${id} not found`);
     }
 
-    return CategoryResponseDto.fromEntity(category, true);
+    return {
+      message: 'Category retrieved successfully',
+      data: CategoryResponseDto.fromEntity(category, true),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Get a category by slug
    */
-  async findBySlug(slug: string): Promise<CategoryResponseDto> {
+  async findBySlug(
+    slug: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     const category = await this.categoryRepository.findOne({
       where: { slug, is_deleted: false },
       relations: ['subcategories', 'parentCategory'],
@@ -114,7 +134,12 @@ export class CategoryService {
       throw new NotFoundException(`Category with slug '${slug}' not found`);
     }
 
-    return CategoryResponseDto.fromEntity(category, true);
+    return {
+      message: 'Category retrieved successfully',
+      data: CategoryResponseDto.fromEntity(category, true),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
@@ -123,7 +148,7 @@ export class CategoryService {
   async update(
     id: string,
     updateDto: UpdateCategoryDto,
-  ): Promise<CategoryResponseDto> {
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     const category = await this.categoryRepository.findOne({
       where: { id, is_deleted: false },
     });
@@ -166,13 +191,18 @@ export class CategoryService {
     Object.assign(category, updateDto);
     const updated = await this.categoryRepository.save(category);
 
-    return CategoryResponseDto.fromEntity(updated);
+    return {
+      message: 'Category updated successfully',
+      data: CategoryResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Soft delete a category
    */
-  async remove(id: string): Promise<CategoryResponseDto> {
+  async remove(id: string): Promise<ServiceResponseDto<CategoryResponseDto>> {
     const category = await this.categoryRepository.findOne({
       where: { id, is_deleted: false },
       relations: ['subcategories'],
@@ -197,13 +227,20 @@ export class CategoryService {
     category.deleted_at = new Date();
 
     const deleted = await this.categoryRepository.save(category);
-    return CategoryResponseDto.fromEntity(deleted);
+    return {
+      message: 'Category deleted successfully',
+      data: CategoryResponseDto.fromEntity(deleted),
+      state: true,
+      statusCode: 200,
+    };
   }
 
   /**
    * Toggle category active status
    */
-  async toggleActive(id: string): Promise<CategoryResponseDto> {
+  async toggleActive(
+    id: string,
+  ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     const category = await this.categoryRepository.findOne({
       where: { id, is_deleted: false },
     });
@@ -215,6 +252,11 @@ export class CategoryService {
     category.is_active = !category.is_active;
     const updated = await this.categoryRepository.save(category);
 
-    return CategoryResponseDto.fromEntity(updated);
+    return {
+      message: `Category ${category.is_active ? 'activated' : 'deactivated'} successfully`,
+      data: CategoryResponseDto.fromEntity(updated),
+      state: true,
+      statusCode: 200,
+    };
   }
 }
