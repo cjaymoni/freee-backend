@@ -14,6 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
+import { AccountLockoutService } from './account-lockout.service';
 import { VerificationCodeEntity } from './entities/verification-code.entity';
 import { UserSessionEntity } from './entities/user-session.entity';
 import { LoginAttemptEntity } from './entities/login-attempt.entity';
@@ -45,6 +46,7 @@ export class AuthService {
     private readonly mailService: MailService,
     private readonly dataSource: DataSource,
     private readonly firebaseService: FirebaseService,
+    private readonly accountLockoutService: AccountLockoutService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -404,6 +406,20 @@ export class AuthService {
     const { email, password } = loginDto;
     const user = await this.userService.findByEmail(email);
 
+    // Check if account is locked
+    if (user) {
+      const isLocked = await this.accountLockoutService.isAccountLocked(
+        user.id,
+      );
+      if (isLocked) {
+        const remainingTime =
+          await this.accountLockoutService.getRemainingLockoutTime(user.id);
+        throw new UnauthorizedException(
+          `Account is locked. Try again in ${remainingTime} minutes.`,
+        );
+      }
+    }
+
     let attemptResult = 'success';
     let failureReason: string | null = null;
 
@@ -438,6 +454,10 @@ export class AuthService {
       await queryRunner.manager.save(loginAttempt);
 
       if (attemptResult === 'failed') {
+        // Record failed attempt for lockout tracking
+        if (user) {
+          await this.accountLockoutService.recordFailedAttempt(user.id);
+        }
         await queryRunner.commitTransaction();
         throw new UnauthorizedException(
           failureReason === 'account_not_active'
@@ -450,6 +470,9 @@ export class AuthService {
         await queryRunner.commitTransaction();
         throw new UnauthorizedException('Invalid credentials');
       }
+
+      // Reset failed attempts on successful login
+      await this.accountLockoutService.resetFailedAttempts(user.id);
 
       // Invalidate previous active sessions
       await queryRunner.manager.update(

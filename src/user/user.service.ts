@@ -196,8 +196,7 @@ export class UserService {
     findUserDto: FindUserDto,
   ): Promise<ServiceResponseDto<UserResponseDto[]>> {
     try {
-      const { page, limit, search, ...query } = findUserDto;
-      void search; // Suppress unused variable warning
+      const { page = 1, limit = 20, ...query } = findUserDto;
 
       const where = { ...query } as unknown as FindOptionsWhere<UserEntity>;
 

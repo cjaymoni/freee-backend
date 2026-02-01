@@ -13,6 +13,10 @@ export const envValidationSchema = Joi.object({
   DB_USERNAME: Joi.string().optional(),
   DB_PASSWORD: Joi.string().optional(),
   DB_DATABASE: Joi.string().optional(),
+  DB_POOL_MAX: Joi.number().default(20),
+  DB_POOL_MIN: Joi.number().default(2),
+  DB_IDLE_TIMEOUT: Joi.number().default(30000),
+  DB_CONNECTION_TIMEOUT: Joi.number().default(2000),
 
   // Redis
   REDIS_HOST: Joi.string().optional(),
@@ -34,4 +38,14 @@ export const envValidationSchema = Joi.object({
   SMTP_PORT: Joi.number().default(587),
   SMTP_USER: Joi.string().required(),
   SMTP_PASS: Joi.string().required(),
+
+  // Security
+  MAX_LOGIN_ATTEMPTS: Joi.number().default(5),
+  LOCKOUT_DURATION_MINUTES: Joi.number().default(30),
+  PASSWORD_MIN_LENGTH: Joi.number().default(8),
+
+  // Logging
+  LOG_LEVEL: Joi.string()
+    .valid('error', 'warn', 'info', 'debug', 'verbose')
+    .default('info'),
 });

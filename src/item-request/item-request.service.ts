@@ -16,9 +16,11 @@ import { CreateItemRequestDto } from './dto/create-item-request.dto';
 import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
 import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
+import { LocationEntity } from '../user/entities/location.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { ItemRequestResponseDto } from './dto/item-request-response.dto';
+import { DistanceService } from '../common/distance.service';
 
 @Injectable()
 export class ItemRequestService {
@@ -29,6 +31,9 @@ export class ItemRequestService {
     private readonly itemRequestRepository: Repository<ItemRequestEntity>,
     @InjectRepository(ItemEntity)
     private readonly itemRepository: Repository<ItemEntity>,
+    @InjectRepository(LocationEntity)
+    private readonly locationRepository: Repository<LocationEntity>,
+    private readonly distanceService: DistanceService,
   ) {}
 
   /**
@@ -50,6 +55,57 @@ export class ItemRequestService {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
+  }
+
+  /**
+   * Check if user is within 10km of item location
+   */
+  async isUserWithinRange(
+    userId: string,
+    itemId: string,
+    maxDistanceKm: number = 10,
+  ): Promise<{ withinRange: boolean; distance?: number }> {
+    // Get user's current/primary location
+    const userLocation = await this.locationRepository.findOne({
+      where: [
+        { user_id: userId, is_current: true, is_deleted: false },
+        { user_id: userId, is_primary: true, is_deleted: false },
+      ],
+      order: { is_current: 'DESC', is_primary: 'DESC' },
+    });
+
+    if (!userLocation || !userLocation.latitude || !userLocation.longitude) {
+      throw new BadRequestException(
+        'User location not found. Please set your location first.',
+      );
+    }
+
+    // Get item location
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId },
+      relations: ['location'],
+    });
+
+    if (!item || !item.location) {
+      throw new NotFoundException('Item or item location not found');
+    }
+
+    if (!item.location.latitude || !item.location.longitude) {
+      throw new BadRequestException('Item location coordinates not available');
+    }
+
+    // Calculate distance
+    const distance = this.distanceService.calculateDistance(
+      userLocation.latitude,
+      userLocation.longitude,
+      item.location.latitude,
+      item.location.longitude,
+    );
+
+    return {
+      withinRange: distance <= maxDistanceKm,
+      distance: Math.round(distance * 100) / 100, // Round to 2 decimal places
+    };
   }
 
   async createRequest(
@@ -80,6 +136,19 @@ export class ItemRequestService {
         throw new BadRequestException('Cannot request your own item');
       }
 
+      // Check distance (10km limit)
+      const { withinRange, distance } = await this.isUserWithinRange(
+        requesterId,
+        item_id,
+        10,
+      );
+
+      if (!withinRange) {
+        throw new BadRequestException(
+          `Item is too far away. Distance: ${distance}km (max: 10km)`,
+        );
+      }
+
       // Check for existing pending request
       const existingRequest = await this.itemRequestRepository.findOne({
         where: {
@@ -106,7 +175,7 @@ export class ItemRequestService {
 
       const result = await this.itemRequestRepository.save(itemRequest);
       this.logger.log(
-        `Request ${result.id} created for item ${item_id} by user ${requesterId}`,
+        `Request ${result.id} created for item ${item_id} by user ${requesterId} (distance: ${distance}km)`,
       );
 
       return {

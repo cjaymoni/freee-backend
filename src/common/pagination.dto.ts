@@ -1,44 +1,65 @@
-import { Transform } from 'class-transformer';
-import { IsNumber, Min, Max, IsString, IsOptional } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsOptional, IsInt, Min, Max } from 'class-validator';
 
-export class PaginationResponseDto<T> {
-  @ApiProperty({ type: 'array', isArray: true })
-  items: T[];
-
-  @ApiProperty({ example: 100 })
-  total: number;
-
-  @ApiProperty({ example: 10 })
-  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
-  @IsNumber()
+export class PaginationDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   @Min(1)
-  @Max(50)
-  limit: number;
+  page?: number = 1;
 
-  @ApiProperty({ example: 1 })
-  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
-  @IsNumber()
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   @Min(1)
-  page: number;
+  @Max(100)
+  limit?: number = 20;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  sortBy?: string;
+
+  @ApiPropertyOptional({ enum: ['ASC', 'DESC'], default: 'DESC' })
+  @IsOptional()
+  order?: 'ASC' | 'DESC' = 'DESC';
 }
 
-export class PaginationQueryDto {
-  @ApiProperty({ example: 10 })
-  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
-  @IsNumber()
-  @Min(1)
-  @Max(50)
-  limit: number;
+export class PaginationMetaDto {
+  @ApiPropertyOptional()
+  total: number;
 
-  @ApiProperty({ example: 1 })
-  @Transform(({ value }: { value: unknown }) => parseInt(value as string))
-  @IsNumber()
-  @Min(1)
+  @ApiPropertyOptional()
   page: number;
 
-  @ApiProperty({ example: 'John Doe' })
-  @IsString()
-  @IsOptional()
-  search?: string;
+  @ApiPropertyOptional()
+  limit: number;
+
+  @ApiPropertyOptional()
+  totalPages: number;
+
+  @ApiPropertyOptional()
+  hasNextPage: boolean;
+
+  @ApiPropertyOptional()
+  hasPreviousPage: boolean;
+}
+
+export class PaginatedResponseDto<T> {
+  data: T[];
+  meta: PaginationMetaDto;
+
+  constructor(data: T[], total: number, page: number, limit: number) {
+    this.data = data;
+    this.meta = {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      hasNextPage: page < Math.ceil(total / limit),
+      hasPreviousPage: page > 1,
+    };
+  }
 }

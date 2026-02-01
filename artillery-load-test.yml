@@ -1,0 +1,103 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    
+    # Ramp up phase
+    - duration: 120
+      arrivalRate: 5
+      rampTo: 50
+      name: "Ramp up load"
+    
+    # Sustained load phase
+    - duration: 300
+      arrivalRate: 50
+      name: "Sustained load"
+    
+    # Spike test
+    - duration: 60
+      arrivalRate: 100
+      name: "Spike test"
+    
+    # Cool down
+    - duration: 60
+      arrivalRate: 10
+      name: "Cool down"
+  
+  processor: "./load-test-processor.js"
+  
+  # Performance thresholds
+  ensure:
+    maxErrorRate: 1 # Max 1% error rate
+    p95: 500 # 95th percentile response time < 500ms
+    p99: 1000 # 99th percentile response time < 1000ms
+
+scenarios:
+  # Health check scenario
+  - name: "Health Check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+
+  # Authentication flow
+  - name: "User Login Flow"
+    weight: 30
+    flow:
+      - post:
+          url: "/auth/login"
+          json:
+            email: "{{ $randomEmail() }}"
+            password: "testpassword123"
+          capture:
+            - json: "$.access_token"
+              as: "token"
+          expect:
+            - statusCode: [200, 401]
+
+  # Browse items (public)
+  - name: "Browse Items"
+    weight: 40
+    flow:
+      - get:
+          url: "/items?page=1&limit=20"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: [200, 401]
+      
+      - think: 2
+      
+      - get:
+          url: "/items?page=2&limit=20"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: [200, 401]
+
+  # View item details
+  - name: "View Item Details"
+    weight: 20
+    flow:
+      - get:
+          url: "/items"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          capture:
+            - json: "$.data[0].id"
+              as: "itemId"
+          expect:
+            - statusCode: [200, 401]
+      
+      - get:
+          url: "/items/{{ itemId }}"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          ifTrue: "itemId"
+          expect:
+            - statusCode: [200, 401, 404]

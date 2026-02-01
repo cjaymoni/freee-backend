@@ -1,5 +1,6 @@
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModuleAsyncOptions } from '@nestjs/typeorm';
+import type { LogLevel } from 'typeorm';
 
 export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
   imports: [ConfigModule],
@@ -14,6 +15,24 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
       synchronize: !isProduction,
       migrations: ['dist/migrations/*.js'],
       migrationsRun: isProduction,
+      // Connection pooling configuration
+      extra: {
+        max: configService.get<number>('DB_POOL_MAX', 20), // Maximum pool size
+        min: configService.get<number>('DB_POOL_MIN', 2), // Minimum pool size
+        idleTimeoutMillis: configService.get<number>('DB_IDLE_TIMEOUT', 30000),
+        connectionTimeoutMillis: configService.get<number>(
+          'DB_CONNECTION_TIMEOUT',
+          2000,
+        ),
+      },
+      // Logging
+      logging: (isProduction
+        ? ['error', 'warn']
+        : ['query', 'error', 'warn']) as LogLevel[],
+      logger: 'advanced-console' as const,
+      // Connection retry
+      retryAttempts: 3,
+      retryDelay: 3000,
     };
 
     if (databaseUrl) {
