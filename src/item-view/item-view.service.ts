@@ -8,6 +8,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { ItemViewResponseDto } from './dto/item-view-response.dto';
+import { SystemEventService } from '../audit/system-event.service';
+import { SystemEventType } from '../audit/entities/system-event.entity';
 
 @Injectable()
 export class ItemViewService {
@@ -18,6 +20,7 @@ export class ItemViewService {
     private readonly itemViewRepository: Repository<ItemViewEntity>,
     @InjectRepository(ItemEntity)
     private readonly itemRepository: Repository<ItemEntity>,
+    private readonly systemEventService: SystemEventService,
   ) {}
 
   /**
@@ -107,7 +110,7 @@ export class ItemViewService {
         .where('view.item_id = :itemId', { itemId })
         .andWhere('view.created_at > :startDate', { startDate })
         .andWhere('view.viewer_id IS NOT NULL')
-        .getRawOne();
+        .getRawOne<{ count: string }>();
 
       // Anonymous views
       const anonymousViews = await this.itemViewRepository
@@ -124,7 +127,7 @@ export class ItemViewService {
         .where('view.item_id = :itemId', { itemId })
         .andWhere('view.created_at > :startDate', { startDate })
         .andWhere('view.view_duration_seconds IS NOT NULL')
-        .getRawOne();
+        .getRawOne<{ avg: string }>();
 
       // Views by device type
       const viewsByDevice = await this.itemViewRepository
@@ -134,7 +137,7 @@ export class ItemViewService {
         .where('view.item_id = :itemId', { itemId })
         .andWhere('view.created_at > :startDate', { startDate })
         .groupBy('view.device_type')
-        .getRawMany();
+        .getRawMany<{ device: string; count: string }>();
 
       // Views by date
       const viewsByDate = await this.itemViewRepository
@@ -145,17 +148,20 @@ export class ItemViewService {
         .andWhere('view.created_at > :startDate', { startDate })
         .groupBy('DATE(view.created_at)')
         .orderBy('date', 'ASC')
-        .getRawMany();
+        .getRawMany<{ date: string; count: string }>();
 
       const stats = {
         total_views: totalViews,
         unique_viewers: parseInt(uniqueViewersResult?.count || '0'),
         anonymous_views: anonymousViews,
         average_duration_seconds: parseFloat(avgDurationResult?.avg || '0'),
-        views_by_device: viewsByDevice.reduce((acc, curr) => {
-          acc[curr.device] = parseInt(curr.count);
-          return acc;
-        }, {}),
+        views_by_device: viewsByDevice.reduce<Record<string, number>>(
+          (acc, curr) => {
+            acc[curr.device] = parseInt(curr.count);
+            return acc;
+          },
+          {},
+        ),
         views_by_date: viewsByDate.map((v) => ({
           date: v.date,
           count: parseInt(v.count),
@@ -228,16 +234,23 @@ export class ItemViewService {
    */
   @Cron(CronExpression.EVERY_HOUR)
   async updateItemViewCounts() {
-    this.logger.log('Starting hourly view count update...');
+    const startTime = Date.now();
+    const event = await this.systemEventService.startEvent(
+      SystemEventType.SCHEDULED_JOB,
+      'Update Item View Counts',
+      'Hourly aggregation of view counts from item_views to items table',
+    );
 
     try {
+      this.logger.log('Starting hourly view count update...');
+
       // Get all items with their view counts
       const viewCounts = await this.itemViewRepository
         .createQueryBuilder('view')
         .select('view.item_id', 'item_id')
         .addSelect('COUNT(*)', 'count')
         .groupBy('view.item_id')
-        .getRawMany();
+        .getRawMany<{ item_id: string; count: string }>();
 
       // Update each item's view count
       for (const { item_id, count } of viewCounts) {
@@ -247,8 +260,21 @@ export class ItemViewService {
         );
       }
 
-      this.logger.log(`Updated view counts for ${viewCounts.length} items`);
+      const duration = Date.now() - startTime;
+      await this.systemEventService.completeEvent(
+        event.id,
+        viewCounts.length,
+        duration,
+      );
+
+      this.logger.log(
+        `Updated view counts for ${viewCounts.length} items in ${duration}ms`,
+      );
     } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      await this.systemEventService.failEvent(event.id, errorMessage, duration);
       this.logger.error('Error updating view counts:', error);
     }
   }

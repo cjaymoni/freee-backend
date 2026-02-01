@@ -8,7 +8,9 @@ import {
   Param,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -28,13 +30,17 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
+import { UserActivityService } from '../audit/user-activity.service';
 
 @ApiTags('Items')
 @ApiBearerAuth()
 @Controller('items')
 @UseGuards(JwtAuthGuard)
 export class ItemController {
-  constructor(private readonly itemService: ItemService) {}
+  constructor(
+    private readonly itemService: ItemService,
+    private readonly userActivityService: UserActivityService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new item listing' })
@@ -190,8 +196,28 @@ export class ItemController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findOne(
     @Param('id') id: string,
+    @GetUser('userId') userId: string,
+    @Req() request: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
-    return this.itemService.findOne(id);
+    const result = await this.itemService.findOne(id);
+
+    // Log user activity
+    await this.userActivityService.log({
+      userId,
+      activityType: 'view_item',
+      resourceType: 'items',
+      resourceId: id,
+      ipAddress: request.ip || '',
+      deviceType: request.headers['user-agent']?.includes('Mobile')
+        ? 'mobile'
+        : 'desktop',
+      metadata: {
+        itemTitle: result.data.title,
+        itemCategory: result.data.category_id,
+      },
+    });
+
+    return result;
   }
 
   @Put(':id')

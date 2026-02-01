@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -19,6 +20,7 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { ItemModule } from './item/item.module';
 import { CategoryModule } from './category/category.module';
 import { AuditModule } from './audit/audit.module';
+import { AuditInterceptor } from './audit/interceptors/audit.interceptor';
 import { SavedItemModule } from './saved-item/saved-item.module';
 import { ItemViewModule } from './item-view/item-view.module';
 import { ItemRequestModule } from './item-request/item-request.module';
@@ -107,6 +109,12 @@ import { envValidationSchema } from './config/env.validation';
     FirebaseModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    },
+  ],
 })
 export class AppModule {}
