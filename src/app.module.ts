@@ -24,6 +24,7 @@ import { AuditInterceptor } from './audit/interceptors/audit.interceptor';
 import { SavedItemModule } from './saved-item/saved-item.module';
 import { ItemViewModule } from './item-view/item-view.module';
 import { ItemRequestModule } from './item-request/item-request.module';
+import { ModerationModule } from './moderation/moderation.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -104,6 +105,7 @@ import { envValidationSchema } from './config/env.validation';
     SavedItemModule,
     ItemViewModule,
     ItemRequestModule,
+    ModerationModule,
     HealthModule,
     CommonModule,
     FirebaseModule,

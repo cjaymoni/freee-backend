@@ -37,11 +37,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Session expired or invalidated');
     }
 
+    const user = await this.authService.getUserForValidation(payload.sub);
+
     return {
+      id: payload.sub,
       userId: payload.sub,
       email: payload.email,
       role: payload.role,
       sessionToken: session_token,
+      is_active: user?.is_active ?? true,
     };
   }
 }

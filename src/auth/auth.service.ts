@@ -603,6 +603,10 @@ export class AuthService {
     return !!(session && session.is_active && session.expires_at > new Date());
   }
 
+  async getUserForValidation(userId: string) {
+    return await this.userService.findOneEntity(userId);
+  }
+
   async getMe(userId: string) {
     return await this.userService.findOne(userId);
   }

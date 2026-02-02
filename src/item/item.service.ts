@@ -212,6 +212,37 @@ export class ItemService {
   }
 
   /**
+   * Admin remove item (no ownership check)
+   */
+  async adminRemove(
+    adminId: string,
+    itemId: string,
+    reason?: string,
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
+    const item = await this.itemRepository.findOne({
+      where: { id: itemId, is_deleted: false },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    item.is_deleted = true;
+    item.deleted_at = new Date();
+    item.deleted_by = adminId;
+    item.deletion_reason = reason || 'Removed by moderation';
+    item.status = ItemStatus.UNAVAILABLE;
+
+    const deleted = await this.itemRepository.save(item);
+    return {
+      message: 'Item removed successfully',
+      data: ItemResponseDto.fromEntity(deleted),
+      state: true,
+      statusCode: 200,
+    };
+  }
+
+  /**
    * Feature an item (Admin only)
    */
   async feature(
