@@ -29,7 +29,16 @@ export class SystemEventService {
    * Log a system event
    */
   async log(data: SystemEventData): Promise<SystemEventEntity> {
-    const event = this.systemEventRepository.create(data);
+    const event = this.systemEventRepository.create({
+      event_type: data.eventType,
+      event_name: data.eventName,
+      status: data.status,
+      description: data.description,
+      affected_records: data.affectedRecords,
+      duration_ms: data.durationMs,
+      error_message: data.errorMessage,
+      metadata: data.metadata,
+    });
     return this.systemEventRepository.save(event);
   }
 

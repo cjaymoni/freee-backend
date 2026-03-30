@@ -56,9 +56,6 @@ export class FirebaseService implements OnModuleInit {
       this.logger.log('Firebase Admin initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize Firebase Admin SDK', error);
-      this.logger.error(
-        `Credential source begins with: ${credentialSource.substring(0, 50)}...`,
-      );
     }
   }
 
@@ -123,7 +120,9 @@ export class FirebaseService implements OnModuleInit {
 
     try {
       const response = await admin.messaging().send(message);
-      this.logger.log(`Successfully sent message: ${response}`);
+      this.logger.log('Successfully sent FCM message', {
+        messageId: String(response).replace(/[^\w-]/g, ''),
+      });
       return response;
     } catch (error) {
       this.logger.error('Error sending FCM message', error);

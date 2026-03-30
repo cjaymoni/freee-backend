@@ -8,15 +8,15 @@ import helmet from 'helmet';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Set security headers
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
   // Enable CORS
   app.enableCors({
     origin: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
-
-  // Set security headers
-  app.use(helmet());
 
   // Enable validation globally
   app.useGlobalPipes(
@@ -42,7 +42,10 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup('api', app, document, {
+    customCssUrl: '/api/swagger-ui.css',
+    customJs: ['/api/swagger-ui-bundle.js', '/api/swagger-ui-standalone-preset.js'],
+  });
   const port = process.env.PORT ?? 3000;
   await app.listen(port, '0.0.0.0');
 }

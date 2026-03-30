@@ -43,36 +43,52 @@ export class AppLogger implements LoggerService {
     }
   }
 
-  private formatMessage(level: string, message: any, context?: string): string {
-    const timestamp = new Date().toISOString();
-    const ctx = context || this.context || 'Application';
+  private sanitize(value: string): string {
+    return value.replace(/[\r\n]/g, ' ');
+  }
+
+  private formatMessage(
+    level: string,
+    message: string,
+    context?: string,
+  ): string {
+    const timestamp = Date.now();
+    const ctx = this.sanitize(context || this.context || 'Application');
 
     if (this.isProduction) {
-      // JSON format for production (easier to parse by log aggregators)
-      return JSON.stringify({
-        timestamp,
-        level,
-        context: ctx,
-        message:
-          typeof message === 'object'
-            ? JSON.stringify(message)
-            : String(message),
-      });
+      return JSON.stringify({ timestamp, level, context: ctx, message });
     }
 
-    // Human-readable format for development
-    return `[${timestamp}] [${level}] [${ctx}] ${typeof message === 'object' ? JSON.stringify(message) : message}`;
+    return `[${timestamp}] [${level}] [${ctx}] ${message}`;
+  }
+
+  private toSanitizedString(message: any): string {
+    let str: string;
+    if (typeof message === 'object') {
+      try {
+        str = JSON.stringify(message);
+      } catch {
+        str = '[Unserializable Object]';
+      }
+    } else {
+      str = String(message);
+    }
+    return this.sanitize(str);
   }
 
   log(message: any, context?: string) {
     if (this.logLevel >= LogLevel.INFO) {
-      console.log(this.formatMessage('INFO', message, context));
+      console.log(
+        this.formatMessage('INFO', this.toSanitizedString(message), context),
+      );
     }
   }
 
   error(message: any, trace?: string, context?: string) {
     if (this.logLevel >= LogLevel.ERROR) {
-      console.error(this.formatMessage('ERROR', message, context));
+      console.error(
+        this.formatMessage('ERROR', this.toSanitizedString(message), context),
+      );
       if (trace && !this.isProduction) {
         console.error(trace);
       }
@@ -81,19 +97,25 @@ export class AppLogger implements LoggerService {
 
   warn(message: any, context?: string) {
     if (this.logLevel >= LogLevel.WARN) {
-      console.warn(this.formatMessage('WARN', message, context));
+      console.warn(
+        this.formatMessage('WARN', this.toSanitizedString(message), context),
+      );
     }
   }
 
   debug(message: any, context?: string) {
     if (this.logLevel >= LogLevel.DEBUG) {
-      console.debug(this.formatMessage('DEBUG', message, context));
+      console.debug(
+        this.formatMessage('DEBUG', this.toSanitizedString(message), context),
+      );
     }
   }
 
   verbose(message: any, context?: string) {
     if (this.logLevel >= LogLevel.VERBOSE) {
-      console.log(this.formatMessage('VERBOSE', message, context));
+      console.debug(
+        this.formatMessage('VERBOSE', this.toSanitizedString(message), context),
+      );
     }
   }
 }
