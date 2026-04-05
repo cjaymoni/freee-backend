@@ -6,8 +6,11 @@ import {
   UpdateDateColumn,
   OneToOne,
   JoinColumn,
+  ManyToMany,
+  JoinTable,
 } from 'typeorm';
 import { UserEntity } from './user.entity';
+import { CategoryEntity } from '../../category/entities/category.entity';
 
 @Entity('user_preferences')
 export class UserPreferenceEntity {
@@ -21,8 +24,13 @@ export class UserPreferenceEntity {
   @JoinColumn({ name: 'user_id' })
   user: UserEntity;
 
-  @Column({ type: 'json', nullable: true })
-  preferred_categories: Record<string, any> | null;
+  @ManyToMany(() => CategoryEntity, { eager: true, onDelete: 'CASCADE' })
+  @JoinTable({
+    name: 'user_preferred_categories',
+    joinColumn: { name: 'preference_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'category_id', referencedColumnName: 'id' },
+  })
+  preferred_categories: CategoryEntity[];
 
   @Column({ type: 'json', nullable: true })
   notification_settings: Record<string, any> | null;

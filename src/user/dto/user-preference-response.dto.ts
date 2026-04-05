@@ -10,9 +10,10 @@ export class UserPreferenceResponseDto {
 
   @ApiPropertyOptional({
     description: 'Preferred categories',
-    example: { sports: true, technology: true },
+    type: 'array',
+    items: { type: 'object' },
   })
-  preferred_categories?: Record<string, any> | null;
+  preferred_categories?: { id: string; name: string; slug: string; icon_url: string | null }[];
 
   @ApiPropertyOptional({
     description: 'Notification settings',
@@ -36,7 +37,12 @@ export class UserPreferenceResponseDto {
     const dto = new UserPreferenceResponseDto();
     dto.id = entity.id;
     dto.user_id = entity.user_id;
-    dto.preferred_categories = entity.preferred_categories ?? undefined;
+    dto.preferred_categories = (entity.preferred_categories ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      icon_url: c.icon_url,
+    }));
     dto.notification_settings = entity.notification_settings ?? undefined;
     dto.language = entity.language;
     dto.theme = entity.theme;

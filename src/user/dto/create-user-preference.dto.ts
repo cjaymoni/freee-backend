@@ -4,26 +4,25 @@ import {
   IsString,
   MaxLength,
   IsIn,
+  IsArray,
+  IsUUID,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateUserPreferenceDto {
   @ApiPropertyOptional({
-    description: 'Preferred categories as a JSON object',
-    example: { sports: true, technology: true, entertainment: false },
+    description: 'Preferred category IDs',
+    example: ['uuid1', 'uuid2'],
+    type: [String],
   })
   @IsOptional()
-  @IsObject()
-  preferred_categories?: Record<string, any>;
+  @IsArray()
+  @IsUUID('4', { each: true })
+  preferred_category_ids?: string[];
 
   @ApiPropertyOptional({
     description: 'Notification settings as a JSON object',
-    example: {
-      email: true,
-      push: true,
-      sms: false,
-      marketing: false,
-    },
+    example: { email: true, push: true, sms: false },
   })
   @IsOptional()
   @IsObject()

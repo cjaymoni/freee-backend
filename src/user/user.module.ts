@@ -9,8 +9,8 @@ import { UserLocationService } from './user-location.service';
 import { UserPreferenceService } from './user-preference.service';
 import { UserLocationController } from './user-location.controller';
 import { UserPreferenceController } from './user-preference.controller';
-
 import { CloudinaryModule } from 'src/cloudinary/cloudinary.module';
+import { CategoryEntity } from '../category/entities/category.entity';
 
 @Module({
   imports: [
@@ -18,6 +18,7 @@ import { CloudinaryModule } from 'src/cloudinary/cloudinary.module';
       UserEntity,
       LocationEntity,
       UserPreferenceEntity,
+      CategoryEntity,
     ]),
     CloudinaryModule,
   ],

@@ -4,19 +4,33 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { UserPreferenceEntity } from './entities/user-preference.entity';
 import { CreateUserPreferenceDto } from './dto/create-user-preference.dto';
 import { UpdateUserPreferenceDto } from './dto/update-user-preference.dto';
 import { UserPreferenceResponseDto } from './dto/user-preference-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
+import { CategoryEntity } from '../category/entities/category.entity';
 
 @Injectable()
 export class UserPreferenceService {
   constructor(
     @InjectRepository(UserPreferenceEntity)
     private readonly preferenceRepository: Repository<UserPreferenceEntity>,
+    @InjectRepository(CategoryEntity)
+    private readonly categoryRepository: Repository<CategoryEntity>,
   ) {}
+
+  private async findOrFail(userId: string): Promise<UserPreferenceEntity> {
+    const preference = await this.preferenceRepository.findOne({
+      where: { user_id: userId },
+      relations: ['preferred_categories'],
+    });
+    if (!preference) {
+      throw new NotFoundException(`Preferences not found for user ${userId}`);
+    }
+    return preference;
+  }
 
   /**
    * Create user preferences (should be called once per user)
@@ -38,7 +52,9 @@ export class UserPreferenceService {
 
     const preference = new UserPreferenceEntity();
     preference.user_id = userId;
-    preference.preferred_categories = createDto.preferred_categories || null;
+    preference.preferred_categories = createDto.preferred_category_ids?.length
+      ? await this.categoryRepository.findBy({ id: In(createDto.preferred_category_ids) })
+      : [];
     preference.notification_settings = createDto.notification_settings || null;
     preference.language = createDto.language || 'en';
     preference.theme = createDto.theme || 'light';
@@ -60,6 +76,7 @@ export class UserPreferenceService {
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     const preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
+      relations: ['preferred_categories'],
     });
 
     if (!preference) {
@@ -82,11 +99,13 @@ export class UserPreferenceService {
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     let preference = await this.preferenceRepository.findOne({
       where: { user_id: userId },
+      relations: ['preferred_categories'],
     });
 
     if (!preference) {
       preference = new UserPreferenceEntity();
       preference.user_id = userId;
+      preference.preferred_categories = [];
       preference.language = 'en';
       preference.theme = 'light';
       preference = await this.preferenceRepository.save(preference);
@@ -107,17 +126,12 @@ export class UserPreferenceService {
     userId: string,
     updateDto: UpdateUserPreferenceDto,
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
-    const preference = await this.preferenceRepository.findOne({
-      where: { user_id: userId },
-    });
+    const preference = await this.findOrFail(userId);
 
-    if (!preference) {
-      throw new NotFoundException(`Preferences not found for user ${userId}`);
-    }
-
-    // Merge updates
-    if (updateDto.preferred_categories !== undefined) {
-      preference.preferred_categories = updateDto.preferred_categories;
+    if (updateDto.preferred_category_ids !== undefined) {
+      preference.preferred_categories = updateDto.preferred_category_ids.length
+        ? await this.categoryRepository.findBy({ id: In(updateDto.preferred_category_ids) })
+        : [];
     }
     if (updateDto.notification_settings !== undefined) {
       preference.notification_settings = updateDto.notification_settings;
@@ -139,25 +153,17 @@ export class UserPreferenceService {
   }
 
   /**
-   * Partially update specific preference fields
+   * Set preferred categories (replaces existing selection)
    */
-  async updateCategories(
+  async setPreferredCategories(
     userId: string,
-    categories: Record<string, any>,
+    categoryIds: string[],
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
-    const preference = await this.preferenceRepository.findOne({
-      where: { user_id: userId },
-    });
+    const preference = await this.findOrFail(userId);
 
-    if (!preference) {
-      throw new NotFoundException(`Preferences not found for user ${userId}`);
-    }
-
-    // Merge with existing categories
-    preference.preferred_categories = {
-      ...(preference.preferred_categories || {}),
-      ...categories,
-    };
+    preference.preferred_categories = categoryIds.length
+      ? await this.categoryRepository.findBy({ id: In(categoryIds) })
+      : [];
 
     const updated = await this.preferenceRepository.save(preference);
     return {

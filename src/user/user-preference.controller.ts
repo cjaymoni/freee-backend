@@ -183,49 +183,30 @@ export class UserPreferenceController {
 
   @Patch('categories')
   @ApiOperation({
-    summary: 'Update preferred categories',
-    description:
-      'Merges the provided categories with existing ones. Use this to add or update specific categories.',
+    summary: 'Set preferred categories (screen 8 of onboarding)',
+    description: 'Replaces the user\'s preferred categories with the provided list of category IDs.',
   })
   @ApiBody({
     schema: {
       type: 'object',
-      example: { sports: true, technology: false },
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description:
-      'Categories updated successfully. Returns wrapped response with state, data (UserPreferenceResponseDto), message, and statusCode.',
-    schema: {
-      allOf: [
-        {
-          properties: {
-            state: { type: 'boolean', example: true },
-            message: {
-              type: 'string',
-              example: 'Preferred categories updated successfully',
-            },
-            statusCode: { type: 'number', example: 200 },
-            data: { $ref: '#/components/schemas/UserPreferenceResponseDto' },
-          },
+      required: ['category_ids'],
+      properties: {
+        category_ids: {
+          type: 'array',
+          items: { type: 'string', format: 'uuid' },
+          example: ['uuid1', 'uuid2', 'uuid3'],
         },
-      ],
+      },
     },
   })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Preferences not found',
-  })
-  async updateCategories(
+  @ApiResponse({ status: 200, description: 'Categories updated successfully', type: UserPreferenceResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Preferences not found' })
+  async setCategories(
     @GetUser('userId') userId: string,
-    @Body() categories: Record<string, any>,
+    @Body('category_ids') categoryIds: string[],
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
-    return this.preferenceService.updateCategories(userId, categories);
+    return this.preferenceService.setPreferredCategories(userId, categoryIds);
   }
 
   @Patch('notifications')

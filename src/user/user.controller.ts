@@ -26,6 +26,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiTags,
+  ApiBody,
 } from '@nestjs/swagger';
 import { ServiceResponseDto } from 'src/common/service-response.dto';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -39,6 +40,7 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { UserRole } from './entities/user.entity';
 import { GetUser } from '../common/decorators/get-user.decorator';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @ApiTags('user')
 @ApiBearerAuth()
@@ -53,7 +55,10 @@ import { GetUser } from '../common/decorators/get-user.decorator';
 @Controller('user')
 @UseGuards(JwtAuthGuard)
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -129,9 +134,50 @@ export class UserController {
     return this.userService.findOne(id);
   }
 
+  @Patch('avatar')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Upload or update user avatar',
+    description:
+      '**Screen 7** — Upload a profile picture during onboarding.\n\n' +
+      'Uploads to Cloudinary (500x500, face crop) and updates `cloudinary_avatar_url` on the user.\n\n' +
+      'If the user skips this screen, the auto-generated DiceBear avatar remains.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Avatar updated successfully', type: UserResponseDto })
+  @ApiResponse({ status: 400, description: 'No file provided', type: ErrorResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadAvatar(
+    @GetUser('userId') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    const upload = await this.cloudinaryService.uploadAvatar(file, userId);
+    return this.userService.update(userId, {
+      cloudinary_avatar_public_id: upload.publicId,
+      cloudinary_avatar_url: upload.secureUrl,
+    });
+  }
+
   @Patch(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update a user by ID' })
+  @ApiOperation({
+    summary: 'Update a user by ID',
+    description:
+      'Used across multiple onboarding steps:\n' +
+      '- **Screen 4** — Set name: `{ first_name, last_name }`\n' +
+      '- **Screen 5** — Set date of birth: `{ date_of_birth }`\n' +
+      '- **Screen 6** — Set gender: `{ gender }`',
+  })
   @ApiResponse({
     status: 200,
     description: 'User updated successfully',

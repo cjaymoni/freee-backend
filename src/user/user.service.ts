@@ -137,7 +137,7 @@ export class UserService {
       }
 
       // Handle Avatar
-      let avatarData = {};
+      let avatarData: { cloudinary_avatar_public_id?: string; cloudinary_avatar_url?: string } = {};
       if (file) {
         const uploadResult = await this.cloudinaryService.uploadImage(file, {
           folder: 'users',
@@ -145,6 +145,11 @@ export class UserService {
         avatarData = {
           cloudinary_avatar_public_id: uploadResult.publicId,
           cloudinary_avatar_url: uploadResult.secureUrl,
+        };
+      } else {
+        // Auto-generate a DiceBear avatar; seed will be replaced with the real user id after save
+        avatarData = {
+          cloudinary_avatar_url: `https://api.dicebear.com/9.x/adventurer/svg?seed=temp`,
         };
       }
 
@@ -164,6 +169,14 @@ export class UserService {
       });
 
       const result = await entityManager.save(UserEntity, user);
+
+      // Replace temp seed with the real user id for a stable, unique avatar
+      if (!file) {
+        await entityManager.update(UserEntity, result.id, {
+          cloudinary_avatar_url: `https://api.dicebear.com/9.x/adventurer/svg?seed=${result.id}`,
+        });
+        result.cloudinary_avatar_url = `https://api.dicebear.com/9.x/adventurer/svg?seed=${result.id}`;
+      }
 
       if (queryRunner) {
         await queryRunner.commitTransaction();

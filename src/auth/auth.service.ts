@@ -379,6 +379,7 @@ export class AuthService {
           email: user.email,
           role: user.role,
           is_onboarded: user.is_onboarded,
+          avatar: user.cloudinary_avatar_url,
         },
       };
     } catch (error) {
@@ -522,6 +523,7 @@ export class AuthService {
           email: user.email,
           first_name: user.first_name,
           last_name: user.last_name,
+          avatar: user.cloudinary_avatar_url,
         },
       };
     } catch (error) {

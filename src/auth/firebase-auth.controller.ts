@@ -23,7 +23,13 @@ export class FirebaseAuthController {
 
   @Post('authenticate')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Exchange Firebase ID Token for local JWT' })
+  @ApiOperation({
+    summary: 'Exchange Firebase ID Token for local JWT',
+    description:
+      '**Screens 1-3** — Entry point for the onboarding flow.\n\n' +
+      'Mobile completes phone/social OTP via Firebase SDK, then sends the `idToken` here to receive a local JWT + refresh token.\n\n' +
+      'Response includes `is_onboarded: false` for new users, signalling the app to start the onboarding screens.',
+  })
   async authenticate(
     @Body() firebaseAuthDto: FirebaseAuthDto,
     @Ip() ip: string,
