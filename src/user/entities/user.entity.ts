@@ -42,7 +42,7 @@ export class UserEntity {
 
   @Column({ type: 'varchar', length: 128, unique: true, nullable: true })
   @Index('idx_users_firebase_uid')
-  firebase_uid: string;
+  firebase_uid: string | null;
 
   @Column({ type: 'boolean', default: false })
   is_onboarded: boolean;
