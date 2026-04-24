@@ -18,6 +18,8 @@ import {
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { UserEntity } from './entities/user.entity';
+import { UserPreferenceEntity } from './entities/user-preference.entity';
+import { CategoryEntity } from '../category/entities/category.entity';
 import { UserResponseDto } from './dto/user-response.dto';
 import { ServiceResponseDto } from 'src/common/service-response.dto';
 import * as bcrypt from 'bcrypt';
@@ -177,6 +179,15 @@ export class UserService {
         });
         result.cloudinary_avatar_url = `https://api.dicebear.com/9.x/adventurer/svg?seed=${result.id}`;
       }
+
+      // Create user preference with selected categories
+      const preference = entityManager.create(UserPreferenceEntity, {
+        user_id: result.id,
+        preferred_categories: createUserDto.category_ids?.length
+          ? await entityManager.findByIds(CategoryEntity, createUserDto.category_ids)
+          : [],
+      });
+      await entityManager.save(UserPreferenceEntity, preference);
 
       if (queryRunner) {
         await queryRunner.commitTransaction();

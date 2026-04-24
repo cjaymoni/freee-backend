@@ -1,6 +1,6 @@
 import { ApiProperty, PickType } from '@nestjs/swagger';
 import { BaseUserDto } from './base-user.dto';
-import { IsOptional } from 'class-validator';
+import { IsOptional, IsUUID, IsArray } from 'class-validator';
 
 export class CreateUserDto extends PickType(BaseUserDto, [
   'first_name',
@@ -20,4 +20,10 @@ export class CreateUserDto extends PickType(BaseUserDto, [
   @ApiProperty({ type: 'string', format: 'binary', required: false })
   @IsOptional()
   file?: any;
+
+  @ApiProperty({ type: [String], required: false, description: 'Preferred category IDs' })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  category_ids?: string[];
 }

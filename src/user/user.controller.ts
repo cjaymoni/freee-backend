@@ -83,6 +83,29 @@ export class UserController {
     type: ErrorResponseDto,
   })
   @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        first_name: { type: 'string', example: 'John' },
+        last_name: { type: 'string', example: 'Doe' },
+        email: { type: 'string', example: 'user@example.com' },
+        phone_number: { type: 'string', example: '+233243225121' },
+        password: { type: 'string', example: 'password123' },
+        gender: { type: 'string', example: 'Male' },
+        bio: { type: 'string', example: 'A short bio' },
+        date_of_birth: { type: 'string', example: '2000-01-01' },
+        firebase_uid: { type: 'string', example: 'firebase-uid-123' },
+        category_ids: {
+          type: 'array',
+          items: { type: 'string', format: 'uuid' },
+          example: ['123e4567-e89b-12d3-a456-426614174000'],
+          description: 'Preferred category IDs selected by the user',
+        },
+        file: { type: 'string', format: 'binary', description: 'Profile avatar image' },
+      },
+    },
+  })
   @UseInterceptors(FileInterceptor('file'))
   async create(
     @Body() createUserDto: CreateUserDto,

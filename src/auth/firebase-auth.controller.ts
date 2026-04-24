@@ -6,7 +6,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiOkResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { FirebaseAuthService } from './firebase-auth.service';
 import { FirebaseAuthDto } from './dto/firebase-auth.dto';
@@ -30,6 +30,28 @@ export class FirebaseAuthController {
       'Mobile completes phone/social OTP via Firebase SDK, then sends the `idToken` here to receive a local JWT + refresh token.\n\n' +
       'Response includes `is_onboarded: false` for new users, signalling the app to start the onboarding screens.',
   })
+  @ApiOkResponse({
+    description: 'Authentication successful',
+    schema: {
+      example: {
+        state: true,
+        statusCode: 200,
+        message: 'Authentication successful',
+        data: {
+          access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          refresh_token: 'a1b2c3d4e5f6...',
+          user: {
+            id: '123e4567-e89b-12d3-a456-426614174000',
+            email: 'user@example.com',
+            role: 'USER',
+            is_onboarded: false,
+            avatar: 'https://api.dicebear.com/9.x/adventurer/svg?seed=123e4567',
+          },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired Firebase ID token' })
   async authenticate(
     @Body() firebaseAuthDto: FirebaseAuthDto,
     @Ip() ip: string,

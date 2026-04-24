@@ -372,14 +372,19 @@ export class AuthService {
       };
 
       return {
-        access_token: this.jwtService.sign(payload),
-        refresh_token: refreshToken,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          is_onboarded: user.is_onboarded,
-          avatar: user.cloudinary_avatar_url,
+        state: true,
+        statusCode: 200,
+        message: 'Authentication successful',
+        data: {
+          access_token: this.jwtService.sign(payload),
+          refresh_token: refreshToken,
+          user: {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            is_onboarded: user.is_onboarded,
+            avatar: user.cloudinary_avatar_url,
+          },
         },
       };
     } catch (error) {
