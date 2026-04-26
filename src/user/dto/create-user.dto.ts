@@ -28,7 +28,11 @@ export class CreateUserDto extends PickType(BaseUserDto, [
 
   @ApiProperty({ type: [String], required: false, description: 'Preferred category IDs' })
   @IsOptional()
-  @Transform(({ value }) => (Array.isArray(value) ? value : [value].filter(Boolean)))
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return value.split(',').map((v) => v.trim()).filter(Boolean);
+    return [value].filter(Boolean);
+  })
   @IsArray()
   @IsUUID('4', { each: true })
   category_ids?: string[];
