@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 describe('UserController', () => {
   let controller: UserController;
@@ -18,6 +19,10 @@ describe('UserController', () => {
             update: jest.fn(),
             remove: jest.fn(),
           },
+        },
+        {
+          provide: CloudinaryService,
+          useValue: { uploadImage: jest.fn() },
         },
       ],
     }).compile();
