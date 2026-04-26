@@ -127,14 +127,21 @@ export class UserService {
       );
 
       if (existingUser) {
-        if (createUserDto.email && existingUser.email === createUserDto.email) {
-          throw new ConflictException('Email already exists');
-        }
-        if (
-          createUserDto.phone_number &&
-          existingUser.phone_number === createUserDto.phone_number
-        ) {
-          throw new ConflictException('Phone number already exists');
+        // Skip conflict if it's the same firebase user (retry scenario)
+        const isSameFirebaseUser =
+          createUserDto.firebase_uid &&
+          existingUser.firebase_uid === createUserDto.firebase_uid;
+
+        if (!isSameFirebaseUser) {
+          if (createUserDto.email && existingUser.email === createUserDto.email) {
+            throw new ConflictException('Email already exists');
+          }
+          if (
+            createUserDto.phone_number &&
+            existingUser.phone_number === createUserDto.phone_number
+          ) {
+            throw new ConflictException('Phone number already exists');
+          }
         }
       }
 
