@@ -111,6 +111,9 @@ export class UserController {
     @Body() createUserDto: CreateUserDto,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    if (createUserDto.category_ids && !Array.isArray(createUserDto.category_ids)) {
+      createUserDto.category_ids = [createUserDto.category_ids];
+    }
     return this.userService.create(createUserDto, file);
   }
 
