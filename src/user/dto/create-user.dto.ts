@@ -24,6 +24,6 @@ export class CreateUserDto extends PickType(BaseUserDto, [
   @ApiProperty({ type: [String], required: false, description: 'Preferred category IDs' })
   @IsOptional()
   @IsArray()
-  @IsUUID('all', { each: true })
+  @IsUUID('4', { each: true })
   category_ids?: string[];
 }
