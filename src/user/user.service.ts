@@ -113,7 +113,14 @@ export class UserService {
     try {
       this.logger.log(`Creating user with email: ${createUserDto.email}`);
 
-      // Internal safety check: ensure email/phone is unique
+      // Internal safety check: ensure firebase_uid/email/phone is unique
+      if (createUserDto.firebase_uid) {
+        const existingFirebaseUser = await this.findByFirebaseUid(createUserDto.firebase_uid);
+        if (existingFirebaseUser) {
+          throw new ConflictException('User already exists');
+        }
+      }
+
       const existingUser = await this.findByEmailOrPhone(
         createUserDto.email,
         createUserDto.phone_number,
