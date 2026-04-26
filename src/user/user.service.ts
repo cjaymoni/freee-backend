@@ -127,7 +127,7 @@ export class UserService {
       );
 
       if (existingUser) {
-        if (existingUser.email === createUserDto.email) {
+        if (createUserDto.email && existingUser.email === createUserDto.email) {
           throw new ConflictException('Email already exists');
         }
         if (
