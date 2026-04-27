@@ -243,6 +243,43 @@ Authorization: Bearer <access_token>
 
 ---
 
+## Optional Auth Status (Browse First)
+
+Use this when the app allows anonymous browsing and only requires auth on interaction.
+
+### Check Auth Status
+
+If no token is present, the response is `{ authenticated: false }`.
+
+```json
+GET /auth/status
+Authorization: Bearer <access_token>  // optional
+
+// Response
+{ "authenticated": false }
+// or { "authenticated": true, "is_onboarded": true, "user": { ... } }
+```
+
+### Interaction Gate (Suggested Flow)
+
+1. Allow anonymous browsing.
+2. On item interaction:
+    - If no token, sign in via Firebase, then exchange `idToken` for JWT.
+    - Call `GET /auth/status`.
+    - If `is_onboarded` is false, route to onboarding.
+    - Otherwise proceed with the action.
+
+### Firebase Login Alias
+
+This is equivalent to `POST /firebase-auth/authenticate` but shorter:
+
+```json
+POST /auth/firebase-login
+{ "idToken": "<Firebase ID Token>" }
+```
+
+---
+
 ## Token Refresh
 
 The `access_token` expires in **15 minutes**. When you get a `401` response, use the `refresh_token` to get a new one.

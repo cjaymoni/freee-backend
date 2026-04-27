@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { LoginDto } from './dto/login.dto';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -25,6 +26,7 @@ import { UserAgent } from '../common/decorators/user-agent.decorator';
 import { UseGuards, Get } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { UserResponseDto } from '../user/dto/user-response.dto';
@@ -51,6 +53,37 @@ export class AuthController {
   })
   async getMe(@GetUser('userId') userId: string) {
     return await this.authService.getMe(userId);
+  }
+
+  @Get('status')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check auth status (optional token)' })
+  @ApiOkResponse({
+    description: 'Auth status returned successfully',
+    schema: {
+      example: {
+        authenticated: true,
+        is_onboarded: true,
+        user: {
+          id: '123e4567-e89b-12d3-a456-426614174000',
+          email: 'user@example.com',
+          role: 'USER',
+        },
+      },
+    },
+  })
+  async status(@GetUser() user?: { userId?: string }) {
+    if (!user?.userId) {
+      return { authenticated: false };
+    }
+
+    const me = await this.authService.getMe(user.userId);
+    return {
+      authenticated: true,
+      is_onboarded: me.data?.is_onboarded ?? false,
+      user: me.data,
+    };
   }
 
   @Post('register')
@@ -83,6 +116,17 @@ export class AuthController {
     @UserAgent() userAgent: string,
   ) {
     return this.authService.login(loginDto, ip, userAgent);
+  }
+
+  @Post('firebase-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login with Firebase ID token' })
+  async firebaseLogin(
+    @Body() firebaseLoginDto: FirebaseLoginDto,
+    @Ip() ip: string,
+    @UserAgent() userAgent: string,
+  ) {
+    return this.authService.firebaseLogin(firebaseLoginDto, ip, userAgent);
   }
 
   @Post('refresh')

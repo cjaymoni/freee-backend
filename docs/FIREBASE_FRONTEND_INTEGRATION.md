@@ -239,6 +239,56 @@ async function apiFetch(path: string, options: RequestInit = {}) {
 
 ---
 
+## Optional Auth Status (Browse First)
+
+Use this when the UI allows anonymous browsing and only requires auth on interaction.
+
+### Check Auth Status
+
+If no token is present, the response is `{ authenticated: false }`.
+
+```ts
+async function getAuthStatus(accessToken?: string) {
+  const res = await fetch('http://localhost:3000/auth/status', {
+    method: 'GET',
+    headers: accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
+      : undefined,
+  });
+
+  return res.json();
+  // { authenticated: false }
+  // or { authenticated: true, is_onboarded: boolean, user: {...} }
+}
+```
+
+### Interaction Gate (Suggested Flow)
+
+1. Allow anonymous browsing.
+2. On item interaction:
+   - If no token, sign in via Firebase, then exchange `idToken` for JWT.
+   - Call `GET /auth/status`.
+   - If `is_onboarded` is false, route to onboarding.
+   - Otherwise proceed with the action.
+
+### Firebase Login Alias
+
+This is equivalent to `POST /firebase-auth/authenticate` but shorter:
+
+```ts
+async function exchangeWithAlias(idToken: string) {
+  const res = await fetch('http://localhost:3000/auth/firebase-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+
+  return res.json();
+}
+```
+
+---
+
 ## Token Refresh
 
 The `access_token` expires in **15 minutes**. Use the `refresh_token` to get a new one:
