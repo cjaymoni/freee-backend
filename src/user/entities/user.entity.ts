@@ -38,7 +38,7 @@ export class UserEntity {
   phone_number: string;
 
   @Column({ type: 'varchar', length: 255, unique: true, nullable: true })
-  email: string;
+  email: string | null;
 
   @Column({ type: 'varchar', length: 128, unique: true, nullable: true })
   @Index('idx_users_firebase_uid')

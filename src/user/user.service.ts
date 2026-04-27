@@ -174,7 +174,6 @@ export class UserService {
       const user = entityManager.create(UserEntity, {
         ...userData,
         ...avatarData,
-        email: createUserDto.email || null,
         firebase_uid: createUserDto.firebase_uid || null,
         password_hash: createUserDto.password ? hashedPassword : undefined,
         is_email_verified: options.is_email_verified ?? false,
