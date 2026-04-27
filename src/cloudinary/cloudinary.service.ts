@@ -11,6 +11,11 @@ import {
 } from './interfaces/cloudinary.interfaces';
 import * as streamifier from 'streamifier';
 
+type CloudinaryUploadFile = {
+  buffer: Buffer;
+  [key: string]: unknown;
+};
+
 @Injectable()
 export class CloudinaryService {
   /**
@@ -20,7 +25,7 @@ export class CloudinaryService {
    * @returns Upload response with public ID and secure URL
    */
   async uploadImage(
-    file: Express.Multer.File,
+    file: CloudinaryUploadFile,
     options?: UploadOptions,
   ): Promise<UploadImageResponseDto> {
     return new Promise((resolve, reject) => {
@@ -76,7 +81,7 @@ export class CloudinaryService {
    * @returns Upload response with public ID and secure URL
    */
   async uploadAvatar(
-    file: Express.Multer.File,
+    file: CloudinaryUploadFile,
     userId: string,
   ): Promise<UploadImageResponseDto> {
     return new Promise((resolve, reject) => {

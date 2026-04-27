@@ -102,7 +102,11 @@ export class UserController {
           example: ['123e4567-e89b-12d3-a456-426614174000'],
           description: 'Preferred category IDs selected by the user',
         },
-        file: { type: 'string', format: 'binary', description: 'Profile avatar image' },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Profile avatar image',
+        },
       },
     },
   })
@@ -111,10 +115,16 @@ export class UserController {
     @Body() createUserDto: CreateUserDto,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    if (createUserDto.category_ids && !Array.isArray(createUserDto.category_ids)) {
+    if (
+      createUserDto.category_ids &&
+      !Array.isArray(createUserDto.category_ids)
+    ) {
       createUserDto.category_ids = [createUserDto.category_ids];
     }
-    return this.userService.create(createUserDto, file);
+    return this.userService.create(createUserDto, file, {
+      source: 'user.controller.create',
+      upsertOnConflict: true,
+    });
   }
 
   @Get()
@@ -179,8 +189,16 @@ export class UserController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Avatar updated successfully', type: UserResponseDto })
-  @ApiResponse({ status: 400, description: 'No file provided', type: ErrorResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Avatar updated successfully',
+    type: UserResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No file provided',
+    type: ErrorResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseInterceptors(FileInterceptor('file'))
   async uploadAvatar(

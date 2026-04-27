@@ -8,7 +8,12 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, FindOptionsWhere } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+  FindOptionsWhere,
+  QueryFailedError,
+} from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
@@ -35,7 +40,16 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   private isConflictError(error: unknown): boolean {
-    return error instanceof ConflictException;
+    if (error instanceof ConflictException) {
+      return true;
+    }
+
+    if (error instanceof QueryFailedError) {
+      const driverError = error.driverError as { code?: string } | undefined;
+      return driverError?.code === '23505';
+    }
+
+    return false;
   }
 
   constructor(
@@ -81,7 +95,11 @@ export class AuthService {
       const userServiceResponse = await this.userService.create(
         createUserDto,
         undefined,
-        { is_active: false, is_email_verified: false },
+        {
+          is_active: false,
+          is_email_verified: false,
+          source: 'auth.register',
+        },
         queryRunner.manager,
       );
 
@@ -327,6 +345,8 @@ export class AuthService {
               is_active: true,
               is_email_verified: decodedToken.email_verified || false,
               is_phone_verified: !!phone_number,
+              source: 'auth.firebaseAuthenticate',
+              upsertOnConflict: true,
             },
             manager,
           );
@@ -352,6 +372,24 @@ export class AuthService {
           user = await userRepo.findOne({ where: conflictWhere });
           if (!user) {
             throw error;
+          }
+
+          // Existing user won the race; merge token-derived values and continue.
+          let needsMergeUpdate = false;
+          if (!user.firebase_uid) {
+            user.firebase_uid = firebase_uid;
+            needsMergeUpdate = true;
+          }
+          if (email && !user.email) {
+            user.email = email;
+            needsMergeUpdate = true;
+          }
+          if (phone_number && !user.phone_number) {
+            user.phone_number = phone_number;
+            needsMergeUpdate = true;
+          }
+          if (needsMergeUpdate) {
+            await userRepo.save(user);
           }
         }
       }

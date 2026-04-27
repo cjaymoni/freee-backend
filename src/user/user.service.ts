@@ -26,7 +26,11 @@ import * as bcrypt from 'bcrypt';
 import { FindUserDto } from './dto/find-user.dto';
 import { AppError } from 'src/common/app-error';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
-import { Express } from 'express';
+
+type UploadFile = {
+  buffer: Buffer;
+  [key: string]: unknown;
+};
 
 @Injectable()
 export class UserService {
@@ -95,11 +99,13 @@ export class UserService {
 
   async create(
     createUserDto: CreateUserDto,
-    file?: Express.Multer.File,
+    file?: UploadFile,
     options: {
       is_active?: boolean;
       is_email_verified?: boolean;
       is_phone_verified?: boolean;
+      source?: string;
+      upsertOnConflict?: boolean;
     } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -111,33 +117,36 @@ export class UserService {
     const entityManager = manager || queryRunner!.manager;
 
     try {
-      this.logger.log(`Creating user${createUserDto.email ? ` with email: ${createUserDto.email}` : ` (no email)`}`);
-
-      // Internal safety check: ensure firebase_uid/email/phone is unique
-      if (createUserDto.firebase_uid) {
-        const existingFirebaseUser = await entityManager.findOne(UserEntity, {
-          where: { firebase_uid: createUserDto.firebase_uid },
-        });
-        if (existingFirebaseUser) {
-          throw new ConflictException('User already exists');
-        }
-      }
+      const source = options.source ?? 'unknown';
+      this.logger.log(
+        `[create][source=${source}] Creating user${createUserDto.email ? ` with email: ${createUserDto.email}` : ` (no email)`}`,
+      );
 
       const whereConditions: FindOptionsWhere<UserEntity>[] = [];
-      if (createUserDto.email) whereConditions.push({ email: createUserDto.email });
-      if (createUserDto.phone_number) whereConditions.push({ phone_number: createUserDto.phone_number });
+      if (createUserDto.firebase_uid) {
+        whereConditions.push({ firebase_uid: createUserDto.firebase_uid });
+      }
+      if (createUserDto.email) {
+        whereConditions.push({ email: createUserDto.email });
+      }
+      if (createUserDto.phone_number) {
+        whereConditions.push({ phone_number: createUserDto.phone_number });
+      }
       const existingUser = whereConditions.length
         ? await entityManager.findOne(UserEntity, { where: whereConditions })
         : null;
 
       if (existingUser) {
-        // Skip conflict if it's the same firebase user (retry scenario)
-        const isSameFirebaseUser =
-          createUserDto.firebase_uid &&
-          existingUser.firebase_uid === createUserDto.firebase_uid;
+        const shouldPatchExisting =
+          options.upsertOnConflict ||
+          (createUserDto.firebase_uid &&
+            existingUser.firebase_uid === createUserDto.firebase_uid);
 
-        if (!isSameFirebaseUser) {
-          if (createUserDto.email && existingUser.email === createUserDto.email) {
+        if (!shouldPatchExisting) {
+          if (
+            createUserDto.email &&
+            existingUser.email === createUserDto.email
+          ) {
             throw new ConflictException('Email already exists');
           }
           if (
@@ -146,7 +155,94 @@ export class UserService {
           ) {
             throw new ConflictException('Phone number already exists');
           }
+          throw new ConflictException('User already exists');
         }
+
+        let passwordHash: string | undefined;
+        if (createUserDto.password) {
+          const saltRounds = 12;
+          passwordHash = await bcrypt.hash(createUserDto.password, saltRounds);
+        }
+
+        let patchData: QueryDeepPartialEntity<UserEntity> = {
+          first_name: createUserDto.first_name,
+          last_name: createUserDto.last_name,
+          date_of_birth: createUserDto.date_of_birth,
+          gender: createUserDto.gender,
+          bio: createUserDto.bio,
+          firebase_uid: createUserDto.firebase_uid || existingUser.firebase_uid,
+          email: createUserDto.email || existingUser.email,
+          phone_number: createUserDto.phone_number || existingUser.phone_number,
+          is_active: options.is_active ?? existingUser.is_active,
+          is_email_verified:
+            options.is_email_verified ?? existingUser.is_email_verified,
+          is_phone_verified:
+            options.is_phone_verified ?? existingUser.is_phone_verified,
+        };
+
+        if (passwordHash) {
+          patchData = {
+            ...patchData,
+            password_hash: passwordHash,
+          };
+        }
+
+        if (file) {
+          const uploadResult = await this.cloudinaryService.uploadImage(file, {
+            folder: 'users',
+          });
+          patchData = {
+            ...patchData,
+            cloudinary_avatar_public_id: uploadResult.publicId,
+            cloudinary_avatar_url: uploadResult.secureUrl,
+          };
+        }
+
+        await entityManager.update(UserEntity, existingUser.id, patchData);
+
+        if (createUserDto.category_ids?.length) {
+          const categories = await entityManager.findByIds(
+            CategoryEntity,
+            createUserDto.category_ids,
+          );
+
+          let preference = await entityManager.findOne(UserPreferenceEntity, {
+            where: { user_id: existingUser.id },
+            relations: ['preferred_categories'],
+          });
+
+          if (!preference) {
+            preference = entityManager.create(UserPreferenceEntity, {
+              user_id: existingUser.id,
+              preferred_categories: categories,
+            });
+          } else {
+            preference.preferred_categories = categories;
+          }
+
+          await entityManager.save(UserPreferenceEntity, preference);
+        }
+
+        const refreshedUser = await entityManager.findOne(UserEntity, {
+          where: { id: existingUser.id },
+        });
+
+        if (!refreshedUser) {
+          throw new NotFoundException('User not found after patch');
+        }
+
+        if (queryRunner) {
+          await queryRunner.commitTransaction();
+        }
+
+        const responseDto = new UserResponseDto();
+        Object.assign(responseDto, refreshedUser);
+        return {
+          message: 'User updated successfully',
+          data: responseDto,
+          state: true,
+          statusCode: 200,
+        };
       }
 
       // Hash password
@@ -157,7 +253,10 @@ export class UserService {
       }
 
       // Handle Avatar
-      let avatarData: { cloudinary_avatar_public_id?: string; cloudinary_avatar_url?: string } = {};
+      let avatarData: {
+        cloudinary_avatar_public_id?: string;
+        cloudinary_avatar_url?: string;
+      } = {};
       if (file) {
         const uploadResult = await this.cloudinaryService.uploadImage(file, {
           folder: 'users',
@@ -188,7 +287,9 @@ export class UserService {
         member_since: new Date(),
       });
 
-      this.logger.log(`[create] saving user => ${JSON.stringify({ email: user.email, phone_number: user.phone_number, firebase_uid: user.firebase_uid })}`);
+      this.logger.log(
+        `[create] saving user => ${JSON.stringify({ email: user.email, phone_number: user.phone_number, firebase_uid: user.firebase_uid })}`,
+      );
       const result = await entityManager.save(UserEntity, user);
 
       // Replace temp seed with the real user id for a stable, unique avatar
@@ -203,7 +304,10 @@ export class UserService {
       const preference = entityManager.create(UserPreferenceEntity, {
         user_id: result.id,
         preferred_categories: createUserDto.category_ids?.length
-          ? await entityManager.findByIds(CategoryEntity, createUserDto.category_ids)
+          ? await entityManager.findByIds(
+              CategoryEntity,
+              createUserDto.category_ids,
+            )
           : [],
       });
       await entityManager.save(UserPreferenceEntity, preference);
