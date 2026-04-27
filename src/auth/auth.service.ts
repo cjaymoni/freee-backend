@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, FindOptionsWhere } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
@@ -33,6 +33,10 @@ import { FirebaseAuthDto } from './dto/firebase-auth.dto';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+
+  private isConflictError(error: unknown): boolean {
+    return error instanceof ConflictException;
+  }
 
   constructor(
     private readonly userService: UserService,
@@ -260,40 +264,40 @@ export class AuthService {
     }
 
     const { email, phone_number, uid: firebase_uid } = decodedToken;
-    this.logger.log(`[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`);
+    this.logger.log(
+      `[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`,
+    );
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+    return this.dataSource.transaction(async (manager) => {
+      const userRepo = manager.getRepository(UserEntity);
+      const sessionRepo = manager.getRepository(UserSessionEntity);
 
-    let user: UserEntity | null = null;
-
-    try {
-      // 1. Precise Find or Link Strategy
-      // First, try by UID
-      user = await queryRunner.manager.findOne(UserEntity, {
-        where: { firebase_uid },
-      });
+      let user = await userRepo.findOne({ where: { firebase_uid } });
 
       if (!user) {
-        // Not found by UID, try by Email or Phone (use queryRunner to stay in-transaction)
-        const whereConditions: import('typeorm').FindOptionsWhere<UserEntity>[] = [];
-        if (email) whereConditions.push({ email });
-        if (phone_number) whereConditions.push({ phone_number });
-        user = whereConditions.length
-          ? await queryRunner.manager.findOne(UserEntity, { where: whereConditions })
-          : null;
+        const whereConditions: FindOptionsWhere<UserEntity>[] = [];
+        if (email) {
+          whereConditions.push({ email });
+        }
+        if (phone_number) {
+          whereConditions.push({ phone_number });
+        }
+
+        if (whereConditions.length > 0) {
+          user = await userRepo.findOne({ where: whereConditions });
+        }
 
         if (user) {
-          // Link UID and sync data
           user.firebase_uid = firebase_uid;
-          if (email && !user.email) user.email = email;
-          if (phone_number && !user.phone_number)
+          if (email && !user.email) {
+            user.email = email;
+          }
+          if (phone_number && !user.phone_number) {
             user.phone_number = phone_number;
-          await queryRunner.manager.save(user);
+          }
+          await userRepo.save(user);
         }
       } else {
-        // Found by UID, sync missing email/phone if provided
         let needsUpdate = false;
         if (email && !user.email) {
           user.email = email;
@@ -304,49 +308,67 @@ export class AuthService {
           needsUpdate = true;
         }
         if (needsUpdate) {
-          await queryRunner.manager.save(user);
+          await userRepo.save(user);
         }
       }
 
       if (!user) {
-        // 2. Create minimal user
         const createUserDto: CreateUserDto = {
           email: email || undefined,
-          phone_number: phone_number,
+          phone_number,
           firebase_uid,
         };
 
-        const userServiceResponse = await this.userService.create(
-          createUserDto,
-          undefined,
-          {
-            is_active: true,
-            is_email_verified: decodedToken.email_verified || false,
-            is_phone_verified: !!phone_number,
-          },
-          queryRunner.manager,
-        );
+        try {
+          const userServiceResponse = await this.userService.create(
+            createUserDto,
+            undefined,
+            {
+              is_active: true,
+              is_email_verified: decodedToken.email_verified || false,
+              is_phone_verified: !!phone_number,
+            },
+            manager,
+          );
 
-        user = (await queryRunner.manager.findOne(UserEntity, {
-          where: { id: userServiceResponse.data.id },
-        })) as UserEntity;
-      } else {
-        // 3. Status Synchronization
-        let needsStatusUpdate = false;
-        if (decodedToken.email_verified && !user.is_email_verified) {
-          user.is_email_verified = true;
-          needsStatusUpdate = true;
-        }
-        if (phone_number && !user.is_phone_verified) {
-          user.is_phone_verified = true;
-          needsStatusUpdate = true;
-        }
-        if (needsStatusUpdate) {
-          await queryRunner.manager.save(user);
+          user = (await userRepo.findOne({
+            where: { id: userServiceResponse.data.id },
+          })) as UserEntity;
+        } catch (error) {
+          if (!this.isConflictError(error)) {
+            throw error;
+          }
+
+          const conflictWhere: FindOptionsWhere<UserEntity>[] = [
+            { firebase_uid },
+          ];
+          if (email) {
+            conflictWhere.push({ email });
+          }
+          if (phone_number) {
+            conflictWhere.push({ phone_number });
+          }
+
+          user = await userRepo.findOne({ where: conflictWhere });
+          if (!user) {
+            throw error;
+          }
         }
       }
 
-      // Issue Local JWT
+      let needsStatusUpdate = false;
+      if (decodedToken.email_verified && !user.is_email_verified) {
+        user.is_email_verified = true;
+        needsStatusUpdate = true;
+      }
+      if (phone_number && !user.is_phone_verified) {
+        user.is_phone_verified = true;
+        needsStatusUpdate = true;
+      }
+      if (needsStatusUpdate) {
+        await userRepo.save(user);
+      }
+
       const sessionToken = randomBytes(32).toString('hex');
       const refreshToken = randomBytes(64).toString('hex');
 
@@ -356,7 +378,7 @@ export class AuthService {
       const refreshExpiresAt = new Date();
       refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
-      const session = queryRunner.manager.create(UserSessionEntity, {
+      const session = sessionRepo.create({
         user,
         session_token: sessionToken,
         refresh_token: refreshToken,
@@ -367,8 +389,7 @@ export class AuthService {
         device_type: 'mobile',
       });
 
-      await queryRunner.manager.save(session);
-      await queryRunner.commitTransaction();
+      await sessionRepo.save(session);
 
       const payload = {
         sub: user.id,
@@ -393,14 +414,12 @@ export class AuthService {
           },
         },
       };
-      this.logger.log(`[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`);
+
+      this.logger.log(
+        `[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`,
+      );
       return response;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
+    });
   }
 
   async firebaseLogin(
