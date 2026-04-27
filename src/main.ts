@@ -7,9 +7,7 @@ import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger: process.env.NODE_ENV === 'production'
-      ? ['log', 'warn', 'error']
-      : ['log', 'debug', 'warn', 'error'],
+    logger: ['log', 'debug', 'warn', 'error'],
   });
 
   // Set security headers
