@@ -51,10 +51,10 @@ Mobile App                                  Backend
 
 Download these from the [Firebase Console](https://console.firebase.google.com) under **Project Settings > Your apps** and place them in your project:
 
-| Platform | File | Location |
-|---|---|---|
-| Android | `google-services.json` | `app/` directory |
-| iOS | `GoogleService-Info.plist` | Root of the Xcode project |
+| Platform | File                       | Location                  |
+| -------- | -------------------------- | ------------------------- |
+| Android  | `google-services.json`     | `app/` directory          |
+| iOS      | `GoogleService-Info.plist` | Root of the Xcode project |
 
 > If the project was previously connected to a different Firebase project, replace the old file with the new one.
 
@@ -264,10 +264,10 @@ Authorization: Bearer <access_token>  // optional
 
 1. Allow anonymous browsing.
 2. On item interaction:
-    - If no token, sign in via Firebase, then exchange `idToken` for JWT.
-    - Call `GET /auth/status`.
-    - If `is_onboarded` is false, route to onboarding.
-    - Otherwise proceed with the action.
+   - If no token, sign in via Firebase, then exchange `idToken` for JWT.
+   - Call `GET /auth/status`.
+   - If `is_onboarded` is false, route to onboarding.
+   - Otherwise proceed with the action.
 
 ### Firebase Login Alias
 
@@ -328,11 +328,11 @@ Refresh and re-send the FCM token whenever `FirebaseMessaging.getInstance().toke
 
 ## Error Reference
 
-| HTTP Status | Meaning | What to do |
-|---|---|---|
-| `401 Unauthorized` | `idToken` is invalid or expired | Call `getIdToken(true)` to force-refresh and retry |
-| `400 Bad Request` | Missing or malformed request body | Check the request payload |
-| `404 Not Found` | Email not found (email utility endpoints only) | Show appropriate message to user |
+| HTTP Status        | Meaning                                        | What to do                                         |
+| ------------------ | ---------------------------------------------- | -------------------------------------------------- |
+| `401 Unauthorized` | `idToken` is invalid or expired                | Call `getIdToken(true)` to force-refresh and retry |
+| `400 Bad Request`  | Missing or malformed request body              | Check the request payload                          |
+| `404 Not Found`    | Email not found (email utility endpoints only) | Show appropriate message to user                   |
 
 ---
 

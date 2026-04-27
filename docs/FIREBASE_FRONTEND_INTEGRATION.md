@@ -39,14 +39,14 @@ After a successful exchange, store the tokens from the backend response:
 ```ts
 // The backend returns this shape from POST /firebase-auth/authenticate
 {
-  access_token: string;   // JWT — short-lived (15 min), use for all API calls
-  refresh_token: string;  // long-lived (7 days), use to get a new access_token
+  access_token: string; // JWT — short-lived (15 min), use for all API calls
+  refresh_token: string; // long-lived (7 days), use to get a new access_token
   user: {
     id: string;
     email: string;
     role: string;
     is_onboarded: boolean;
-  };
+  }
 }
 ```
 
@@ -140,7 +140,11 @@ const recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
 
 async function sendOtp(phoneNumber: string) {
   // phoneNumber must be in E.164 format e.g. +233575557050
-  const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
+  const confirmationResult = await signInWithPhoneNumber(
+    auth,
+    phoneNumber,
+    recaptchaVerifier,
+  );
   return confirmationResult; // store this to verify the code in step 2
 }
 ```
@@ -166,11 +170,14 @@ These hit the backend directly — no Firebase SDK call needed.
 ```ts
 // Call after sign-up or when user requests a resend
 async function sendVerificationEmail(email: string) {
-  const res = await fetch('http://localhost:3000/firebase-auth/send-verification-email', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-  });
+  const res = await fetch(
+    'http://localhost:3000/firebase-auth/send-verification-email',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    },
+  );
   return res.json(); // { message: 'Verification email sent successfully' }
 }
 ```
@@ -179,11 +186,14 @@ async function sendVerificationEmail(email: string) {
 
 ```ts
 async function sendPasswordResetEmail(email: string) {
-  const res = await fetch('http://localhost:3000/firebase-auth/send-password-reset-email', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-  });
+  const res = await fetch(
+    'http://localhost:3000/firebase-auth/send-password-reset-email',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    },
+  );
   return res.json(); // { message: 'Password reset email sent successfully' }
 }
 ```
@@ -192,11 +202,14 @@ async function sendPasswordResetEmail(email: string) {
 
 ```ts
 async function sendSignInLink(email: string) {
-  const res = await fetch('http://localhost:3000/firebase-auth/send-signin-link', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-  });
+  const res = await fetch(
+    'http://localhost:3000/firebase-auth/send-signin-link',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    },
+  );
   return res.json(); // { message: 'Sign-in link sent successfully' }
 }
 ```
@@ -205,14 +218,17 @@ async function sendSignInLink(email: string) {
 
 ```ts
 async function revokeAllSessions(email: string, accessToken: string) {
-  const res = await fetch('http://localhost:3000/firebase-auth/revoke-sessions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
+  const res = await fetch(
+    'http://localhost:3000/firebase-auth/revoke-sessions',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ email }),
     },
-    body: JSON.stringify({ email }),
-  });
+  );
   return res.json(); // { message: 'All active sessions have been signed out' }
 }
 ```
@@ -347,9 +363,9 @@ POST /auth/refresh  →  new access_token + new refresh_token ──────
 
 ## Error Reference
 
-| HTTP Status | Meaning |
-|---|---|
-| `401 Unauthorized` | Firebase `idToken` is invalid or expired — re-authenticate |
-| `400 Bad Request` | Missing/invalid request body field |
-| `404 Not Found` | Email not found in the system (verification/revoke endpoints) |
-| `409 Conflict` | User already exists (standard register flow only) |
+| HTTP Status        | Meaning                                                       |
+| ------------------ | ------------------------------------------------------------- |
+| `401 Unauthorized` | Firebase `idToken` is invalid or expired — re-authenticate    |
+| `400 Bad Request`  | Missing/invalid request body field                            |
+| `404 Not Found`    | Email not found in the system (verification/revoke endpoints) |
+| `409 Conflict`     | User already exists (standard register flow only)             |
