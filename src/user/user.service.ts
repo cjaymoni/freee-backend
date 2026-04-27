@@ -105,6 +105,7 @@ export class UserService {
       is_phone_verified?: boolean;
       source?: string;
       upsertOnConflict?: boolean;
+      markOnboardedOnCreate?: boolean;
     } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -173,6 +174,9 @@ export class UserService {
           email: createUserDto.email || existingUser.email,
           phone_number: createUserDto.phone_number || existingUser.phone_number,
           is_active: options.is_active ?? existingUser.is_active,
+          is_onboarded: options.markOnboardedOnCreate
+            ? true
+            : existingUser.is_onboarded,
           is_email_verified:
             options.is_email_verified ?? existingUser.is_email_verified,
           is_phone_verified:
@@ -280,6 +284,7 @@ export class UserService {
         password_hash: createUserDto.password ? hashedPassword : undefined,
         is_email_verified: options.is_email_verified ?? false,
         is_phone_verified: options.is_phone_verified ?? false,
+        is_onboarded: options.markOnboardedOnCreate ?? false,
         is_active: options.is_active ?? true,
         notification_enabled: true,
         failed_login_attempts: 0,

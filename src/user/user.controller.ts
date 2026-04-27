@@ -124,6 +124,7 @@ export class UserController {
     return this.userService.create(createUserDto, file, {
       source: 'user.controller.create',
       upsertOnConflict: true,
+      markOnboardedOnCreate: true,
     });
   }
 
