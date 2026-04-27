@@ -276,8 +276,13 @@ export class AuthService {
       });
 
       if (!user) {
-        // Not found by UID, try by Email or Phone
-        user = await this.userService.findByEmailOrPhone(email, phone_number);
+        // Not found by UID, try by Email or Phone (use queryRunner to stay in-transaction)
+        const whereConditions: import('typeorm').FindOptionsWhere<UserEntity>[] = [];
+        if (email) whereConditions.push({ email });
+        if (phone_number) whereConditions.push({ phone_number });
+        user = whereConditions.length
+          ? await queryRunner.manager.findOne(UserEntity, { where: whereConditions })
+          : null;
 
         if (user) {
           // Link UID and sync data

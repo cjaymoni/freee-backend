@@ -115,16 +115,20 @@ export class UserService {
 
       // Internal safety check: ensure firebase_uid/email/phone is unique
       if (createUserDto.firebase_uid) {
-        const existingFirebaseUser = await this.findByFirebaseUid(createUserDto.firebase_uid);
+        const existingFirebaseUser = await entityManager.findOne(UserEntity, {
+          where: { firebase_uid: createUserDto.firebase_uid },
+        });
         if (existingFirebaseUser) {
           throw new ConflictException('User already exists');
         }
       }
 
-      const existingUser = await this.findByEmailOrPhone(
-        createUserDto.email,
-        createUserDto.phone_number,
-      );
+      const whereConditions: FindOptionsWhere<UserEntity>[] = [];
+      if (createUserDto.email) whereConditions.push({ email: createUserDto.email });
+      if (createUserDto.phone_number) whereConditions.push({ phone_number: createUserDto.phone_number });
+      const existingUser = whereConditions.length
+        ? await entityManager.findOne(UserEntity, { where: whereConditions })
+        : null;
 
       if (existingUser) {
         // Skip conflict if it's the same firebase user (retry scenario)
