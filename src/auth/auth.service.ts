@@ -260,7 +260,7 @@ export class AuthService {
     }
 
     const { email, phone_number, uid: firebase_uid } = decodedToken;
-    this.logger.debug(`[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`);
+    this.logger.log(`[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -388,7 +388,7 @@ export class AuthService {
           },
         },
       };
-      this.logger.debug(`[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`);
+      this.logger.log(`[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`);
       return response;
     } catch (error) {
       await queryRunner.rollbackTransaction();
