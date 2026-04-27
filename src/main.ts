@@ -6,7 +6,11 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import helmet from 'helmet';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: process.env.NODE_ENV === 'production'
+      ? ['log', 'warn', 'error']
+      : ['log', 'debug', 'warn', 'error'],
+  });
 
   // Set security headers
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));

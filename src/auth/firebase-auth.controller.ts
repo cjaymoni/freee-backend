@@ -5,6 +5,7 @@ import {
   Ip,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiOkResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -16,6 +17,8 @@ import { UserAgent } from '../common/decorators/user-agent.decorator';
 @ApiTags('Firebase Auth')
 @Controller('firebase-auth')
 export class FirebaseAuthController {
+  private readonly logger = new Logger(FirebaseAuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly firebaseAuthService: FirebaseAuthService,
@@ -57,6 +60,7 @@ export class FirebaseAuthController {
     @Ip() ip: string,
     @UserAgent() userAgent: string,
   ) {
+    this.logger.debug(`[authenticate] request body => ${JSON.stringify({ idToken: firebaseAuthDto.idToken?.slice(0, 20) + '...' })}`);
     return this.authService.firebaseAuthenticate(
       firebaseAuthDto,
       ip,

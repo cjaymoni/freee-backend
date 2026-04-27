@@ -260,6 +260,7 @@ export class AuthService {
     }
 
     const { email, phone_number, uid: firebase_uid } = decodedToken;
+    this.logger.debug(`[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -371,7 +372,7 @@ export class AuthService {
         session_token: sessionToken,
       };
 
-      return {
+      const response = {
         state: true,
         statusCode: 200,
         message: 'Authentication successful',
@@ -387,6 +388,8 @@ export class AuthService {
           },
         },
       };
+      this.logger.debug(`[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`);
+      return response;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

@@ -184,6 +184,7 @@ export class UserService {
         member_since: new Date(),
       });
 
+      this.logger.debug(`[create] saving user => ${JSON.stringify({ email: user.email, phone_number: user.phone_number, firebase_uid: user.firebase_uid })}`);
       const result = await entityManager.save(UserEntity, user);
 
       // Replace temp seed with the real user id for a stable, unique avatar
