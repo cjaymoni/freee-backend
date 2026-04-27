@@ -111,7 +111,7 @@ export class UserService {
     const entityManager = manager || queryRunner!.manager;
 
     try {
-      this.logger.log(`Creating user with email: ${createUserDto.email}`);
+      this.logger.log(`Creating user${createUserDto.email ? ` with email: ${createUserDto.email}` : ` (no email)`}`);
 
       // Internal safety check: ensure firebase_uid/email/phone is unique
       if (createUserDto.firebase_uid) {
@@ -174,6 +174,7 @@ export class UserService {
       const user = entityManager.create(UserEntity, {
         ...userData,
         ...avatarData,
+        email: createUserDto.email || null,
         firebase_uid: createUserDto.firebase_uid || null,
         password_hash: createUserDto.password ? hashedPassword : undefined,
         is_email_verified: options.is_email_verified ?? false,
