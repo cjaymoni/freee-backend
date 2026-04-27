@@ -29,7 +29,6 @@ import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 
 type UploadFile = {
   buffer: Buffer;
-  [key: string]: unknown;
 };
 
 @Injectable()

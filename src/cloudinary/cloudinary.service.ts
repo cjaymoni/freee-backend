@@ -13,7 +13,6 @@ import * as streamifier from 'streamifier';
 
 type CloudinaryUploadFile = {
   buffer: Buffer;
-  [key: string]: unknown;
 };
 
 @Injectable()
