@@ -75,14 +75,24 @@ export class AuthController {
   })
   async status(@GetUser() user?: { userId?: string }) {
     if (!user?.userId) {
-      return { authenticated: false };
+      return {
+        state: true,
+        statusCode: 200,
+        message: 'Auth status retrieved',
+        data: { authenticated: false },
+      };
     }
 
     const me = await this.authService.getMe(user.userId);
     return {
-      authenticated: true,
-      is_onboarded: me.data?.is_onboarded ?? false,
-      user: me.data,
+      state: true,
+      statusCode: 200,
+      message: 'Auth status retrieved',
+      data: {
+        authenticated: true,
+        is_onboarded: me.data?.is_onboarded ?? false,
+        user: me.data,
+      },
     };
   }
 
