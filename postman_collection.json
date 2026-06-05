@@ -686,7 +686,7 @@
                 { "key": "is_free", "value": "true" }
               ]
             },
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}" }] }
+            "auth": { "type": "noauth" }
           }
         },
         {
