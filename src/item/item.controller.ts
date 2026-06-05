@@ -35,7 +35,6 @@ import { UserActivityService } from '../audit/user-activity.service';
 @ApiTags('Items')
 @ApiBearerAuth()
 @Controller('items')
-@UseGuards(JwtAuthGuard)
 export class ItemController {
   constructor(
     private readonly itemService: ItemService,
@@ -43,6 +42,7 @@ export class ItemController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a new item listing' })
   @ApiResponse({
     status: 201,
@@ -123,7 +123,6 @@ export class ItemController {
       ],
     },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findAll(
     @Query('user_id') user_id?: string,
     @Query('category_id') category_id?: string,
@@ -141,6 +140,7 @@ export class ItemController {
   }
 
   @Get('my-items')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get all items for the authenticated user' })
   @ApiResponse({
     status: 200,
@@ -173,6 +173,7 @@ export class ItemController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get a single item by ID' })
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
@@ -221,6 +222,7 @@ export class ItemController {
   }
 
   @Put(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Update an item' })
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
@@ -252,6 +254,7 @@ export class ItemController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Soft delete an item' })
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiQuery({

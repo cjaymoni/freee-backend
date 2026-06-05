@@ -17,13 +17,10 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
       migrationsRun: isProduction,
       // Connection pooling configuration
       extra: {
-        max: configService.get<number>('DB_POOL_MAX', 20), // Maximum pool size
-        min: configService.get<number>('DB_POOL_MIN', 2), // Minimum pool size
-        idleTimeoutMillis: configService.get<number>('DB_IDLE_TIMEOUT', 30000),
-        connectionTimeoutMillis: configService.get<number>(
-          'DB_CONNECTION_TIMEOUT',
-          2000,
-        ),
+        max: configService.get<number>('DB_POOL_MAX', 10),
+        min: 0,
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 10000,
       },
       // Logging
       logging: (isProduction
@@ -41,7 +38,13 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
         url: databaseUrl,
         synchronize: false, // Force false for remote databases
         ssl: {
-          rejectUnauthorized: false, // Required for Neon in many cases
+          rejectUnauthorized: false,
+        },
+        extra: {
+          max: 10,
+          min: 0,
+          idleTimeoutMillis: 10000,
+          connectionTimeoutMillis: 10000,
         },
       };
     }
