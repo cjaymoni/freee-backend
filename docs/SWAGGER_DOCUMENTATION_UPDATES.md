@@ -14,7 +14,7 @@ December 2024
 
 Updated all `@ApiResponse` decorators to document the wrapped response structure:
 
-- ✅ `create` - POST /items
+- ✅ `create` - POST /items (Updated to consume `multipart/form-data` with optional `files` array for direct backend-driven image upload to Cloudinary)
 - ✅ `findAll` - GET /items
 - ✅ `findMyItems` - GET /items/my-items
 - ✅ `findOne` - GET /items/:id

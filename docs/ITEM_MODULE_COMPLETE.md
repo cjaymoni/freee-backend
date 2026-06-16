@@ -51,7 +51,7 @@ The Item module manages marketplace listings with location integration, allowing
 ### User Endpoints
 
 ```
-POST   /items                  - Create new item (requires auth)
+POST   /items                  - Create new item with optional direct image uploads (multipart/form-data, requires auth)
 GET    /items                  - List all items with filters (requires auth)
 GET    /items/my-items         - Get authenticated user's items
 GET    /items/:id              - Get item by ID (increments view count)
@@ -88,9 +88,10 @@ Optional:
 - `description` (text)
 - `category_id` (UUID)
 - `price` (number, min 0)
-- `is_free` (boolean, default true)
+- `is_free` (boolean, default true) - auto-coerces `"true"`/`"false"` string forms for multipart requests
 - `location_id` (UUID - reference to saved or temporary location)
 - `pickup_date` (date)
+- `files` (array of binary images) - files uploaded directly to Cloudinary and associated on the backend
 
 ### UpdateItemDto
 
@@ -223,10 +224,8 @@ Items now use the centralized locations system:
 Ready for integration with:
 
 - **CategoryEntity** - Uncomment relation in ItemEntity
-- **ItemImageEntity** - Multiple images per item
 - **ItemReportEntity** - User reports for inappropriate items
 - **Search/Filtering** - Geographic radius search using location coordinates
-- **Favorites/Saved Items** - User saved items functionality
 
 ## Files Created
 
@@ -253,4 +252,3 @@ src/migrations/
 3. Verify location details are loaded in item responses
 4. Test admin feature/unfeature endpoints
 5. Consider implementing Categories module
-6. Add image upload functionality

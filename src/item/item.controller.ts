@@ -9,7 +9,10 @@ import {
   Query,
   UseGuards,
   Req,
+  UseInterceptors,
+  UploadedFiles,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import {
   ApiTags,
@@ -18,6 +21,7 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { ItemService } from './item.service';
 import { CreateItemDto } from './dto/create-item.dto';
@@ -43,6 +47,8 @@ export class ItemController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('files', 10))
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Create a new item listing' })
   @ApiResponse({
     status: 201,
@@ -66,8 +72,9 @@ export class ItemController {
   async create(
     @GetUser('userId') userId: string,
     @Body() createDto: CreateItemDto,
+    @UploadedFiles() files?: Express.Multer.File[],
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
-    return this.itemService.create(userId, createDto);
+    return this.itemService.create(userId, createDto, files);
   }
 
   @Get()

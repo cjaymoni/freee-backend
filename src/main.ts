@@ -48,7 +48,7 @@ async function bootstrap() {
     customCssUrl: '/api/swagger-ui.css',
     customJs: ['/api/swagger-ui-bundle.js', '/api/swagger-ui-standalone-preset.js'],
   });
-  const port = process.env.PORT ?? 3000;
+  const port = process.env.PORT ?? 3004;
   await app.listen(port, '0.0.0.0');
 }
 bootstrap().catch((err) => {

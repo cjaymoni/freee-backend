@@ -11,7 +11,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ItemCondition } from '../entities/item.entity';
 
 export class CreateItemDto {
@@ -27,6 +27,7 @@ export class CreateItemDto {
   description?: string;
 
   @ApiPropertyOptional({ description: 'Category ID' })
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUUID()
   @IsOptional()
   category_id?: string;
@@ -53,13 +54,23 @@ export class CreateItemDto {
     description: 'Whether the item is free',
     default: true,
   })
+  @Transform(({ value }) => {
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
   @IsBoolean()
   @IsOptional()
   is_free?: boolean;
 
+  @ApiPropertyOptional({ type: 'array', items: { type: 'string', format: 'binary' }, description: 'Item image files' })
+  @IsOptional()
+  files?: any[];
+
   @ApiPropertyOptional({
     description: 'Location ID from saved locations or temporary location',
   })
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUUID()
   @IsOptional()
   location_id?: string;

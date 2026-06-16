@@ -18,7 +18,7 @@ export class AuditHelperService {
   async logCrudOperation(params: {
     userId?: string;
     entityType: string;
-    entityId: string;
+    entityId?: string | null;
     action: 'created' | 'updated' | 'deleted' | 'viewed';
     oldValues?: any;
     newValues?: any;
@@ -73,7 +73,7 @@ export class AuditHelperService {
   async logUserAction(params: {
     userId: string;
     entityType: string;
-    entityId: string;
+    entityId?: string | null;
     action: string;
     activityType: string;
     oldValues?: any;
@@ -99,7 +99,7 @@ export class AuditHelperService {
       userId: params.userId,
       activityType: params.activityType,
       resourceType: params.entityType,
-      resourceId: params.entityId,
+      resourceId: params.entityId || undefined,
       request: params.request,
       sessionId: params.sessionId,
       metadata: params.metadata,

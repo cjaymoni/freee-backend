@@ -6,7 +6,7 @@ import { AuditLogEntity } from './entities/audit-log.entity';
 export interface AuditLogData {
   userId?: string;
   entityType: string;
-  entityId: string;
+  entityId?: string | null;
   action: string;
   oldValues?: Record<string, any>;
   newValues?: Record<string, any>;
@@ -39,7 +39,7 @@ export class AuditService {
       const auditLog = this.auditLogRepository.create({
         user_id: data.userId || null,
         entity_type: data.entityType,
-        entity_id: data.entityId,
+        entity_id: data.entityId || null,
         action: data.action,
         old_values: data.oldValues || null,
         new_values: data.newValues || null,

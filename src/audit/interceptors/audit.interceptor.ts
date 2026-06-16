@@ -72,10 +72,15 @@ export class AuditInterceptor implements NestInterceptor {
     const entityInfo = this.extractEntityInfo(request);
 
     if (entityInfo) {
+      let entityId = entityInfo.entityId;
+      if (!entityId && response) {
+        entityId = response.data?.id || response.id || response.data?.uuid || response.uuid;
+      }
+
       await this.auditService.log({
         userId: request.user?.userId,
         entityType: entityInfo.entityType,
-        entityId: entityInfo.entityId || 'unknown',
+        entityId: entityId || null,
         action: this.mapMethodToAction(request.method),
         newValues: request.body,
         ipAddress: request.ip,

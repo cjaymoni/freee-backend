@@ -11,8 +11,8 @@ export class AuditLogResponseDto {
   @ApiProperty()
   entity_type: string;
 
-  @ApiProperty()
-  entity_id: string;
+  @ApiPropertyOptional()
+  entity_id?: string | null;
 
   @ApiProperty()
   action: string;

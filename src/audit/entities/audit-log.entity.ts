@@ -32,8 +32,8 @@ export class AuditLogEntity {
   @Column({ type: 'varchar', length: 50 })
   entity_type: string;
 
-  @Column({ type: 'uuid' })
-  entity_id: string;
+  @Column({ type: 'uuid', nullable: true })
+  entity_id: string | null;
 
   @Column({ type: 'varchar', length: 50 })
   action: string;

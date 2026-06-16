@@ -7,16 +7,22 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ItemEntity, ItemStatus } from './entities/item.entity';
+import { ItemImageEntity } from './entities/item-image.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import type { Express } from 'express';
 
 @Injectable()
 export class ItemService {
   constructor(
     @InjectRepository(ItemEntity)
     private readonly itemRepository: Repository<ItemEntity>,
+    @InjectRepository(ItemImageEntity)
+    private readonly imageRepository: Repository<ItemImageEntity>,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -25,6 +31,7 @@ export class ItemService {
   async create(
     userId: string,
     createDto: CreateItemDto,
+    files?: Express.Multer.File[],
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     // Validate price logic
     if (createDto.is_free && createDto.price && createDto.price > 0) {
@@ -40,6 +47,40 @@ export class ItemService {
     });
 
     const saved = await this.itemRepository.save(item);
+
+    // Upload and associate images if provided
+    if (files && files.length > 0) {
+      const imageEntities: ItemImageEntity[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const uploadResult = await this.cloudinaryService.uploadImage(file, {
+            folder: 'items',
+          });
+
+          const itemImage = this.imageRepository.create({
+            item_id: saved.id,
+            cloudinary_public_id: uploadResult.publicId,
+            cloudinary_url: uploadResult.secureUrl,
+            cloudinary_secure_url: uploadResult.secureUrl,
+            cloudinary_format: uploadResult.format,
+            width: uploadResult.width,
+            height: uploadResult.height,
+            size_bytes: uploadResult.bytes,
+            display_order: i,
+            is_primary: i === 0,
+          });
+          imageEntities.push(itemImage);
+        } catch (error) {
+          console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
+        }
+      }
+
+      if (imageEntities.length > 0) {
+        saved.images = await this.imageRepository.save(imageEntities);
+      }
+    }
+
     return {
       message: 'Item created successfully',
       data: ItemResponseDto.fromEntity(saved),
