@@ -20,6 +20,11 @@ export class LoggingInterceptor implements NestInterceptor {
     const url = request.url;
     const now = Date.now();
 
+    const contentLength = request.headers['content-length'];
+    const contentType = request.headers['content-type'];
+    const sizeKb = contentLength ? (parseInt(contentLength) / 1024).toFixed(2) : 'unknown';
+    this.logger.log(`→ ${method} ${url} | content-type: ${contentType ?? 'none'} | size: ${sizeKb}kb`);
+
     return next.handle().pipe(
       tap(() => {
         const response = ctx.getResponse<Response>();

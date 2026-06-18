@@ -525,11 +525,11 @@ export class AuthService {
       await queryRunner.manager.save(loginAttempt);
 
       if (attemptResult === 'failed') {
-        // Record failed attempt for lockout tracking
         if (user) {
           await this.accountLockoutService.recordFailedAttempt(user.id);
         }
         await queryRunner.commitTransaction();
+        await queryRunner.release();
         throw new UnauthorizedException(
           failureReason === 'account_not_active'
             ? 'Account is not active'
@@ -537,18 +537,13 @@ export class AuthService {
         );
       }
 
-      if (!user) {
-        await queryRunner.commitTransaction();
-        throw new UnauthorizedException('Invalid credentials');
-      }
-
       // Reset failed attempts on successful login
-      await this.accountLockoutService.resetFailedAttempts(user.id);
+      await this.accountLockoutService.resetFailedAttempts(user!.id);
 
       // Invalidate previous active sessions
       await queryRunner.manager.update(
         UserSessionEntity,
-        { user: { id: user.id }, is_active: true },
+        { user: { id: user!.id }, is_active: true },
         { is_active: false },
       );
 
@@ -563,7 +558,7 @@ export class AuthService {
       refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
       const session = queryRunner.manager.create(UserSessionEntity, {
-        user,
+        user: user!,
         session_token: sessionToken,
         refresh_token: refreshToken,
         refresh_token_expires_at: refreshExpiresAt,
@@ -578,9 +573,9 @@ export class AuthService {
 
       // Generate JWT
       const payload = {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
+        sub: user!.id,
+        email: user!.email,
+        role: user!.role,
         session_token: sessionToken,
       };
       const accessToken = this.jwtService.sign(payload);
@@ -589,39 +584,43 @@ export class AuthService {
         access_token: accessToken,
         refresh_token: refreshToken,
         user: {
-          id: user.id,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          avatar: user.cloudinary_avatar_url,
+          id: user!.id,
+          email: user!.email,
+          first_name: user!.first_name,
+          last_name: user!.last_name,
+          avatar: user!.cloudinary_avatar_url,
         },
       };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
-      await queryRunner.release();
+      if (!queryRunner.isReleased) {
+        await queryRunner.release();
+      }
     }
   }
 
   async refresh(refreshToken: string, ip: string, userAgent: string) {
+    const session = await this.userSessionRepository.findOne({
+      where: { refresh_token: refreshToken, is_active: true },
+      relations: ['user'],
+    });
+
+    if (!session || session.refresh_token_expires_at < new Date()) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const session = await queryRunner.manager.findOne(UserSessionEntity, {
-        where: { refresh_token: refreshToken, is_active: true },
-        relations: ['user'],
-      });
-
-      if (!session || session.refresh_token_expires_at < new Date()) {
-        throw new UnauthorizedException('Invalid or expired refresh token');
-      }
 
       // Token Rotation: Invalidate old session and create a new one
-      session.is_active = false;
-      await queryRunner.manager.save(session);
+      await queryRunner.manager.update(UserSessionEntity, { id: session.id }, { is_active: false });
 
       const user = session.user;
       const newSessionToken = randomBytes(32).toString('hex');

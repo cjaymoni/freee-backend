@@ -47,7 +47,7 @@ export class ItemController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FilesInterceptor('files', 10))
+  @UseInterceptors(FilesInterceptor('images', 10))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Create a new item listing' })
   @ApiResponse({
