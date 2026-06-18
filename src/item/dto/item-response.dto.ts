@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ItemEntity, ItemCondition, ItemStatus } from '../entities/item.entity';
+import { ItemEntity, ItemCondition, ItemStatus, PickupType } from '../entities/item.entity';
 import { UserLocationResponseDto } from '../../user/dto/user-location-response.dto';
 import { CategoryResponseDto } from '../../category/dto/category-response.dto';
 import { ItemImageResponseDto } from './item-image-response.dto';
@@ -36,6 +36,9 @@ export class ItemResponseDto {
   is_free: boolean;
 
   @ApiProperty()
+  quantity: number;
+
+  @ApiProperty()
   view_count: number;
 
   @ApiPropertyOptional()
@@ -46,6 +49,12 @@ export class ItemResponseDto {
 
   @ApiPropertyOptional()
   pickup_date?: Date | null;
+
+  @ApiPropertyOptional()
+  pickup_time?: string | null;
+
+  @ApiPropertyOptional({ enum: PickupType })
+  pickup_type?: PickupType | null;
 
   @ApiProperty()
   is_featured: boolean;
@@ -73,9 +82,12 @@ export class ItemResponseDto {
     dto.status = entity.status;
     dto.price = Number(entity.price);
     dto.is_free = entity.is_free;
+    dto.quantity = entity.quantity;
     dto.view_count = entity.view_count;
     dto.location_id = entity.location_id;
     dto.pickup_date = entity.pickup_date;
+    dto.pickup_time = entity.pickup_time;
+    dto.pickup_type = entity.pickup_type;
     dto.is_featured = entity.is_featured;
     dto.featured_until = entity.featured_until;
     dto.created_at = entity.created_at;

@@ -29,6 +29,12 @@ export enum ItemStatus {
   UNAVAILABLE = 'unavailable',
 }
 
+export enum PickupType {
+  ANYTIME = 'anytime',
+  CONTACT_ME = 'contact_me',
+  SPECIFIC_DATE = 'specific_date',
+}
+
 @Entity('items')
 @Index(['user_id'])
 @Index(['category_id'])
@@ -94,6 +100,9 @@ export class ItemEntity {
   @Column({ type: 'boolean', default: true })
   is_free: boolean;
 
+  @Column({ type: 'int', default: 1 })
+  quantity: number;
+
   @Column({ type: 'int', default: 0 })
   view_count: number;
 
@@ -107,6 +116,16 @@ export class ItemEntity {
 
   @Column({ type: 'date', nullable: true })
   pickup_date: Date | null;
+
+  @Column({ type: 'time', nullable: true })
+  pickup_time: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: PickupType,
+    nullable: true,
+  })
+  pickup_type: PickupType | null;
 
   @Column({ type: 'boolean', default: false })
   is_featured: boolean;

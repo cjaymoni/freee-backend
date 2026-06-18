@@ -22,15 +22,14 @@ export class AuditInterceptor implements NestInterceptor {
     const startTime = Date.now();
 
     return next.handle().pipe(
-      tap(async (response) => {
-        // Only audit specific endpoints (not GET requests typically)
+      tap((response) => {
         if (this.shouldAudit(method, url)) {
-          await this.logAudit({
+          this.logAudit({
             request,
             response,
             success: true,
             duration: Date.now() - startTime,
-          });
+          }).catch(console.error);
         }
       }),
       catchError((error) => {

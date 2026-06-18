@@ -12,7 +12,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
-import { ItemCondition } from '../entities/item.entity';
+import { ItemCondition, PickupType } from '../entities/item.entity';
 
 export class CreateItemDto {
   @ApiProperty({ description: 'Item title', maxLength: 255 })
@@ -50,10 +50,7 @@ export class CreateItemDto {
   @Type(() => Number)
   price?: number;
 
-  @ApiPropertyOptional({
-    description: 'Whether the item is free',
-    default: true,
-  })
+  @ApiPropertyOptional({ description: 'Whether the item is free', default: true })
   @Transform(({ value }) => {
     if (value === 'true' || value === '1') return true;
     if (value === 'false' || value === '0') return false;
@@ -63,9 +60,12 @@ export class CreateItemDto {
   @IsOptional()
   is_free?: boolean;
 
-  @ApiPropertyOptional({ type: 'array', items: { type: 'string', format: 'binary' }, description: 'Item image files' })
+  @ApiPropertyOptional({ description: 'Quantity available', default: 1, minimum: 1 })
+  @IsNumber()
   @IsOptional()
-  files?: any[];
+  @Min(1)
+  @Type(() => Number)
+  quantity?: number;
 
   @ApiPropertyOptional({
     description: 'Location ID from saved locations or temporary location',
@@ -80,4 +80,14 @@ export class CreateItemDto {
   @IsOptional()
   @Type(() => Date)
   pickup_date?: Date;
+
+  @ApiPropertyOptional({ description: 'Pickup time (HH:MM)' })
+  @IsString()
+  @IsOptional()
+  pickup_time?: string;
+
+  @ApiPropertyOptional({ description: 'Pickup type', enum: PickupType })
+  @IsEnum(PickupType)
+  @IsOptional()
+  pickup_type?: PickupType;
 }

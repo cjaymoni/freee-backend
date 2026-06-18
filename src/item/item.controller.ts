@@ -22,6 +22,7 @@ import {
   ApiParam,
   ApiQuery,
   ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import { ItemService } from './item.service';
 import { CreateItemDto } from './dto/create-item.dto';
@@ -49,6 +50,26 @@ export class ItemController {
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('images', 10))
   @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['title', 'condition'],
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string' },
+        category_id: { type: 'string', format: 'uuid' },
+        condition: { type: 'string', enum: ['new', 'like_new', 'good', 'fair', 'poor'] },
+        price: { type: 'number', default: 0 },
+        is_free: { type: 'boolean', default: true },
+        quantity: { type: 'integer', default: 1, minimum: 1 },
+        location_id: { type: 'string', format: 'uuid' },
+        pickup_date: { type: 'string', format: 'date' },
+        pickup_time: { type: 'string', example: '14:30' },
+        pickup_type: { type: 'string', enum: ['anytime', 'contact_me', 'specific_date'] },
+        images: { type: 'array', items: { type: 'string', format: 'binary' } },
+      },
+    },
+  })
   @ApiOperation({ summary: 'Create a new item listing' })
   @ApiResponse({
     status: 201,
