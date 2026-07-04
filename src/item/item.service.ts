@@ -102,12 +102,21 @@ export class ItemService {
     const query = this.itemRepository
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
+      .leftJoinAndSelect('item.user', 'user')
       .leftJoinAndSelect('item.category', 'category')
       .leftJoinAndSelect(
         'item.images',
         'images',
         'images.is_deleted = :images_deleted',
         { images_deleted: false },
+      )
+      .addSelect(
+        (sub) =>
+          sub
+            .select('COUNT(ui.id)', 'count')
+            .from('items', 'ui')
+            .where('ui.user_id = user.id AND ui.is_deleted = false'),
+        'user_items_count',
       )
       .where('item.is_deleted = :is_deleted', { is_deleted: false });
 
@@ -135,12 +144,19 @@ export class ItemService {
       query.andWhere('item.is_free = :is_free', { is_free: filters.is_free });
     }
 
-    query.orderBy('item.created_at', 'DESC');
+    const { entities, raw } = await query
+      .orderBy('item.created_at', 'DESC')
+      .getRawAndEntities();
 
-    const items = await query.getMany();
+    entities.forEach((entity, i) => {
+      if (entity.user) {
+        (entity.user as any).items_count = Number(raw[i]?.user_items_count ?? 0);
+      }
+    });
+
     return {
       message: 'Items retrieved successfully',
-      data: items.map((item) => ItemResponseDto.fromEntity(item)),
+      data: entities.map((item) => ItemResponseDto.fromEntity(item)),
       state: true,
       statusCode: 200,
     };
@@ -150,13 +166,36 @@ export class ItemService {
    * Get a single item by ID
    */
   async findOne(id: string): Promise<ServiceResponseDto<ItemResponseDto>> {
-    const item = await this.itemRepository.findOne({
-      where: { id, is_deleted: false },
-      relations: ['location', 'user', 'category', 'images'],
-    });
+    const item = await this.itemRepository
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.location', 'location')
+      .leftJoinAndSelect('item.user', 'user')
+      .leftJoinAndSelect('item.category', 'category')
+      .leftJoinAndSelect(
+        'item.images',
+        'images',
+        'images.is_deleted = :images_deleted',
+        { images_deleted: false },
+      )
+      .addSelect(
+        (sub) =>
+          sub
+            .select('COUNT(ui.id)', 'count')
+            .from('items', 'ui')
+            .where('ui.user_id = user.id AND ui.is_deleted = false'),
+        'user_items_count',
+      )
+      .where('item.id = :id AND item.is_deleted = false', { id })
+      .getRawAndEntities();
 
-    if (!item) {
+    if (!item.entities[0]) {
       throw new NotFoundException(`Item with ID ${id} not found`);
+    }
+
+    const entity = item.entities[0];
+    const raw = item.raw[0];
+    if (entity.user) {
+      (entity.user as any).items_count = Number(raw?.user_items_count ?? 0);
     }
 
     // Increment view count
@@ -166,7 +205,7 @@ export class ItemService {
 
     return {
       message: 'Item retrieved successfully',
-      data: ItemResponseDto.fromEntity(item),
+      data: ItemResponseDto.fromEntity(entity),
       state: true,
       statusCode: 200,
     };

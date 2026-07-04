@@ -3,6 +3,7 @@ import { ItemEntity, ItemCondition, ItemStatus, PickupType } from '../entities/i
 import { UserLocationResponseDto } from '../../user/dto/user-location-response.dto';
 import { CategoryResponseDto } from '../../category/dto/category-response.dto';
 import { ItemImageResponseDto } from './item-image-response.dto';
+import { ItemUserDto } from './item-user.dto';
 
 export class ItemResponseDto {
   @ApiProperty()
@@ -71,6 +72,9 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => [ItemImageResponseDto] })
   images?: ItemImageResponseDto[];
 
+  @ApiPropertyOptional({ type: () => ItemUserDto })
+  user?: ItemUserDto;
+
   static fromEntity(entity: ItemEntity): ItemResponseDto {
     const dto = new ItemResponseDto();
     dto.id = entity.id;
@@ -108,6 +112,19 @@ export class ItemResponseDto {
       dto.images = entity.images.map((image) =>
         ItemImageResponseDto.fromEntity(image),
       );
+    }
+
+    // Include user details if loaded
+    if (entity.user) {
+      const u = entity.user;
+      dto.user = {
+        id: u.id,
+        name: [u.first_name, u.last_name].filter(Boolean).join(' ') || '',
+        profile_image: u.cloudinary_avatar_url ?? null,
+        joined_date: u.member_since,
+        phone_number: u.phone_number ?? null,
+        items_count: (u as any).items_count ?? 0,
+      };
     }
 
     return dto;

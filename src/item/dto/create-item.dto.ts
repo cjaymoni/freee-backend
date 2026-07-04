@@ -62,10 +62,10 @@ export class CreateItemDto {
   is_free?: boolean;
 
   @ApiPropertyOptional({ description: 'Quantity available', default: 1, minimum: 1 })
+  @Transform(({ value }) => (value !== undefined && value !== '' ? Number(value) : value))
   @IsNumber()
   @IsOptional()
   @Min(1)
-  @Type(() => Number)
   quantity?: number;
 
   @ApiPropertyOptional({

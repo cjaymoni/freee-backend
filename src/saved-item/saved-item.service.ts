@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { SavedItemEntity } from './entities/saved-item.entity';
 import { CreateSavedItemDto } from './dto/create-saved-item.dto';
 import { ItemEntity } from '../item/entities/item.entity';
+import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { SavedItemResponseDto } from './dto/saved-item-response.dto';
@@ -29,7 +30,15 @@ export class SavedItemService {
    */
   private toResponseDto(entity: SavedItemEntity): SavedItemResponseDto {
     const dto = new SavedItemResponseDto();
-    Object.assign(dto, entity);
+    dto.id = entity.id;
+    dto.user_id = entity.user_id;
+    dto.item_id = entity.item_id;
+    dto.is_deleted = entity.is_deleted;
+    dto.deleted_at = entity.deleted_at;
+    dto.created_at = entity.created_at;
+    if (entity.item) {
+      dto.item = ItemResponseDto.fromEntity(entity.item);
+    }
     return dto;
   }
 
@@ -78,7 +87,7 @@ export class SavedItemService {
         this.logger.log(`Item ${item_id} restored for user ${userId}`);
         return {
           message: 'Item saved successfully',
-          data: restored,
+          data: this.toResponseDto(restored),
           state: true,
           statusCode: 200,
         };
