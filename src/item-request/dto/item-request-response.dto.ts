@@ -16,18 +16,8 @@ export class ItemRequestResponseDto {
   @ApiProperty({ description: 'User ID of the item owner' })
   owner_id: string;
 
-  @ApiProperty({
-    enum: RequestStatus,
-    description: 'Current status of the request',
-  })
+  @ApiProperty({ description: 'Current status of the request', enum: RequestStatus, enumName: 'RequestStatus' })
   status: RequestStatus;
-
-  @ApiPropertyOptional({
-    description: 'Scheduled pickup datetime (ISO 8601)',
-    type: String,
-    example: '2026-06-28T16:28:43.399Z',
-  })
-  pickup_date?: Date | null;
 
   @ApiPropertyOptional({
     description:

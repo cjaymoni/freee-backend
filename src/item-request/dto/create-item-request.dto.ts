@@ -1,9 +1,4 @@
-import {
-  IsUUID,
-  IsNotEmpty,
-  IsDateString,
-  IsOptional,
-} from 'class-validator';
+import { IsUUID, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateItemRequestDto {
@@ -14,13 +9,4 @@ export class CreateItemRequestDto {
   @IsUUID()
   @IsNotEmpty()
   item_id: string;
-
-  @ApiProperty({
-    description: 'Preferred pickup datetime (ISO 8601)',
-    example: '2026-06-28T16:28:43.399Z',
-    required: false,
-  })
-  @IsOptional()
-  @IsDateString()
-  pickup_date?: string;
 }

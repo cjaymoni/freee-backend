@@ -33,8 +33,9 @@ export class CreateItemDto {
   category_id?: string;
 
   @ApiProperty({
-    description: 'Item condition',
+    description: 'Item condition. Note: items with condition "used" cannot be requested.',
     enum: ItemCondition,
+    enumName: 'ItemCondition',
   })
   @IsEnum(ItemCondition)
   condition: ItemCondition;
@@ -86,7 +87,7 @@ export class CreateItemDto {
   @IsOptional()
   pickup_time?: string;
 
-  @ApiPropertyOptional({ description: 'Pickup type', enum: PickupType })
+  @ApiPropertyOptional({ description: 'Pickup type', enum: PickupType, enumName: 'PickupType' })
   @IsEnum(PickupType)
   @IsOptional()
   pickup_type?: PickupType;

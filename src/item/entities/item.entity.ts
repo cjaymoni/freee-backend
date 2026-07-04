@@ -20,6 +20,7 @@ export enum ItemCondition {
   GOOD = 'good',
   FAIR = 'fair',
   POOR = 'poor',
+  USED = 'used',
 }
 
 export enum ItemStatus {

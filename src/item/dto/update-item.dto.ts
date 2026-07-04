@@ -8,6 +8,7 @@ export class UpdateItemDto extends PartialType(CreateItemDto) {
   @ApiPropertyOptional({
     description: 'Item status',
     enum: ItemStatus,
+    enumName: 'ItemStatus',
   })
   @IsEnum(ItemStatus)
   @IsOptional()

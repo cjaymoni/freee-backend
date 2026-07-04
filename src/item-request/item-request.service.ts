@@ -15,7 +15,7 @@ import {
 import { CreateItemRequestDto } from './dto/create-item-request.dto';
 import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
-import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
+import { ItemEntity, ItemCondition, ItemStatus } from '../item/entities/item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
@@ -113,7 +113,7 @@ export class ItemRequestService {
     createItemRequestDto: CreateItemRequestDto,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      const { item_id, pickup_date } = createItemRequestDto;
+      const { item_id } = createItemRequestDto;
       this.logger.log(
         `User ${requesterId} creating request for item ${item_id}`,
       );
@@ -126,6 +126,10 @@ export class ItemRequestService {
 
       if (!item) {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
+      }
+
+      if (item.condition === ItemCondition.USED) {
+        throw new BadRequestException('Items with condition "used" cannot be requested');
       }
 
       if (item.status !== ItemStatus.AVAILABLE) {
@@ -169,7 +173,6 @@ export class ItemRequestService {
         item_id,
         requester_id: requesterId,
         owner_id: item.user_id,
-        pickup_date: pickup_date ? new Date(pickup_date) : null,
       });
 
       const result = await this.itemRequestRepository.save(itemRequest);
@@ -227,9 +230,6 @@ export class ItemRequestService {
       // Update request
       request.status = RequestStatus.CONFIRMED;
       request.confirmation_code = confirmationCode;
-      if (updateDto.pickup_date) {
-        request.pickup_date = new Date(updateDto.pickup_date);
-      }
 
       // Update item status to reserved
       await this.itemRepository.update(

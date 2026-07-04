@@ -23,10 +23,10 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => CategoryResponseDto })
   category?: CategoryResponseDto;
 
-  @ApiProperty({ enum: ItemCondition })
+  @ApiProperty({ enum: ItemCondition, enumName: 'ItemCondition', description: 'Item condition. Note: items with condition "used" cannot be requested.' })
   condition: ItemCondition;
 
-  @ApiProperty({ enum: ItemStatus })
+  @ApiProperty({ enum: ItemStatus, enumName: 'ItemStatus' })
   status: ItemStatus;
 
   @ApiProperty()
@@ -53,7 +53,7 @@ export class ItemResponseDto {
   @ApiPropertyOptional()
   pickup_time?: string | null;
 
-  @ApiPropertyOptional({ enum: PickupType })
+  @ApiPropertyOptional({ enum: PickupType, enumName: 'PickupType' })
   pickup_type?: PickupType | null;
 
   @ApiProperty()
