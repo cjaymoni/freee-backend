@@ -13,6 +13,7 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { DistanceService } from '../common/distance.service';
 import type { Express } from 'express';
 
 @Injectable()
@@ -23,6 +24,7 @@ export class ItemService {
     @InjectRepository(ItemImageEntity)
     private readonly imageRepository: Repository<ItemImageEntity>,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly distanceService: DistanceService,
   ) {}
 
   /**
@@ -98,6 +100,9 @@ export class ItemService {
     status?: ItemStatus;
     is_featured?: boolean;
     is_free?: boolean;
+    lat?: number;
+    lng?: number;
+    radius?: number;
   }): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     const query = this.itemRepository
       .createQueryBuilder('item')
@@ -148,15 +153,25 @@ export class ItemService {
       .orderBy('item.created_at', 'DESC')
       .getRawAndEntities();
 
-    entities.forEach((entity, i) => {
+    const { lat, lng, radius = 10 } = filters ?? {};
+    const filtered = (lat !== undefined && lng !== undefined)
+      ? entities.filter((e) =>
+          e.location?.latitude && e.location?.longitude
+            ? this.distanceService.isWithinRadius(lat, lng, e.location.latitude, e.location.longitude, radius)
+            : true,
+        )
+      : entities;
+
+    filtered.forEach((entity, i) => {
+      const rawIndex = entities.indexOf(entity);
       if (entity.user) {
-        (entity.user as any).items_count = Number(raw[i]?.user_items_count ?? 0);
+        (entity.user as any).items_count = Number(raw[rawIndex]?.user_items_count ?? 0);
       }
     });
 
     return {
       message: 'Items retrieved successfully',
-      data: entities.map((item) => ItemResponseDto.fromEntity(item)),
+      data: filtered.map((item) => ItemResponseDto.fromEntity(item)),
       state: true,
       statusCode: 200,
     };

@@ -128,6 +128,24 @@ export class ItemController {
     type: Boolean,
     description: 'Filter free items',
   })
+  @ApiQuery({
+    name: 'lat',
+    required: false,
+    type: Number,
+    description: 'Requester latitude for proximity filtering',
+  })
+  @ApiQuery({
+    name: 'lng',
+    required: false,
+    type: Number,
+    description: 'Requester longitude for proximity filtering',
+  })
+  @ApiQuery({
+    name: 'radius',
+    required: false,
+    type: Number,
+    description: 'Radius in km (default: 10). Only applied when lat & lng are provided',
+  })
   @ApiResponse({
     status: 200,
     description:
@@ -157,6 +175,9 @@ export class ItemController {
     @Query('status') status?: ItemStatus,
     @Query('is_featured') is_featured?: boolean,
     @Query('is_free') is_free?: boolean,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+    @Query('radius') radius?: string,
   ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     return this.itemService.findAll({
       user_id,
@@ -164,6 +185,9 @@ export class ItemController {
       status,
       is_featured,
       is_free,
+      lat: lat !== undefined ? Number(lat) : undefined,
+      lng: lng !== undefined ? Number(lng) : undefined,
+      radius: radius !== undefined ? Number(radius) : undefined,
     });
   }
 

@@ -6,19 +6,19 @@ import { ItemImageResponseDto } from './item-image-response.dto';
 import { ItemUserDto } from './item-user.dto';
 
 export class ItemResponseDto {
-  @ApiProperty()
+  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
   user_id: string;
 
-  @ApiProperty()
+  @ApiProperty({ example: 'Barely used bicycle' })
   title: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Good condition, used for 6 months' })
   description?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000' })
   category_id?: string;
 
   @ApiPropertyOptional({ type: () => CategoryResponseDto })
@@ -30,43 +30,51 @@ export class ItemResponseDto {
   @ApiProperty({ enum: ItemStatus, enumName: 'ItemStatus' })
   status: ItemStatus;
 
-  @ApiProperty()
+  @ApiProperty({ example: 0 })
   price: number;
 
-  @ApiProperty()
+  @ApiProperty({ example: true })
   is_free: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ example: 1 })
   quantity: number;
 
-  @ApiProperty()
+  @ApiProperty({ example: 42 })
   view_count: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000' })
   location_id?: string;
 
   @ApiPropertyOptional({ type: () => UserLocationResponseDto })
   location?: UserLocationResponseDto;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Scheduled pickup datetime (ISO 8601)',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   pickup_date?: Date | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '14:30' })
   pickup_time?: string | null;
 
   @ApiPropertyOptional({ enum: PickupType, enumName: 'PickupType' })
   pickup_type?: PickupType | null;
 
-  @ApiProperty()
+  @ApiProperty({ example: false })
   is_featured: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'When the featured period expires',
+    type: String,
+    example: '2026-12-31T23:59:59.000Z',
+  })
   featured_until?: Date | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, example: '2026-06-28T16:28:43.399Z' })
   created_at: Date;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, example: '2026-06-28T16:28:43.399Z' })
   updated_at: Date;
 
   @ApiPropertyOptional({ type: () => [ItemImageResponseDto] })

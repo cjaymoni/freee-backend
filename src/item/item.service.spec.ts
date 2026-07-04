@@ -9,6 +9,7 @@ import { ItemImageEntity } from './entities/item-image.entity';
 import { ItemResponseDto } from './dto/item-response.dto';
 import { CreateItemDto } from './dto/create-item.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { DistanceService } from '../common/distance.service';
 import { UserEntity } from '../user/entities/user.entity';
 
 const mockUser: UserEntity & { items_count?: number } = {
@@ -20,6 +21,8 @@ const mockUser: UserEntity & { items_count?: number } = {
   phone_number: '+233243225121',
   items_count: 3,
 } as any;
+
+const mockLocation = (lat: number, lng: number) => ({ latitude: lat, longitude: lng } as any);
 
 const mockItemEntity: ItemEntity = {
   id: 'item-1',
@@ -33,8 +36,8 @@ const mockItemEntity: ItemEntity = {
   is_free: true,
   quantity: 2,
   view_count: 0,
-  location_id: null,
-  location: null,
+  location_id: 'loc-1',
+  location: mockLocation(5.6037, -0.1870),  // Accra
   pickup_date: null,
   pickup_time: null,
   pickup_type: null,
@@ -143,6 +146,7 @@ describe('ItemService', () => {
         { provide: getRepositoryToken(ItemEntity), useValue: mockItemRepo },
         { provide: getRepositoryToken(ItemImageEntity), useValue: { create: jest.fn(), save: jest.fn() } },
         { provide: CloudinaryService, useValue: { uploadImage: jest.fn() } },
+        DistanceService,
       ],
     }).compile();
 
@@ -223,6 +227,55 @@ describe('ItemService', () => {
       const result = await service.findAll();
 
       expect(result.data[0].user).toBeUndefined();
+    });
+
+    describe('proximity filtering', () => {
+      // Item in Accra (5.6037, -0.1870)
+      // Item in Kumasi (6.6885, -1.6244) — ~250km from Accra
+      const accraItem = { ...mockItemEntity, id: 'item-accra', location: mockLocation(5.6037, -0.1870) } as any;
+      const kumasiItem = { ...mockItemEntity, id: 'item-kumasi', location: mockLocation(6.6885, -1.6244) } as any;
+      const noLocationItem = { ...mockItemEntity, id: 'item-noloc', location: null } as any;
+
+      beforeEach(() => {
+        mockQueryBuilder = buildQueryBuilder(
+          [accraItem, kumasiItem, noLocationItem],
+          [{ user_items_count: '1' }, { user_items_count: '2' }, { user_items_count: '0' }],
+        );
+        mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      });
+
+      it('returns all items when no lat/lng provided', async () => {
+        const result = await service.findAll();
+        expect(result.data).toHaveLength(3);
+      });
+
+      it('filters to nearby items within default 10km radius', async () => {
+        // Searching from Accra — only accraItem should be within 10km
+        const result = await service.findAll({ lat: 5.6037, lng: -0.1870 });
+        const ids = result.data.map((d) => d.id);
+        expect(ids).toContain('item-accra');
+        expect(ids).not.toContain('item-kumasi');
+      });
+
+      it('includes items without a location regardless of radius', async () => {
+        const result = await service.findAll({ lat: 5.6037, lng: -0.1870 });
+        const ids = result.data.map((d) => d.id);
+        expect(ids).toContain('item-noloc');
+      });
+
+      it('includes distant items when radius is large enough', async () => {
+        // 300km radius from Accra should include Kumasi (~250km away)
+        const result = await service.findAll({ lat: 5.6037, lng: -0.1870, radius: 300 });
+        const ids = result.data.map((d) => d.id);
+        expect(ids).toContain('item-accra');
+        expect(ids).toContain('item-kumasi');
+      });
+
+      it('excludes distant items when radius is small', async () => {
+        const result = await service.findAll({ lat: 5.6037, lng: -0.1870, radius: 5 });
+        const ids = result.data.map((d) => d.id);
+        expect(ids).not.toContain('item-kumasi');
+      });
     });
   });
 });
