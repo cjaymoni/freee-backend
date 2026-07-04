@@ -22,11 +22,12 @@ export class ItemRequestResponseDto {
   })
   status: RequestStatus;
 
-  @ApiPropertyOptional({ description: 'Scheduled pickup date' })
+  @ApiPropertyOptional({
+    description: 'Scheduled pickup datetime (ISO 8601)',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   pickup_date?: Date | null;
-
-  @ApiPropertyOptional({ description: 'Scheduled pickup time' })
-  pickup_time?: string | null;
 
   @ApiPropertyOptional({
     description:
@@ -37,10 +38,18 @@ export class ItemRequestResponseDto {
   @ApiProperty({ description: 'Whether the item has been picked up' })
   is_picked_up: boolean;
 
-  @ApiPropertyOptional({ description: 'When the item was picked up' })
+  @ApiPropertyOptional({
+    description: 'When the item was picked up',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   picked_up_at?: Date | null;
 
-  @ApiPropertyOptional({ description: 'When the request was cancelled' })
+  @ApiPropertyOptional({
+    description: 'When the request was cancelled',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   cancelled_at?: Date | null;
 
   @ApiPropertyOptional({ description: 'User ID who cancelled the request' })
@@ -49,10 +58,18 @@ export class ItemRequestResponseDto {
   @ApiPropertyOptional({ description: 'Reason for cancellation' })
   cancellation_reason?: string | null;
 
-  @ApiProperty({ description: 'When the request was created' })
+  @ApiProperty({
+    description: 'When the request was created',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   created_at: Date;
 
-  @ApiProperty({ description: 'When the request was last updated' })
+  @ApiProperty({
+    description: 'When the request was last updated',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
   updated_at: Date;
 
   @ApiPropertyOptional({

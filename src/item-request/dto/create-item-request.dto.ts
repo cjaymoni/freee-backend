@@ -3,7 +3,6 @@ import {
   IsNotEmpty,
   IsDateString,
   IsOptional,
-  IsString,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -17,20 +16,11 @@ export class CreateItemRequestDto {
   item_id: string;
 
   @ApiProperty({
-    description: 'Preferred pickup date (YYYY-MM-DD)',
-    example: '2026-01-15',
+    description: 'Preferred pickup datetime (ISO 8601)',
+    example: '2026-06-28T16:28:43.399Z',
     required: false,
   })
   @IsOptional()
   @IsDateString()
   pickup_date?: string;
-
-  @ApiProperty({
-    description: 'Preferred pickup time (HH:MM)',
-    example: '14:30',
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  pickup_time?: string;
 }

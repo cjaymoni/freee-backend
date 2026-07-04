@@ -45,11 +45,8 @@ export class ItemRequestEntity {
   })
   status: RequestStatus;
 
-  @Column({ type: 'date', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   pickup_date: Date | null;
-
-  @Column({ type: 'time', nullable: true })
-  pickup_time: string | null;
 
   @Column({ type: 'varchar', length: 10, nullable: true })
   confirmation_code: string | null;

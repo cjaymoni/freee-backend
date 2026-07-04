@@ -113,7 +113,7 @@ export class ItemRequestService {
     createItemRequestDto: CreateItemRequestDto,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      const { item_id, pickup_date, pickup_time } = createItemRequestDto;
+      const { item_id, pickup_date } = createItemRequestDto;
       this.logger.log(
         `User ${requesterId} creating request for item ${item_id}`,
       );
@@ -170,7 +170,6 @@ export class ItemRequestService {
         requester_id: requesterId,
         owner_id: item.user_id,
         pickup_date: pickup_date ? new Date(pickup_date) : null,
-        pickup_time: pickup_time || null,
       });
 
       const result = await this.itemRequestRepository.save(itemRequest);
@@ -230,9 +229,6 @@ export class ItemRequestService {
       request.confirmation_code = confirmationCode;
       if (updateDto.pickup_date) {
         request.pickup_date = new Date(updateDto.pickup_date);
-      }
-      if (updateDto.pickup_time) {
-        request.pickup_time = updateDto.pickup_time;
       }
 
       // Update item status to reserved
