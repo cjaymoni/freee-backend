@@ -107,6 +107,13 @@ export class ItemRequestService {
       });
 
       const result = await this.itemRequestRepository.save(itemRequest);
+
+      // Append requester to item's requester_ids
+      await this.itemRepository.query(
+        `UPDATE items SET requester_ids = array_append(requester_ids, $1::uuid) WHERE id = $2 AND NOT ($1::uuid = ANY(requester_ids))`,
+        [requesterId, item_id],
+      );
+
       this.logger.log(`Request ${result.id} created for item ${item_id} by user ${requesterId}`);
 
       return {

@@ -181,3 +181,45 @@ To view the updated Swagger documentation:
 - **Endpoints Documented**: 40
 - **Response Format**: Standardized ServiceResponseDto wrapper
 - **Build Status**: ✅ Passing
+
+---
+
+## Update: requester_ids on ItemEntity
+
+### Date
+January 2025
+
+### Change Summary
+Added `requester_ids: string[]` (UUID array) to `ItemEntity` and `ItemResponseDto` to allow the UI to instantly determine if the current user has already requested an item without an extra query.
+
+### Affected Endpoints
+
+#### Items
+- `GET /items` — response `data[].requester_ids` now included (array of user UUIDs)
+- `GET /items/:id` — response `data.requester_ids` now included
+- `GET /items/my-items` — response `data[].requester_ids` now included
+
+#### Item Requests
+- `POST /item-requests` — on success, the requester's user ID is appended to `item.requester_ids`
+- `PATCH /item-requests/:id/cancel` — on success, the requester's user ID is removed from `item.requester_ids`
+
+### Response Schema Change
+
+`ItemResponseDto` now includes:
+
+```json
+{
+  "requester_ids": ["uuid-1", "uuid-2"]
+}
+```
+
+### UI Usage
+
+```js
+const hasRequested = item.requester_ids.includes(currentUserId);
+```
+
+Use this to disable/hide the request button when the user has already requested the item.
+
+### Migration
+`1783200000001-AddRequesterIdsToItems.ts` — adds `requester_ids uuid[] NOT NULL DEFAULT '{}'` to the `items` table.

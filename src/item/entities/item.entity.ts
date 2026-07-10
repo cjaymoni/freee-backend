@@ -107,6 +107,9 @@ export class ItemEntity {
   @Column({ type: 'int', default: 0 })
   view_count: number;
 
+  @Column({ type: 'uuid', array: true, default: '{}' })
+  requester_ids: string[];
+
   // Reference to the centralized location table
   @Column({ type: 'uuid', nullable: true })
   location_id: string;

@@ -42,6 +42,9 @@ export class ItemResponseDto {
   @ApiProperty({ example: 42 })
   view_count: number;
 
+  @ApiProperty({ example: ['uuid-1', 'uuid-2'], type: [String] })
+  requester_ids: string[];
+
   @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000' })
   location_id?: string;
 
@@ -96,6 +99,7 @@ export class ItemResponseDto {
     dto.is_free = entity.is_free;
     dto.quantity = entity.quantity;
     dto.view_count = entity.view_count;
+    dto.requester_ids = entity.requester_ids ?? [];
     dto.location_id = entity.location_id;
     dto.pickup_date = entity.pickup_date;
     dto.pickup_time = entity.pickup_time;

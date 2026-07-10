@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository, IsNull, MoreThan } from 'typeorm';
 import { ItemViewEntity } from './entities/item-view.entity';
 import { CreateItemViewDto } from './dto/create-item-view.dto';
 import { ItemEntity } from '../item/entities/item.entity';
@@ -43,12 +43,25 @@ export class ItemViewService {
 
       this.logger.log(`Recording view for item ${item_id}`);
 
-      // Check if item exists
-      const item = await this.itemRepository.findOne({
-        where: { id: item_id },
-      });
+      const item = await this.itemRepository.findOne({ where: { id: item_id } });
       if (!item) {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
+      }
+
+      // Deduplicate: 1 unique view per user (or IP for anonymous) per item, ever
+      const existing = await this.itemViewRepository.findOne({
+        where: viewerId
+          ? { item_id, viewer_id: viewerId }
+          : { item_id, ip_address: ipAddress, viewer_id: IsNull() },
+      });
+
+      if (existing) {
+        return {
+          message: 'View already recorded',
+          data: this.toResponseDto(existing),
+          state: true,
+          statusCode: 200,
+        };
       }
 
       const itemView = this.itemViewRepository.create({
