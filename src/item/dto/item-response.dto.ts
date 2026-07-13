@@ -86,7 +86,13 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => ItemUserDto })
   user?: ItemUserDto;
 
-  static fromEntity(entity: ItemEntity): ItemResponseDto {
+  @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000', nullable: true })
+  picked_by_id?: string | null;
+
+  @ApiProperty({ example: false })
+  is_saved: boolean;
+
+  static fromEntity(entity: ItemEntity, isSaved = false): ItemResponseDto {
     const dto = new ItemResponseDto();
     dto.id = entity.id;
     dto.user_id = entity.user_id;
@@ -108,6 +114,8 @@ export class ItemResponseDto {
     dto.featured_until = entity.featured_until;
     dto.created_at = entity.created_at;
     dto.updated_at = entity.updated_at;
+    dto.is_saved = isSaved;
+    dto.picked_by_id = entity.picked_by_id ?? null;
 
     // Include location details if loaded
     if (entity.location) {
@@ -131,9 +139,10 @@ export class ItemResponseDto {
       const u = entity.user;
       dto.user = {
         id: u.id,
-        name: [u.first_name, u.last_name].filter(Boolean).join(' ') || '',
-        profile_image: u.cloudinary_avatar_url ?? null,
-        joined_date: u.member_since,
+        first_name: u.first_name,
+        last_name: u.last_name,
+        cloudinary_avatar_url: u.cloudinary_avatar_url ?? null,
+        member_since: u.member_since,
         phone_number: u.phone_number ?? null,
         items_count: (u as any).items_count ?? 0,
       };

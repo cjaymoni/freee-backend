@@ -20,6 +20,13 @@ export class ItemRequestResponseDto {
   status: RequestStatus;
 
   @ApiPropertyOptional({
+    description: 'Scheduled pickup date',
+    type: String,
+    example: '2026-06-28T16:28:43.399Z',
+  })
+  pickup_date?: Date | null;
+
+  @ApiPropertyOptional({
     description:
       'Confirmation code for pickup (only visible to requester and owner)',
   })

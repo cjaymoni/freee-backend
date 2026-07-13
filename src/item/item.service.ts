@@ -14,6 +14,7 @@ import { ItemResponseDto } from './dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { DistanceService } from '../common/distance.service';
+import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import type { Express } from 'express';
 
 @Injectable()
@@ -23,9 +24,20 @@ export class ItemService {
     private readonly itemRepository: Repository<ItemEntity>,
     @InjectRepository(ItemImageEntity)
     private readonly imageRepository: Repository<ItemImageEntity>,
+    @InjectRepository(SavedItemEntity)
+    private readonly savedItemRepository: Repository<SavedItemEntity>,
     private readonly cloudinaryService: CloudinaryService,
     private readonly distanceService: DistanceService,
   ) {}
+
+  private async getSavedItemIds(userId?: string): Promise<Set<string>> {
+    if (!userId) return new Set();
+    const saved = await this.savedItemRepository.find({
+      where: { user_id: userId, is_deleted: false },
+      select: ['item_id'],
+    });
+    return new Set(saved.map((s) => s.item_id));
+  }
 
   /**
    * Create a new item
@@ -103,6 +115,7 @@ export class ItemService {
     lat?: number;
     lng?: number;
     radius?: number;
+    viewer_id?: string;
   }): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     const query = this.itemRepository
       .createQueryBuilder('item')
@@ -154,6 +167,8 @@ export class ItemService {
       .getRawAndEntities();
 
     const { lat, lng, radius = 10 } = filters ?? {};
+    const savedIds = await this.getSavedItemIds(filters?.viewer_id);
+
     const filtered = (lat !== undefined && lng !== undefined)
       ? entities.filter((e) =>
           e.location?.latitude && e.location?.longitude
@@ -171,7 +186,7 @@ export class ItemService {
 
     return {
       message: 'Items retrieved successfully',
-      data: filtered.map((item) => ItemResponseDto.fromEntity(item)),
+      data: filtered.map((item) => ItemResponseDto.fromEntity(item, savedIds.has(item.id))),
       state: true,
       statusCode: 200,
     };
@@ -180,7 +195,7 @@ export class ItemService {
   /**
    * Get a single item by ID
    */
-  async findOne(id: string): Promise<ServiceResponseDto<ItemResponseDto>> {
+  async findOne(id: string, viewerId?: string): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
@@ -213,6 +228,8 @@ export class ItemService {
       (entity.user as any).items_count = Number(raw?.user_items_count ?? 0);
     }
 
+    const savedIds = await this.getSavedItemIds(viewerId);
+
     // Increment view count
     await this.itemRepository.update(id, {
       view_count: () => 'view_count + 1',
@@ -220,7 +237,7 @@ export class ItemService {
 
     return {
       message: 'Item retrieved successfully',
-      data: ItemResponseDto.fromEntity(entity),
+      data: ItemResponseDto.fromEntity(entity, savedIds.has(entity.id)),
       state: true,
       statusCode: 200,
     };

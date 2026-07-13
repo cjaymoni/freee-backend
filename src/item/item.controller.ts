@@ -34,8 +34,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
-import { ServiceResponseDto } from '../common/service-response.dto';
 import { UserActivityService } from '../audit/user-activity.service';
+import { ServiceResponseDto } from '../common/service-response.dto';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 
 @ApiTags('Items')
 @ApiBearerAuth()
@@ -99,6 +100,7 @@ export class ItemController {
   }
 
   @Get()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get all items with optional filters' })
   @ApiQuery({
     name: 'user_id',
@@ -170,6 +172,7 @@ export class ItemController {
     },
   })
   async findAll(
+    @GetUser('userId') viewerId?: string,
     @Query('user_id') user_id?: string,
     @Query('category_id') category_id?: string,
     @Query('status') status?: ItemStatus,
@@ -188,6 +191,7 @@ export class ItemController {
       lat: lat !== undefined ? Number(lat) : undefined,
       lng: lng !== undefined ? Number(lng) : undefined,
       radius: radius !== undefined ? Number(radius) : undefined,
+      viewer_id: viewerId,
     });
   }
 
@@ -221,7 +225,7 @@ export class ItemController {
   async findMyItems(
     @GetUser('userId') userId: string,
   ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
-    return this.itemService.findAll({ user_id: userId });
+    return this.itemService.findAll({ user_id: userId, viewer_id: userId });
   }
 
   @Get(':id')
@@ -252,7 +256,7 @@ export class ItemController {
     @GetUser('userId') userId: string,
     @Req() request: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
-    const result = await this.itemService.findOne(id);
+    const result = await this.itemService.findOne(id, userId);
 
     // Log user activity
     await this.userActivityService.log({

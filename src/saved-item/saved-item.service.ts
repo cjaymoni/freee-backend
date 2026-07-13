@@ -171,7 +171,7 @@ export class SavedItemService {
           user_id: userId,
           is_deleted: false,
         },
-        relations: ['item', 'item.category', 'item.location', 'item.user'],
+        relations: ['item', 'item.category', 'item.location', 'item.user', 'item.images'],
         order: {
           created_at: 'DESC',
         },

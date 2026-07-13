@@ -137,6 +137,13 @@ export class ItemEntity {
   @Column({ type: 'timestamp', nullable: true })
   featured_until: Date | null;
 
+  @Column({ type: 'uuid', nullable: true })
+  picked_by_id: string | null;
+
+  @ManyToOne(() => UserEntity, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'picked_by_id' })
+  pickedByUser: UserEntity;
+
   @Column({ type: 'boolean', default: false })
   is_deleted: boolean;
 

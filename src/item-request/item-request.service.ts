@@ -243,6 +243,13 @@ export class ItemRequestService {
       }
 
       const result = await this.itemRequestRepository.save(request);
+
+      // Remove requester from item's requester_ids
+      await this.itemRepository.query(
+        `UPDATE items SET requester_ids = array_remove(requester_ids, $1::uuid) WHERE id = $2`,
+        [request.requester_id, request.item_id],
+      );
+
       this.logger.log(`Request ${requestId} cancelled successfully`);
 
       return {
@@ -301,7 +308,7 @@ export class ItemRequestService {
       // Update item status
       await this.itemRepository.update(
         { id: request.item_id },
-        { status: ItemStatus.PICKED_UP },
+        { status: ItemStatus.PICKED_UP, picked_by_id: requesterId },
       );
 
       const result = await this.itemRequestRepository.save(request);
