@@ -11,6 +11,7 @@ import { CreateItemDto } from './dto/create-item.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { DistanceService } from '../common/distance.service';
 import { UserEntity } from '../user/entities/user.entity';
+import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 
 const mockUser: UserEntity & { items_count?: number } = {
   id: 'user-1',
@@ -145,6 +146,7 @@ describe('ItemService', () => {
         ItemService,
         { provide: getRepositoryToken(ItemEntity), useValue: mockItemRepo },
         { provide: getRepositoryToken(ItemImageEntity), useValue: { create: jest.fn(), save: jest.fn() } },
+        { provide: getRepositoryToken(SavedItemEntity), useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: CloudinaryService, useValue: { uploadImage: jest.fn() } },
         DistanceService,
       ],

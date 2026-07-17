@@ -77,9 +77,13 @@ export class CreateItemDto {
   location_id?: string;
 
   @ApiPropertyOptional({ description: 'Pickup date' })
+  @Transform(({ value }) => {
+    if (!value || value === '') return undefined;
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? undefined : d;
+  })
   @IsDate()
   @IsOptional()
-  @Type(() => Date)
   pickup_date?: Date;
 
   @ApiPropertyOptional({ description: 'Pickup time (HH:MM)' })

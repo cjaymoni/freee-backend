@@ -1,13 +1,21 @@
-import { PickType } from '@nestjs/swagger';
-import { BaseUserDto } from '../../user/dto/base-user.dto';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class ItemUserDto extends PickType(BaseUserDto, [
-  'id',
-  'first_name',
-  'last_name',
-  'phone_number',
-  'cloudinary_avatar_url',
-  'member_since',
-] as const) {
+export class ItemUserDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  profile_image: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  joined_date: Date;
+
+  @ApiPropertyOptional({ nullable: true })
+  phone_number: string | null;
+
+  @ApiProperty()
   items_count: number;
 }
