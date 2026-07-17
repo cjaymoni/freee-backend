@@ -48,7 +48,7 @@ export class SavedItemService {
   ): Promise<ServiceResponseDto<SavedItemResponseDto>> {
     try {
       const { item_id } = createSavedItemDto;
-      this.logger.log(`User ${userId} attempting to save item ${item_id}`);
+
 
       // Check if item exists
       const item = await this.itemRepository.findOne({
@@ -84,7 +84,7 @@ export class SavedItemService {
         deletedSavedItem.is_deleted = false;
         deletedSavedItem.deleted_at = null;
         const restored = await this.savedItemRepository.save(deletedSavedItem);
-        this.logger.log(`Item ${item_id} restored for user ${userId}`);
+
         return {
           message: 'Item saved successfully',
           data: this.toResponseDto(restored),
@@ -100,7 +100,7 @@ export class SavedItemService {
       });
 
       const result = await this.savedItemRepository.save(savedItem);
-      this.logger.log(`Item ${item_id} saved for user ${userId}`);
+
 
       return {
         message: 'Item saved successfully',
@@ -121,7 +121,7 @@ export class SavedItemService {
     itemId: string,
   ): Promise<ServiceResponseDto<SavedItemResponseDto>> {
     try {
-      this.logger.log(`User ${userId} attempting to unsave item ${itemId}`);
+
 
       const savedItem = await this.savedItemRepository.findOne({
         where: {
@@ -139,7 +139,7 @@ export class SavedItemService {
       savedItem.deleted_at = new Date();
       const result = await this.savedItemRepository.save(savedItem);
 
-      this.logger.log(`Item ${itemId} unsaved for user ${userId}`);
+
 
       return {
         message: 'Item unsaved successfully',
@@ -161,9 +161,7 @@ export class SavedItemService {
     limit: number = 20,
   ): Promise<ServiceResponseDto<SavedItemResponseDto[]>> {
     try {
-      this.logger.log(
-        `Fetching saved items for user ${userId}, page ${page}, limit ${limit}`,
-      );
+
       const skip = (page - 1) * limit;
 
       const [items, total] = await this.savedItemRepository.findAndCount({
@@ -179,7 +177,7 @@ export class SavedItemService {
         take: limit,
       });
 
-      this.logger.log(`Found ${items.length} saved items for user ${userId}`);
+      this.logger.log(`Found ${items.length} saved items`);
 
       return {
         message: 'Saved items retrieved successfully',

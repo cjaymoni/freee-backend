@@ -58,9 +58,7 @@ export class ItemRequestService {
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
       const { item_id } = createItemRequestDto;
-      this.logger.log(
-        `User ${requesterId} creating request for item ${item_id}`,
-      );
+
 
       // Check if item exists and is available
       const item = await this.itemRepository.findOne({
@@ -114,7 +112,7 @@ export class ItemRequestService {
         [requesterId, item_id],
       );
 
-      this.logger.log(`Request ${result.id} created for item ${item_id} by user ${requesterId}`);
+      this.logger.log(`Request created`);
 
       return {
         message: 'Request created successfully',
@@ -139,7 +137,7 @@ export class ItemRequestService {
     updateDto: UpdateItemRequestDto,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      this.logger.log(`Owner ${ownerId} confirming request ${requestId}`);
+
 
       const request = await this.itemRequestRepository.findOne({
         where: { id: requestId },
@@ -174,9 +172,7 @@ export class ItemRequestService {
       );
 
       const result = await this.itemRequestRepository.save(request);
-      this.logger.log(
-        `Request ${requestId} confirmed with code ${confirmationCode}`,
-      );
+      this.logger.log(`Request confirmed`);
 
       return {
         message: 'Request confirmed successfully',
@@ -201,7 +197,7 @@ export class ItemRequestService {
     cancelDto: CancelRequestDto,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      this.logger.log(`User ${userId} cancelling request ${requestId}`);
+
 
       const request = await this.itemRequestRepository.findOne({
         where: { id: requestId },
@@ -250,7 +246,7 @@ export class ItemRequestService {
         [request.requester_id, request.item_id],
       );
 
-      this.logger.log(`Request ${requestId} cancelled successfully`);
+      this.logger.log(`Request cancelled`);
 
       return {
         message: 'Request cancelled successfully',
@@ -275,9 +271,7 @@ export class ItemRequestService {
     confirmationCode: string,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      this.logger.log(
-        `Requester ${requesterId} confirming pickup for request ${requestId}`,
-      );
+
 
       const request = await this.itemRequestRepository.findOne({
         where: { id: requestId },
@@ -312,7 +306,7 @@ export class ItemRequestService {
       );
 
       const result = await this.itemRequestRepository.save(request);
-      this.logger.log(`Pickup confirmed for request ${requestId}`);
+      this.logger.log(`Pickup confirmed`);
 
       return {
         message: 'Pickup confirmed successfully',
@@ -338,7 +332,7 @@ export class ItemRequestService {
     statusFilter?: RequestStatus,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto[]>> {
     try {
-      this.logger.log(`Fetching requests for user ${userId}, page ${page}`);
+
 
       const skip = (page - 1) * limit;
 
@@ -388,7 +382,7 @@ export class ItemRequestService {
     statusFilter?: RequestStatus,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto[]>> {
     try {
-      this.logger.log(`Fetching requests for owner ${ownerId}, page ${page}`);
+
 
       const skip = (page - 1) * limit;
 
@@ -435,8 +429,6 @@ export class ItemRequestService {
     requestId: string,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      this.logger.log(`Fetching request ${requestId}`);
-
       const request = await this.itemRequestRepository.findOne({
         where: { id: requestId },
         relations: ['item', 'item.category', 'requester', 'owner'],

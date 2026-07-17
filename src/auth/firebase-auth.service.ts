@@ -33,7 +33,7 @@ export class FirebaseAuthService {
         'Email Verification',
       );
 
-      this.logger.log(`Verification link sent to ${email}`);
+      this.logger.log(`Verification link sent`);
       return { message: 'Verification email sent successfully' };
     } catch (error) {
       const errorMessage =
@@ -51,7 +51,7 @@ export class FirebaseAuthService {
 
       await this.mailService.sendFirebaseLink(email, link, 'Password Reset');
 
-      this.logger.log(`Password reset link sent to ${email}`);
+      this.logger.log(`Password reset link sent`);
       return { message: 'Password reset email sent successfully' };
     } catch (error) {
       const errorMessage =
@@ -79,7 +79,7 @@ export class FirebaseAuthService {
         .generateSignInWithEmailLink(email, actionCodeSettings);
 
       await this.mailService.sendFirebaseLink(email, link, 'Sign In');
-      this.logger.log(`Sign-in link sent to ${email}`);
+      this.logger.log(`Sign-in link sent`);
       return { message: 'Sign-in link sent successfully' };
     } catch (error) {
       const errorMessage =
@@ -97,8 +97,7 @@ export class FirebaseAuthService {
 
     try {
       await admin.auth().revokeRefreshTokens(user.firebase_uid);
-      this.logger.log(`Tokens revoked for user: ${email}`);
-      return { message: 'All active sessions have been signed out' };
+      this.logger.log(`Tokens revoked`);      return { message: 'All active sessions have been signed out' };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);

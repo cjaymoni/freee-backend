@@ -23,9 +23,7 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
         connectionTimeoutMillis: 10000,
       },
       // Logging
-      logging: (isProduction
-        ? ['error', 'warn']
-        : ['query', 'error', 'warn']) as LogLevel[],
+      logging: ['error', 'warn'] as LogLevel[],
       logger: 'advanced-console' as const,
       // Connection retry
       retryAttempts: 3,

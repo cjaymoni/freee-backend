@@ -64,32 +64,32 @@ export class ItemService {
 
     // Upload and associate images if provided
     if (files && files.length > 0) {
-      const imageEntities: ItemImageEntity[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        try {
-          const uploadResult = await this.cloudinaryService.uploadImage(file, {
-            folder: 'items',
-          });
+      const results = await Promise.all(
+        files.map((file, i) =>
+          this.cloudinaryService
+            .uploadImage(file, { folder: 'items' })
+            .then((uploadResult) =>
+              this.imageRepository.create({
+                item_id: saved.id,
+                cloudinary_public_id: uploadResult.publicId,
+                cloudinary_url: uploadResult.secureUrl,
+                cloudinary_secure_url: uploadResult.secureUrl,
+                cloudinary_format: uploadResult.format,
+                width: uploadResult.width,
+                height: uploadResult.height,
+                size_bytes: uploadResult.bytes,
+                display_order: i,
+                is_primary: i === 0,
+              }),
+            )
+            .catch((error) => {
+              console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
+              return null;
+            }),
+        ),
+      );
 
-          const itemImage = this.imageRepository.create({
-            item_id: saved.id,
-            cloudinary_public_id: uploadResult.publicId,
-            cloudinary_url: uploadResult.secureUrl,
-            cloudinary_secure_url: uploadResult.secureUrl,
-            cloudinary_format: uploadResult.format,
-            width: uploadResult.width,
-            height: uploadResult.height,
-            size_bytes: uploadResult.bytes,
-            display_order: i,
-            is_primary: i === 0,
-          });
-          imageEntities.push(itemImage);
-        } catch (error) {
-          console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
-        }
-      }
-
+      const imageEntities = results.filter(Boolean) as ItemImageEntity[];
       if (imageEntities.length > 0) {
         saved.images = await this.imageRepository.save(imageEntities);
       }

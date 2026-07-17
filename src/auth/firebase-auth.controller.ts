@@ -60,7 +60,7 @@ export class FirebaseAuthController {
     @Ip() ip: string,
     @UserAgent() userAgent: string,
   ) {
-    this.logger.log(`[authenticate] request body => idToken: ${firebaseAuthDto.idToken?.slice(0, 20)}...`);
+    this.logger.log(`[authenticate] incoming request`);
     return this.authService.firebaseAuthenticate(
       firebaseAuthDto,
       ip,

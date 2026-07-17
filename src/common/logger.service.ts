@@ -44,7 +44,11 @@ export class AppLogger implements LoggerService {
   }
 
   private sanitize(value: string): string {
-    return value.replace(/[\r\n]/g, ' ');
+    return value
+      .replace(/[\r\n]/g, ' ')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '[REDACTED_ID]')
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
+      .replace(/\b\+?[0-9]{7,15}\b/g, '[REDACTED_PHONE]');
   }
 
   private formatMessage(

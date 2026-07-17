@@ -70,11 +70,11 @@ export class MailService {
         text: `Your verification code is: ${code}. It expires in 10 minutes.`,
         html,
       });
-      this.logger.log(`Verification code sent to ${email}`);
+      this.logger.log(`Verification code sent`);
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to send email to ${email}: ${errorMessage}`);
+      this.logger.error(`Failed to send email: ${errorMessage}`);
       throw error;
     }
   }
@@ -93,13 +93,11 @@ export class MailService {
         text: `Your password reset code is: ${code}. It expires in 10 minutes.`,
         html,
       });
-      this.logger.log(`Password reset code sent to ${email}`);
+      this.logger.log(`Password reset code sent`);
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        `Failed to send password reset email to ${email}: ${errorMessage}`,
-      );
+      this.logger.error(`Failed to send password reset email: ${errorMessage}`);
       throw error;
     }
   }
@@ -122,13 +120,11 @@ export class MailService {
         text: `Please click the following link to complete your ${type}: ${link}`,
         html,
       });
-      this.logger.log(`${type} link sent to ${email}`);
+      this.logger.log(`${type} link sent`);
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        `Failed to send ${type} email to ${email}: ${errorMessage}`,
-      );
+      this.logger.error(`Failed to send ${type} email: ${errorMessage}`);
       throw error;
     }
   }

@@ -282,9 +282,7 @@ export class AuthService {
     }
 
     const { email, phone_number, uid: firebase_uid } = decodedToken;
-    this.logger.log(
-      `[firebaseAuthenticate] decoded token => uid: ${firebase_uid}, email: ${email ?? 'none'}, phone: ${phone_number ?? 'none'}`,
-    );
+    this.logger.log(`[firebaseAuthenticate] decoded token => uid present: ${!!firebase_uid}, email present: ${!!email}, phone present: ${!!phone_number}`);
 
     return this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
@@ -453,9 +451,7 @@ export class AuthService {
         },
       };
 
-      this.logger.log(
-        `[firebaseAuthenticate] response => ${JSON.stringify(response.data.user)}`,
-      );
+      this.logger.log(`[firebaseAuthenticate] response => user authenticated`);
       return response;
     });
   }

@@ -41,8 +41,6 @@ export class ItemViewService {
       const { item_id, device_type, referrer, view_duration_seconds } =
         createItemViewDto;
 
-      this.logger.log(`Recording view for item ${item_id}`);
-
       const item = await this.itemRepository.findOne({ where: { id: item_id } });
       if (!item) {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
@@ -74,7 +72,7 @@ export class ItemViewService {
       });
 
       const result = await this.itemViewRepository.save(itemView);
-      this.logger.log(`View recorded for item ${item_id}`);
+
 
       return {
         message: 'View recorded successfully',
@@ -98,8 +96,6 @@ export class ItemViewService {
     days: number = 30,
   ): Promise<ServiceResponseDto<any>> {
     try {
-      this.logger.log(`Fetching view stats for item ${itemId}`);
-
       const item = await this.itemRepository.findOne({ where: { id: itemId } });
       if (!item) {
         throw new NotFoundException(`Item with ID ${itemId} not found`);
@@ -181,7 +177,7 @@ export class ItemViewService {
         })),
       };
 
-      this.logger.log(`Stats retrieved for item ${itemId}`);
+
 
       return {
         message: 'Statistics retrieved successfully',
@@ -206,9 +202,7 @@ export class ItemViewService {
     limit: number = 20,
   ): Promise<ServiceResponseDto<ItemViewResponseDto[]>> {
     try {
-      this.logger.log(
-        `Fetching view history for user ${userId}, page ${page}, limit ${limit}`,
-      );
+
       const skip = (page - 1) * limit;
 
       const [items, total] = await this.itemViewRepository.findAndCount({
@@ -219,7 +213,7 @@ export class ItemViewService {
         take: limit,
       });
 
-      this.logger.log(`Found ${items.length} views for user ${userId}`);
+      this.logger.log(`Found ${items.length} views`);
 
       return {
         message: 'View history retrieved successfully',

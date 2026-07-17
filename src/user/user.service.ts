@@ -46,10 +46,7 @@ export class UserService {
   async findByEmail(email: string): Promise<UserEntity | null> {
     const cacheKey = `user:email:${email}`;
     const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
-    if (cachedUser) {
-      this.logger.log(`Cache hit for user email: ${email}`);
-      return cachedUser;
-    }
+    if (cachedUser) return cachedUser;
 
     const user = await this.userRepository.findOne({ where: { email } });
     if (user) {
@@ -61,10 +58,7 @@ export class UserService {
   async findByFirebaseUid(firebaseUid: string): Promise<UserEntity | null> {
     const cacheKey = `user:firebase_uid:${firebaseUid}`;
     const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
-    if (cachedUser) {
-      this.logger.log(`Cache hit for user firebase_uid: ${firebaseUid}`);
-      return cachedUser;
-    }
+    if (cachedUser) return cachedUser;
 
     const user = await this.userRepository.findOne({
       where: { firebase_uid: firebaseUid },
@@ -118,9 +112,7 @@ export class UserService {
 
     try {
       const source = options.source ?? 'unknown';
-      this.logger.log(
-        `[create][source=${source}] Creating user${createUserDto.email ? ` with email: ${createUserDto.email}` : ` (no email)`}`,
-      );
+      this.logger.log(`[create][source=${source}] Creating user`);
 
       const whereConditions: FindOptionsWhere<UserEntity>[] = [];
       if (createUserDto.firebase_uid) {
@@ -291,9 +283,7 @@ export class UserService {
         member_since: new Date(),
       });
 
-      this.logger.log(
-        `[create] saving user => ${JSON.stringify({ email: user.email, phone_number: user.phone_number, firebase_uid: user.firebase_uid })}`,
-      );
+
       const result = await entityManager.save(UserEntity, user);
 
       // Replace temp seed with the real user id for a stable, unique avatar
@@ -320,7 +310,7 @@ export class UserService {
         await queryRunner.commitTransaction();
       }
 
-      this.logger.log(`User record persisted with ID: ${result.id}`);
+      this.logger.log(`User record persisted`);
 
       const responseDto = new UserResponseDto();
       Object.assign(responseDto, result);
@@ -382,13 +372,11 @@ export class UserService {
 
   async findOne(id: string): Promise<ServiceResponseDto<UserResponseDto>> {
     try {
-      this.logger.log(`Finding user with ID: ${id}`);
       const cacheKey = `user:id:${id}`;
       const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
 
       let user: UserEntity | null = null;
       if (cachedUser) {
-        this.logger.log(`Cache hit for user ID: ${id}`);
         user = cachedUser;
       } else {
         user = await this.userRepository.findOne({ where: { id } });
@@ -425,7 +413,7 @@ export class UserService {
     manager?: EntityManager,
   ) {
     try {
-      this.logger.log(`Updating user with ID: ${id}`);
+
       const entityManager = manager || this.userRepository.manager;
       const user = await entityManager.findOne(UserEntity, { where: { id } });
       if (!user) {
@@ -485,7 +473,7 @@ export class UserService {
 
   async remove(id: string, manager?: EntityManager) {
     try {
-      this.logger.log(`Deleting user with ID: ${id}`);
+
       const entityManager = manager || this.userRepository.manager;
       const user = await entityManager.findOne(UserEntity, { where: { id } });
       if (!user) {
