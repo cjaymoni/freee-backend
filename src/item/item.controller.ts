@@ -256,7 +256,7 @@ export class ItemController {
     @GetUser('userId') userId: string,
     @Req() request: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
-    const result = await this.itemService.findOne(id, userId);
+    const result = await this.itemService.findOne(id, userId, request.ip);
 
     // Log user activity
     await this.userActivityService.log({

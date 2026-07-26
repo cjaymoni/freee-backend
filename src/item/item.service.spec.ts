@@ -12,6 +12,7 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { DistanceService } from '../common/distance.service';
 import { UserEntity } from '../user/entities/user.entity';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
+import { ItemViewService } from '../item-view/item-view.service';
 
 const mockUser: UserEntity & { items_count?: number } = {
   id: 'user-1',
@@ -140,6 +141,12 @@ describe('ItemService', () => {
     update: jest.fn(),
   };
 
+  const mockItemViewService = {
+    recordUniqueView: jest
+      .fn()
+      .mockResolvedValue({ isNew: true, view: { id: 'view-1' } }),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -149,6 +156,7 @@ describe('ItemService', () => {
         { provide: getRepositoryToken(SavedItemEntity), useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: CloudinaryService, useValue: { uploadImage: jest.fn() } },
         DistanceService,
+        { provide: ItemViewService, useValue: mockItemViewService },
       ],
     }).compile();
 
@@ -183,16 +191,52 @@ describe('ItemService', () => {
       await expect(service.findOne('non-existent')).rejects.toThrow(NotFoundException);
     });
 
-    it('increments view_count after retrieval', async () => {
+    it('records a deduplicated view for the requesting viewer', async () => {
       mockQueryBuilder = buildQueryBuilder([mockItemEntity], [{ user_items_count: '1' }]);
       mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-      mockItemRepo.update.mockResolvedValue(undefined);
 
-      await service.findOne('item-1');
+      await service.findOne('item-1', 'user-2', '10.0.0.1');
 
-      expect(mockItemRepo.update).toHaveBeenCalledWith('item-1', {
-        view_count: expect.any(Function),
+      expect(mockItemViewService.recordUniqueView).toHaveBeenCalledWith({
+        itemId: 'item-1',
+        viewerId: 'user-2',
+        ipAddress: '10.0.0.1',
       });
+      // view_count is owned by item_views aggregation, never blind-incremented
+      expect(mockItemRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('reflects the new view in the returned view_count on a first view', async () => {
+      mockQueryBuilder = buildQueryBuilder(
+        [{ ...mockItemEntity, view_count: 7 }],
+        [{ user_items_count: '1' }],
+      );
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockItemViewService.recordUniqueView.mockResolvedValueOnce({
+        isNew: true,
+        view: { id: 'view-1' },
+      });
+
+      const result = await service.findOne('item-1', 'user-2', '10.0.0.1');
+
+      expect(result.data.view_count).toBe(8);
+    });
+
+    it('does not inflate view_count when the viewer has already viewed the item', async () => {
+      mockQueryBuilder = buildQueryBuilder(
+        [{ ...mockItemEntity, view_count: 7 }],
+        [{ user_items_count: '1' }],
+      );
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockItemViewService.recordUniqueView.mockResolvedValueOnce({
+        isNew: false,
+        view: { id: 'view-1' },
+      });
+
+      const result = await service.findOne('item-1', 'user-2', '10.0.0.1');
+
+      expect(result.data.view_count).toBe(7);
+      expect(mockItemRepo.update).not.toHaveBeenCalled();
     });
   });
 

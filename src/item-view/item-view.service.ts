@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, MoreThan } from 'typeorm';
 import { ItemViewEntity } from './entities/item-view.entity';
@@ -32,6 +37,69 @@ export class ItemViewService {
     return dto;
   }
 
+  /**
+   * Record a view, deduplicated to 1 unique view per viewer (or per IP for
+   * anonymous viewers) per item, ever.
+   *
+   * The insert relies on the partial unique indexes on item_views
+   * (UQ_ITEM_VIEWS_ITEM_VIEWER / UQ_ITEM_VIEWS_ITEM_IP_ANON) so that
+   * concurrent requests for the same viewer/item cannot both insert a row.
+   * items.view_count is only incremented when a row was actually inserted,
+   * which keeps it in step with the hourly aggregation in
+   * {@link updateItemViewCounts}.
+   */
+  async recordUniqueView(params: {
+    itemId: string;
+    viewerId?: string | null;
+    ipAddress: string;
+    deviceType?: string | null;
+    referrer?: string | null;
+    viewDurationSeconds?: number | null;
+  }): Promise<{ isNew: boolean; view: ItemViewEntity }> {
+    const { itemId, ipAddress } = params;
+    const viewerId = params.viewerId || null;
+
+    const inserted = await this.itemViewRepository
+      .createQueryBuilder()
+      .insert()
+      .into(ItemViewEntity)
+      .values({
+        item_id: itemId,
+        viewer_id: viewerId,
+        ip_address: ipAddress,
+        device_type: params.deviceType || 'unknown',
+        referrer: params.referrer || null,
+        view_duration_seconds: params.viewDurationSeconds ?? null,
+      })
+      .orIgnore()
+      .returning('*')
+      .execute();
+
+    const row = (inserted.raw as ItemViewEntity[])?.[0];
+
+    if (row) {
+      await this.itemRepository.increment({ id: itemId }, 'view_count', 1);
+      return { isNew: true, view: row };
+    }
+
+    // Conflict: this viewer has already been counted for this item.
+    const existing = await this.itemViewRepository.findOne({
+      where: viewerId
+        ? { item_id: itemId, viewer_id: viewerId }
+        : { item_id: itemId, ip_address: ipAddress, viewer_id: IsNull() },
+    });
+
+    if (!existing) {
+      // Should be unreachable: the insert was rejected by a unique index, so a
+      // matching row must exist unless it was deleted in between.
+      throw new ConflictException(
+        `Unable to record view for item ${itemId}`,
+      );
+    }
+
+    return { isNew: false, view: existing };
+  }
+
   async createView(
     createItemViewDto: CreateItemViewDto,
     ipAddress: string,
@@ -46,37 +114,27 @@ export class ItemViewService {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
       }
 
-      // Deduplicate: 1 unique view per user (or IP for anonymous) per item, ever
-      const existing = await this.itemViewRepository.findOne({
-        where: viewerId
-          ? { item_id, viewer_id: viewerId }
-          : { item_id, ip_address: ipAddress, viewer_id: IsNull() },
+      const { isNew, view } = await this.recordUniqueView({
+        itemId: item_id,
+        viewerId,
+        ipAddress,
+        deviceType: device_type,
+        referrer,
+        viewDurationSeconds: view_duration_seconds,
       });
 
-      if (existing) {
+      if (!isNew) {
         return {
           message: 'View already recorded',
-          data: this.toResponseDto(existing),
+          data: this.toResponseDto(view),
           state: true,
           statusCode: 200,
         };
       }
 
-      const itemView = this.itemViewRepository.create({
-        item_id,
-        viewer_id: viewerId || null,
-        ip_address: ipAddress,
-        device_type: device_type || 'unknown',
-        referrer: referrer || null,
-        view_duration_seconds: view_duration_seconds || null,
-      });
-
-      const result = await this.itemViewRepository.save(itemView);
-
-
       return {
         message: 'View recorded successfully',
-        data: this.toResponseDto(result),
+        data: this.toResponseDto(view),
         state: true,
         statusCode: 201,
       };
@@ -251,31 +309,37 @@ export class ItemViewService {
     try {
       this.logger.log('Starting hourly view count update...');
 
-      // Get all items with their view counts
-      const viewCounts = await this.itemViewRepository
-        .createQueryBuilder('view')
-        .select('view.item_id', 'item_id')
-        .addSelect('COUNT(*)', 'count')
-        .groupBy('view.item_id')
-        .getRawMany<{ item_id: string; count: string }>();
+      // Resync every item's view_count from item_views in a single statement.
+      // Items with no view rows are reset to 0 so stale counts cannot linger.
+      const result: unknown = await this.itemRepository.query(`
+        UPDATE items i
+        SET view_count = c.count
+        FROM (
+          SELECT i2.id, COALESCE(v.count, 0)::int AS count
+          FROM items i2
+          LEFT JOIN (
+            SELECT item_id, COUNT(*) AS count
+            FROM item_views
+            GROUP BY item_id
+          ) v ON v.item_id = i2.id
+        ) c
+        WHERE i.id = c.id AND i.view_count <> c.count
+      `);
 
-      // Update each item's view count
-      for (const { item_id, count } of viewCounts) {
-        await this.itemRepository.update(
-          { id: item_id },
-          { view_count: parseInt(count) },
-        );
-      }
+      // node-postgres returns [rows, rowCount] for UPDATE via TypeORM's query()
+      const updatedCount = Array.isArray(result)
+        ? Number(result[1] ?? 0)
+        : 0;
 
       const duration = Date.now() - startTime;
       await this.systemEventService.completeEvent(
         event.id,
-        viewCounts.length,
+        updatedCount,
         duration,
       );
 
       this.logger.log(
-        `Updated view counts for ${viewCounts.length} items in ${duration}ms`,
+        `Updated view counts for ${updatedCount} items in ${duration}ms`,
       );
     } catch (error) {
       const duration = Date.now() - startTime;

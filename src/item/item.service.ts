@@ -15,6 +15,7 @@ import { ServiceResponseDto } from '../common/service-response.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { DistanceService } from '../common/distance.service';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
+import { ItemViewService } from '../item-view/item-view.service';
 import type { Express } from 'express';
 
 @Injectable()
@@ -28,6 +29,7 @@ export class ItemService {
     private readonly savedItemRepository: Repository<SavedItemEntity>,
     private readonly cloudinaryService: CloudinaryService,
     private readonly distanceService: DistanceService,
+    private readonly itemViewService: ItemViewService,
   ) {}
 
   private async getSavedItemIds(userId?: string): Promise<Set<string>> {
@@ -195,7 +197,11 @@ export class ItemService {
   /**
    * Get a single item by ID
    */
-  async findOne(id: string, viewerId?: string): Promise<ServiceResponseDto<ItemResponseDto>> {
+  async findOne(
+    id: string,
+    viewerId?: string,
+    ipAddress?: string,
+  ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
@@ -230,10 +236,17 @@ export class ItemService {
 
     const savedIds = await this.getSavedItemIds(viewerId);
 
-    // Increment view count
-    await this.itemRepository.update(id, {
-      view_count: () => 'view_count + 1',
+    // Record the view. Deduplicated to one view per viewer (or per IP for
+    // anonymous viewers) per item, so repeat requests do not inflate the count.
+    const { isNew } = await this.itemViewService.recordUniqueView({
+      itemId: id,
+      viewerId,
+      ipAddress: ipAddress || 'unknown',
     });
+
+    if (isNew) {
+      entity.view_count = Number(entity.view_count ?? 0) + 1;
+    }
 
     return {
       message: 'Item retrieved successfully',

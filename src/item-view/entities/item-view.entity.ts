@@ -15,6 +15,15 @@ import { UserEntity } from '../../user/entities/user.entity';
 @Index(['viewer_id'])
 @Index(['created_at'])
 @Index('idx_views_item_time', ['item_id', 'created_at'])
+// One view per viewer per item; anonymous viewers are deduplicated by IP.
+@Index('UQ_ITEM_VIEWS_ITEM_VIEWER', ['item_id', 'viewer_id'], {
+  unique: true,
+  where: 'viewer_id IS NOT NULL',
+})
+@Index('UQ_ITEM_VIEWS_ITEM_IP_ANON', ['item_id', 'ip_address'], {
+  unique: true,
+  where: 'viewer_id IS NULL',
+})
 export class ItemViewEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
