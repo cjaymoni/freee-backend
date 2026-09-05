@@ -299,7 +299,8 @@ export class ItemRequestController {
     },
   })
   @ApiResponse({ status: 404, description: 'Request not found' })
-  async getRequestById(@Param('requestId') requestId: string) {
-    return this.itemRequestService.getRequestById(requestId);
+  async getRequestById(@Request() req, @Param('requestId') requestId: string) {
+    const userId = req.user.userId;
+    return this.itemRequestService.getRequestById(requestId, userId);
   }
 }

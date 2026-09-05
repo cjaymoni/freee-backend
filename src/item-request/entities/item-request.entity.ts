@@ -25,6 +25,12 @@ export enum RequestStatus {
 @Index(['owner_id'])
 @Index(['status'])
 @Index(['created_at'])
+// One active request per requester per item. Declared here as well as in the
+// migration so that `synchronize` in development does not drop it.
+@Index('UQ_ITEM_REQUESTS_ACTIVE_PER_REQUESTER', ['item_id', 'requester_id'], {
+  unique: true,
+  where: "status IN ('pending', 'confirmed')",
+})
 export class ItemRequestEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

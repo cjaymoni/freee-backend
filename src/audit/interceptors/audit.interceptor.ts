@@ -7,13 +7,17 @@ import {
 import { Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { AuditService } from '../audit.service';
+import { AuditHelperService } from '../audit-helper.service';
 
 /**
  * Interceptor to automatically log API requests to audit logs
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
-  constructor(private readonly auditService: AuditService) {}
+  constructor(
+    private readonly auditService: AuditService,
+    private readonly auditHelper: AuditHelperService,
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
@@ -84,7 +88,9 @@ export class AuditInterceptor implements NestInterceptor {
         entityType: entityInfo.entityType,
         entityId: validEntityId,
         action: this.mapMethodToAction(request.method),
-        newValues: request.body,
+        // Bodies for POST /user and PATCH /user/:id carry a plaintext
+        // password, so nothing goes into audit_logs unredacted.
+        newValues: this.auditHelper.sanitizeData(request.body),
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
         apiEndpoint: request.url,

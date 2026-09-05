@@ -73,6 +73,34 @@ export class UserService {
     return await this.userRepository.findOne({ where: { id } });
   }
 
+  /**
+   * Look up a user together with their password_hash, which is `select: false`
+   * on the entity and so is absent from every other lookup.
+   *
+   * For credential verification only. The result must never be returned from a
+   * controller or written to the cache - unlike findByEmail, this method is
+   * deliberately uncached so the hash does not sit in Redis.
+   */
+  async findByEmailWithPassword(email: string): Promise<UserEntity | null> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password_hash')
+      .where('user.email = :email', { email })
+      .getOne();
+  }
+
+  /**
+   * Id-based counterpart to {@link findByEmailWithPassword}. Same rules apply:
+   * credential verification only, never returned to a caller.
+   */
+  async findOneEntityWithPassword(id: string): Promise<UserEntity | null> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password_hash')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
   async findByEmailOrPhone(
     email?: string,
     phoneNumber?: string,

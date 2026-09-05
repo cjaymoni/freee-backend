@@ -135,15 +135,23 @@ export class AuditHelperService {
     const sanitized = { ...data };
     const sensitiveFields = [
       'password',
+      'password_hash',
+      'currentPassword',
+      'newPassword',
+      'confirmPassword',
       'token',
+      'idToken',
       'secret',
       'api_key',
       'access_token',
       'refresh_token',
+      'session_token',
+      'code',
+      'confirmation_code',
     ];
 
     for (const field of sensitiveFields) {
-      if (sanitized[field]) {
+      if (field in sanitized) {
         sanitized[field] = '[REDACTED]';
       }
     }

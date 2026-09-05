@@ -16,7 +16,7 @@ import {
 } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { AccountLockoutService } from './account-lockout.service';
@@ -38,6 +38,16 @@ import { FirebaseAuthDto } from './dto/firebase-auth.dto';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+
+  /**
+   * Six-digit verification code drawn from the CSPRNG. randomInt is unbiased
+   * over the range, unlike a modulo of raw bytes, and unlike Math.random it
+   * does not expose a recoverable PRNG state that would let an attacker who
+   * requests a few codes predict someone else's.
+   */
+  private generateVerificationCode(): string {
+    return randomInt(100000, 1000000).toString();
+  }
 
   private isConflictError(error: unknown): boolean {
     if (error instanceof ConflictException) {
@@ -116,7 +126,7 @@ export class AuthService {
       }
 
       // 3. Initiate Verification Flow (Business Logic)
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = this.generateVerificationCode();
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
@@ -175,7 +185,7 @@ export class AuthService {
         { expires_at: new Date() },
       );
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = this.generateVerificationCode();
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
@@ -471,7 +481,7 @@ export class AuthService {
 
   async login(loginDto: LoginDto, ip: string, userAgent: string) {
     const { email, password } = loginDto;
-    const user = await this.userService.findByEmail(email);
+    const user = await this.userService.findByEmailWithPassword(email);
 
     // Check if account is locked
     if (user) {
@@ -496,6 +506,10 @@ export class AuthService {
     } else if (!user.is_active) {
       attemptResult = 'failed';
       failureReason = 'account_not_active';
+    } else if (!user.password_hash) {
+      // Firebase-only accounts have no local password to compare against.
+      attemptResult = 'failed';
+      failureReason = 'invalid_password';
     } else {
       const isMatch = await bcrypt.compare(password, user.password_hash);
       if (!isMatch) {
@@ -680,10 +694,16 @@ export class AuthService {
 
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
     const { currentPassword, newPassword } = changePasswordDto;
-    const user = await this.userService.findOneEntity(userId);
+    const user = await this.userService.findOneEntityWithPassword(userId);
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (!user.password_hash) {
+      throw new BadRequestException(
+        'This account has no password set. Use the password reset flow instead.',
+      );
     }
 
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
@@ -725,7 +745,7 @@ export class AuthService {
         { expires_at: new Date() },
       );
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = this.generateVerificationCode();
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 

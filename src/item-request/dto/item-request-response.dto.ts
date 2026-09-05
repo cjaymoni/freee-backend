@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RequestStatus } from '../entities/item-request.entity';
 import { ItemResponseDto } from '../../item/dto/item-response.dto';
-import { UserResponseDto } from '../../user/dto/user-response.dto';
+import { ItemUserDto } from '../../item/dto/item-user.dto';
 
 export class ItemRequestResponseDto {
   @ApiProperty({ description: 'Request ID' })
@@ -76,15 +76,15 @@ export class ItemRequestResponseDto {
   item?: ItemResponseDto;
 
   @ApiPropertyOptional({
-    type: () => UserResponseDto,
+    type: () => ItemUserDto,
     description:
       'Requester user details (only included when relations are loaded)',
   })
-  requester?: UserResponseDto;
+  requester?: ItemUserDto;
 
   @ApiPropertyOptional({
-    type: () => UserResponseDto,
+    type: () => ItemUserDto,
     description: 'Owner user details (only included when relations are loaded)',
   })
-  owner?: UserResponseDto;
+  owner?: ItemUserDto;
 }

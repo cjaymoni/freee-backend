@@ -10,6 +10,7 @@ import {
   OneToMany,
   OneToOne,
 } from 'typeorm';
+import { Exclude } from 'class-transformer';
 import { UserSessionEntity } from '../../auth/entities/user-session.entity';
 import { LocationEntity } from './location.entity';
 import { UserPreferenceEntity } from './user-preference.entity';
@@ -47,10 +48,18 @@ export class UserEntity {
   @Column({ type: 'boolean', default: false })
   is_onboarded: boolean;
 
+  /**
+   * Never loaded by a normal lookup. Credential checks must go through
+   * UserService.findByEmailWithPassword / findOneEntityWithPassword, which
+   * opt back in with addSelect. `@Exclude` is a second line of defence for
+   * the case where an entity carrying the hash still reaches a response.
+   */
+  @Exclude()
   @Column({
     type: 'varchar',
     length: 255,
     nullable: true,
+    select: false,
     comment: 'bcrypt with 12 rounds',
   })
   password_hash: string;
