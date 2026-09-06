@@ -377,7 +377,9 @@ export class ItemRequestService {
         request.status = RequestStatus.CANCELLED;
         request.cancelled_at = new Date();
         request.cancelled_by = userId;
-        request.cancellation_reason = cancelDto.cancellation_reason;
+        // Explicit null rather than undefined, which TypeORM would treat as
+        // "leave unchanged" instead of writing the column.
+        request.cancellation_reason = cancelDto.cancellation_reason ?? null;
 
         // If request was confirmed, make item available again
         if (originalStatus === RequestStatus.CONFIRMED) {

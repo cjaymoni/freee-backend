@@ -12,6 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
@@ -40,6 +41,7 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { UserRole } from './entities/user.entity';
 import { GetUser } from '../common/decorators/get-user.decorator';
+import { AppError } from '../common/app-error';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @ApiTags('user')
@@ -156,18 +158,40 @@ export class UserController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get a user by ID' })
+  @ApiOperation({
+    summary: 'Get a user by ID',
+    description:
+      'Users may only fetch their own profile. Admins may fetch any user.',
+  })
   @ApiResponse({
     status: 200,
     description: 'User found successfully',
     type: UserResponseDto,
   })
   @ApiResponse({
+    status: 403,
+    description: 'Forbidden - non-admins may only view their own profile',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
     status: 500,
     description: 'Internal server error',
     type: ErrorResponseDto,
   })
-  findOne(@Param('id') id: string) {
+  findOne(
+    @Param('id') id: string,
+    @GetUser('userId') requesterId: string,
+    @GetUser('role') requesterRole: UserRole,
+  ) {
+    // This record carries full PII (email, phone_number, date_of_birth) as well
+    // as fcm_token and account-security state, so it is limited to the owner
+    // and to admins.
+    if (id !== requesterId && requesterRole !== UserRole.ADMIN) {
+      throw new AppError(
+        new ForbiddenException('You can only view your own profile'),
+      );
+    }
+
     return this.userService.findOne(id);
   }
 
