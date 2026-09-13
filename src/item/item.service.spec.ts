@@ -1,17 +1,24 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ItemService } from './item.service';
-import { ItemEntity, ItemCondition, ItemStatus } from './entities/item.entity';
+import {
+  ItemEntity,
+  ItemCondition,
+  ItemStatus,
+  PickupType,
+} from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
 import { ItemResponseDto } from './dto/item-response.dto';
 import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { DistanceService } from '../common/distance.service';
 import { UserEntity } from '../user/entities/user.entity';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
+import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewService } from '../item-view/item-view.service';
 
 const mockUser: UserEntity & { items_count?: number } = {
@@ -56,6 +63,31 @@ const mockItemEntity: ItemEntity = {
   category: null,
   deletedByUser: null,
 } as any;
+
+const mockImage = (
+  id: string,
+  order: number,
+  primary: boolean,
+): ItemImageEntity =>
+  ({
+    id,
+    item_id: 'item-1',
+    cloudinary_public_id: `public-${id}`,
+    cloudinary_url: `https://res.cloudinary.com/${id}.jpg`,
+    cloudinary_secure_url: `https://res.cloudinary.com/${id}.jpg`,
+    cloudinary_format: 'jpg',
+    width: 100,
+    height: 100,
+    size_bytes: 1234,
+    display_order: order,
+    is_primary: primary,
+    is_deleted: false,
+    deleted_at: null,
+    created_at: new Date('2026-06-28T16:28:43.399Z'),
+  }) as ItemImageEntity;
+
+const mockFile = (name: string): Express.Multer.File =>
+  ({ originalname: name, buffer: Buffer.from('x') }) as Express.Multer.File;
 
 const buildQueryBuilder = (entities: ItemEntity[], raw: object[]) => ({
   leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -127,6 +159,41 @@ describe('CreateItemDto quantity parsing', () => {
     const quantityError = errors.find((e) => e.property === 'quantity');
     expect(quantityError).toBeDefined();
   });
+
+  const quantityErrorFor = async (quantity: unknown) => {
+    const dto = plainToInstance(CreateItemDto, {
+      title: 'Test',
+      condition: ItemCondition.GOOD,
+      quantity,
+    });
+    const errors = await validate(dto);
+    return {
+      dto,
+      error: errors.find((e) => e.property === 'quantity'),
+    };
+  };
+
+  it.each([
+    ['an empty string', ''],
+    ['null', null],
+  ])('treats %s as unset so the column default applies', async (_label, q) => {
+    const { dto, error } = await quantityErrorFor(q);
+
+    expect(error).toBeUndefined();
+    expect(dto.quantity).toBeUndefined();
+  });
+
+  it('rejects a fractional quantity', async () => {
+    const { error } = await quantityErrorFor('2.5');
+
+    expect(error?.constraints).toHaveProperty('isInt');
+  });
+
+  it('rejects a quantity that is not a number at all', async () => {
+    const { error } = await quantityErrorFor('abc');
+
+    expect(error?.constraints).toHaveProperty('isInt');
+  });
 });
 
 describe('ItemService', () => {
@@ -141,6 +208,35 @@ describe('ItemService', () => {
     update: jest.fn(),
   };
 
+  const mockImageRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    create: jest.fn((data: Partial<ItemImageEntity>) => ({ ...data })),
+    save: jest.fn((entity: unknown) => Promise.resolve(entity)),
+  };
+
+  const mockLocationRepo = {
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn((data: Partial<LocationEntity>) => ({ ...data })),
+    save: jest.fn((entity: Partial<LocationEntity>) =>
+      Promise.resolve({ id: entity.id ?? 'new-loc', ...entity }),
+    ),
+  };
+
+  const mockCloudinary = {
+    uploadImage: jest.fn((file: Express.Multer.File) =>
+      file.originalname.startsWith('fail')
+        ? Promise.reject(new Error('Cloudinary is down'))
+        : Promise.resolve({
+            publicId: `public-${file.originalname}`,
+            secureUrl: `https://res.cloudinary.com/${file.originalname}`,
+            format: 'jpg',
+            width: 100,
+            height: 100,
+            bytes: 1234,
+          }),
+    ),
+  };
+
   const mockItemViewService = {
     recordUniqueView: jest
       .fn()
@@ -152,9 +248,16 @@ describe('ItemService', () => {
       providers: [
         ItemService,
         { provide: getRepositoryToken(ItemEntity), useValue: mockItemRepo },
-        { provide: getRepositoryToken(ItemImageEntity), useValue: { create: jest.fn(), save: jest.fn() } },
+        {
+          provide: getRepositoryToken(ItemImageEntity),
+          useValue: mockImageRepo,
+        },
         { provide: getRepositoryToken(SavedItemEntity), useValue: { find: jest.fn().mockResolvedValue([]) } },
-        { provide: CloudinaryService, useValue: { uploadImage: jest.fn() } },
+        {
+          provide: getRepositoryToken(LocationEntity),
+          useValue: mockLocationRepo,
+        },
+        { provide: CloudinaryService, useValue: mockCloudinary },
         DistanceService,
         { provide: ItemViewService, useValue: mockItemViewService },
       ],
@@ -237,6 +340,458 @@ describe('ItemService', () => {
 
       expect(result.data.view_count).toBe(7);
       expect(mockItemRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pickup schedule', () => {
+    const scheduledItem = () => ({
+      ...mockItemEntity,
+      pickup_type: PickupType.SPECIFIC_DATE,
+      pickup_date: new Date('2026-07-01T00:00:00.000Z'),
+      pickup_time: '14:30',
+    });
+
+    beforeEach(() => {
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([]);
+    });
+
+    it.each([
+      ['anytime', PickupType.ANYTIME],
+      ['contact_me', PickupType.CONTACT_ME],
+    ])(
+      'drops the old date and time when the type changes to %s',
+      async (_label, pickupType) => {
+        mockItemRepo.findOne.mockResolvedValue(scheduledItem());
+
+        const updateDto = plainToInstance(UpdateItemDto, {
+          pickup_type: pickupType,
+        });
+        const result = await service.update('user-1', 'item-1', updateDto);
+
+        expect(result.data.pickup_type).toBe(pickupType);
+        expect(result.data.pickup_date).toBeNull();
+        expect(result.data.pickup_time).toBeNull();
+      },
+    );
+
+    it('drops the old date and time when the type is cleared', async () => {
+      mockItemRepo.findOne.mockResolvedValue(scheduledItem());
+
+      const updateDto = plainToInstance(UpdateItemDto, { pickup_type: null });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.pickup_date).toBeNull();
+      expect(result.data.pickup_time).toBeNull();
+    });
+
+    it('keeps the date when the type stays specific_date', async () => {
+      mockItemRepo.findOne.mockResolvedValue(scheduledItem());
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        pickup_type: PickupType.SPECIFIC_DATE,
+        title: 'New title',
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.pickup_date).toEqual(
+        new Date('2026-07-01T00:00:00.000Z'),
+      );
+      expect(result.data.pickup_time).toBe('14:30');
+    });
+
+    it('leaves the schedule alone when the edit does not mention the type', async () => {
+      mockItemRepo.findOne.mockResolvedValue(scheduledItem());
+
+      const updateDto = plainToInstance(UpdateItemDto, { title: 'New title' });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.pickup_type).toBe(PickupType.SPECIFIC_DATE);
+      expect(result.data.pickup_date).toEqual(
+        new Date('2026-07-01T00:00:00.000Z'),
+      );
+      expect(result.data.pickup_time).toBe('14:30');
+    });
+
+    it('does not store a date posted alongside a non-scheduled type', async () => {
+      mockItemRepo.create.mockImplementation((data: Partial<ItemEntity>) => ({
+        ...data,
+      }));
+
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        pickup_type: PickupType.ANYTIME,
+        pickup_date: '2026-07-01',
+        pickup_time: '14:30',
+      });
+      const result = await service.create('user-1', createDto);
+
+      expect(result.data.pickup_date).toBeNull();
+      expect(result.data.pickup_time).toBeNull();
+    });
+  });
+
+  describe('coordinates', () => {
+    beforeEach(() => {
+      mockItemRepo.create.mockImplementation((data: Partial<ItemEntity>) => ({
+        ...data,
+      }));
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve({ ...entity, id: entity.id ?? 'item-1' }),
+      );
+      mockImageRepo.find.mockResolvedValue([]);
+    });
+
+    it('creates an unattached location from coordinates on create', async () => {
+      mockLocationRepo.save.mockResolvedValue({ id: 'loc-new' });
+
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        latitude: '5.6037',
+        longitude: '-0.187',
+      });
+      const result = await service.create('user-1', createDto);
+
+      // Not tied to the poster, so it never shows up in their saved locations.
+      expect(mockLocationRepo.create).toHaveBeenCalledWith({
+        user_id: null,
+        latitude: 5.6037,
+        longitude: -0.187,
+      });
+      expect(result.data.location_id).toBe('loc-new');
+    });
+
+    it('does not write latitude or longitude onto the item row', async () => {
+      mockLocationRepo.save.mockResolvedValue({ id: 'loc-new' });
+
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        latitude: 5.6037,
+        longitude: -0.187,
+      });
+      await service.create('user-1', createDto);
+
+      const [created] = mockItemRepo.create.mock.calls[0] as [
+        Record<string, unknown>,
+      ];
+      expect(created).not.toHaveProperty('latitude');
+      expect(created).not.toHaveProperty('longitude');
+    });
+
+    it('rejects a latitude sent without a longitude', async () => {
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        latitude: 5.6037,
+      });
+
+      await expect(service.create('user-1', createDto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockLocationRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects coordinates sent alongside a location_id', async () => {
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        location_id: '123e4567-e89b-12d3-a456-426614174000',
+        latitude: 5.6037,
+        longitude: -0.187,
+      });
+
+      await expect(service.create('user-1', createDto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockLocationRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('updates the throwaway location in place on a later edit', async () => {
+      mockItemRepo.findOne.mockResolvedValue({
+        ...mockItemEntity,
+        location_id: 'loc-temp',
+      });
+      mockLocationRepo.findOne.mockResolvedValue({
+        id: 'loc-temp',
+        user_id: null,
+        latitude: 5.6037,
+        longitude: -0.187,
+      });
+      mockLocationRepo.save.mockImplementation((entity: LocationEntity) =>
+        Promise.resolve(entity),
+      );
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        latitude: 6.2,
+        longitude: -1.1,
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(mockLocationRepo.create).not.toHaveBeenCalled();
+      expect(mockLocationRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'loc-temp',
+          latitude: 6.2,
+          longitude: -1.1,
+        }),
+      );
+      expect(result.data.location_id).toBe('loc-temp');
+    });
+
+    it('never mutates a saved location, pointing at a new one instead', async () => {
+      mockItemRepo.findOne.mockResolvedValue({
+        ...mockItemEntity,
+        location_id: 'loc-saved',
+      });
+      mockLocationRepo.findOne.mockResolvedValue({
+        id: 'loc-saved',
+        user_id: 'user-1',
+        latitude: 5.6037,
+        longitude: -0.187,
+      });
+      mockLocationRepo.save.mockResolvedValue({ id: 'loc-new' });
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        latitude: 6.2,
+        longitude: -1.1,
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(mockLocationRepo.create).toHaveBeenCalledWith({
+        user_id: null,
+        latitude: 6.2,
+        longitude: -1.1,
+      });
+      expect(result.data.location_id).toBe('loc-new');
+    });
+  });
+
+  describe('update', () => {
+    it('keeps fields the client did not send, including status', async () => {
+      const stored = { ...mockItemEntity };
+      mockItemRepo.findOne.mockResolvedValue(stored);
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+
+      // Built the same way the global ValidationPipe builds it: declared but
+      // unsent fields are present on the instance with value `undefined`.
+      const updateDto = plainToInstance(UpdateItemDto, { title: 'New title' });
+      expect('status' in updateDto).toBe(true);
+
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.title).toBe('New title');
+      expect(result.data.status).toBe(ItemStatus.AVAILABLE);
+      expect(result.data.condition).toBe(ItemCondition.GOOD);
+      expect(result.data.quantity).toBe(2);
+    });
+
+    it('applies status when the client does send it', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        status: ItemStatus.UNAVAILABLE,
+      });
+
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.status).toBe(ItemStatus.UNAVAILABLE);
+      expect(result.data.title).toBe('Test Item');
+    });
+
+    it('returns the existing images when the edit does not touch them', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, { title: 'New title' });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.images).toHaveLength(1);
+      expect(result.data.images![0].id).toBe('img-1');
+    });
+
+    it('appends uploaded images after the existing ones', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([
+        mockImage('img-1', 0, true),
+        mockImage('img-2', 1, false),
+      ]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {});
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('new.jpg'),
+      ]);
+
+      expect(mockCloudinary.uploadImage).toHaveBeenCalledTimes(1);
+      expect(result.data.images).toHaveLength(3);
+      // Continues the existing display order, and does not steal primary.
+      expect(result.data.images![2].display_order).toBe(2);
+      expect(result.data.images![2].is_primary).toBe(false);
+      expect(result.data.images![0].is_primary).toBe(true);
+    });
+
+    it('removes the images listed in remove_image_ids', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      const keep = mockImage('img-1', 0, true);
+      const drop = mockImage('img-2', 1, false);
+      mockImageRepo.find.mockResolvedValue([keep, drop]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: 'img-2',
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(drop.is_deleted).toBe(true);
+      expect(drop.deleted_at).toBeInstanceOf(Date);
+      expect(result.data.images).toHaveLength(1);
+      expect(result.data.images![0].id).toBe('img-1');
+    });
+
+    it('promotes a remaining image to primary when the primary is removed', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([
+        mockImage('img-1', 0, true),
+        mockImage('img-2', 1, false),
+      ]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-1'],
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.images).toHaveLength(1);
+      expect(result.data.images![0].id).toBe('img-2');
+      expect(result.data.images![0].is_primary).toBe(true);
+    });
+
+    it('rejects removing an image that belongs to another item', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-99'],
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto),
+      ).rejects.toThrow(NotFoundException);
+      // The rest of the edit must not have been persisted.
+      expect(mockItemRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects removing every image when nothing replaces them', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-1'],
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockItemRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('allows removing every image when the request uploads replacements', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-1'],
+      });
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('replacement.jpg'),
+      ]);
+
+      expect(result.data.images).toHaveLength(1);
+      expect(result.data.images![0].display_order).toBe(0);
+      // The replacement becomes primary, since the old primary is gone.
+      expect(result.data.images![0].is_primary).toBe(true);
+    });
+
+    it('reports uploads that failed instead of silently dropping them', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {});
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('good.jpg'),
+        mockFile('fail-1.jpg'),
+        mockFile('fail-2.jpg'),
+      ]);
+
+      expect(result.state).toBe(true);
+      expect(result.data.images).toHaveLength(1);
+      expect(result.message).toBe(
+        'Item updated successfully, but 2 of 3 images failed to upload',
+      );
+      expect(result.warnings).toEqual([
+        'Image "fail-1.jpg" could not be uploaded and was not saved.',
+        'Image "fail-2.jpg" could not be uploaded and was not saved.',
+      ]);
+    });
+
+    it('omits warnings when every upload succeeds', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {});
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('good.jpg'),
+      ]);
+
+      expect(result.message).toBe('Item updated successfully');
+      expect(result.warnings).toBeUndefined();
+    });
+
+    it('leaves no gap in display order when an upload in the middle fails', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {});
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('first.jpg'),
+        mockFile('fail.jpg'),
+        mockFile('third.jpg'),
+      ]);
+
+      expect(result.data.images!.map((image) => image.display_order)).toEqual([
+        0, 1, 2,
+      ]);
     });
   });
 

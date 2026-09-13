@@ -331,9 +331,33 @@ runaway retry loop server-side — put the backoff in the client.
 them with a 400, and you cannot request your own item. Hide or disable the
 request button in both cases rather than surfacing the error.
 
-**Uploads go up to 50 MB, as multipart.** Item images use
-`multipart/form-data`. Compress on device anyway — this is a mobile-first
-audience and the ceiling is not a target.
+**An item's location can be posted as raw coordinates.** Send `latitude` and
+`longitude` on `POST /items` or `PUT /items/{id}` and the backend creates the
+location row for you — no separate call, and no `location_id` to look up
+first. The two must travel together, and cannot be combined with a
+`location_id` in the same request; either mistake is a **400**. Sending
+coordinates again on a later edit moves the item rather than accumulating
+rows, and never touches a location the user saved to their profile.
+
+**Uploads go up to 50 MB per file, as multipart.** Item images use
+`multipart/form-data`, at most 10 files per request. Anything larger is
+rejected with **413**, and anything that is not a JPEG, PNG, WebP, GIF, HEIC or
+HEIF is rejected with **400** before it leaves the phone's request. Compress on
+device anyway — this is a mobile-first audience and the ceiling is not a target.
+
+**A successful response can still carry failed uploads.** If Cloudinary drops
+one of the photos, the item is still created or updated with the ones that
+made it, and the response says so: `message` names the count and `warnings`
+carries one line per photo that did not save. Check `warnings` before telling
+the user everything worked.
+
+**Editing photos happens on `PUT /items/{id}`, as multipart.** Files in
+`images` are added to the listing, and IDs in `remove_image_ids` (repeated
+field or one comma-separated string) are removed. Send neither and the photos
+are left alone, so a text-only edit stays a plain JSON `PUT`. A listing that
+has photos must keep at least one — removing them all is rejected unless the
+same request uploads replacements. The response carries the resulting `images`
+array, so re-render from it rather than refetching.
 
 ---
 
@@ -366,9 +390,10 @@ defaulting to 1 and 20.
 | --- | --- | --- |
 | `GET` | `/items` | Browse. Works signed out, but include the token — the response then carries `is_saved` per item. |
 | `GET` | `/items/{id}` | Detail. Records a view, deduplicated per user per item. |
-| `POST` | `/items` | Create a listing. |
+| `POST` | `/items` | Create a listing. Multipart, with the photos in `images`. |
+| `PUT` | `/items/{id}` | Edit a listing, photos included — see below. |
 | `GET` | `/items/my-items` | The signed-in user's listings. |
-| `POST` | `/items/{itemId}/images` | Multipart upload. |
+| `POST` | `/items/{itemId}/images` | Takes Cloudinary metadata as JSON, not a file. Edit photos through `PUT /items/{id}` instead. |
 | `GET` | `/categories` | Seeded and stable — cache it locally. |
 | `POST` | `/saved-items` | Save an item. |
 | `DELETE` | `/saved-items/{itemId}` | Unsave. |

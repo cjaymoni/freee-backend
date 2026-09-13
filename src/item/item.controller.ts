@@ -13,6 +13,10 @@ import {
   UploadedFiles,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import {
+  itemImageUploadOptions,
+  MAX_IMAGES_PER_REQUEST,
+} from './item-image-upload.options';
 import type { Request } from 'express';
 import {
   ApiTags,
@@ -49,7 +53,9 @@ export class ItemController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FilesInterceptor('images', 10))
+  @UseInterceptors(
+    FilesInterceptor('images', MAX_IMAGES_PER_REQUEST, itemImageUploadOptions),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -64,6 +70,8 @@ export class ItemController {
         is_free: { type: 'boolean', default: true },
         quantity: { type: 'integer', default: 1, minimum: 1 },
         location_id: { type: 'string', format: 'uuid' },
+        latitude: { type: 'number', example: 5.6037 },
+        longitude: { type: 'number', example: -0.187 },
         pickup_date: { type: 'string', format: 'date' },
         pickup_time: { type: 'string', example: '14:30' },
         pickup_type: { type: 'string', enum: ['anytime', 'contact_me', 'specific_date'] },
@@ -279,7 +287,56 @@ export class ItemController {
 
   @Put(':id')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update an item' })
+  @UseInterceptors(
+    FilesInterceptor('images', MAX_IMAGES_PER_REQUEST, itemImageUploadOptions),
+  )
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string' },
+        category_id: { type: 'string', format: 'uuid' },
+        condition: {
+          type: 'string',
+          enum: ['new', 'like_new', 'good', 'fair', 'poor'],
+        },
+        status: {
+          type: 'string',
+          enum: ['available', 'reserved', 'picked_up', 'unavailable'],
+        },
+        price: { type: 'number' },
+        is_free: { type: 'boolean' },
+        quantity: { type: 'integer', minimum: 1 },
+        location_id: { type: 'string', format: 'uuid' },
+        latitude: { type: 'number', example: 5.6037 },
+        longitude: { type: 'number', example: -0.187 },
+        pickup_date: { type: 'string', format: 'date' },
+        pickup_time: { type: 'string', example: '14:30' },
+        pickup_type: {
+          type: 'string',
+          enum: ['anytime', 'contact_me', 'specific_date'],
+        },
+        images: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'New images to add. Existing images are kept.',
+        },
+        remove_image_ids: {
+          type: 'array',
+          items: { type: 'string', format: 'uuid' },
+          description:
+            'IDs of existing images to remove. Also accepts a comma-separated string.',
+        },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: 'Update an item',
+    description:
+      'Send as multipart/form-data to change images: files in `images` are added to the item, and IDs in `remove_image_ids` are removed. Omitting both leaves the images untouched. An item that has images must keep at least one.',
+  })
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiResponse({
     status: 200,
@@ -305,8 +362,9 @@ export class ItemController {
     @GetUser('userId') userId: string,
     @Param('id') id: string,
     @Body() updateDto: UpdateItemDto,
+    @UploadedFiles() files?: Express.Multer.File[],
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
-    return this.itemService.update(userId, id, updateDto);
+    return this.itemService.update(userId, id, updateDto, files);
   }
 
   @Delete(':id')

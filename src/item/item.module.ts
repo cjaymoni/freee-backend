@@ -10,11 +10,17 @@ import { ItemImageController } from './item-image.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
+import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewModule } from '../item-view/item-view.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ItemEntity, ItemImageEntity, SavedItemEntity]),
+    TypeOrmModule.forFeature([
+      ItemEntity,
+      ItemImageEntity,
+      SavedItemEntity,
+      LocationEntity,
+    ]),
     CloudinaryModule,
     ItemViewModule,
   ],

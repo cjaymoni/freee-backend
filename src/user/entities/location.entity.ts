@@ -26,11 +26,11 @@ export class LocationEntity {
   @JoinColumn({ name: 'user_id' })
   user: UserEntity;
 
-  @Column({ type: 'varchar', length: 3, nullable: false })
-  country_code: string;
+  @Column({ type: 'varchar', length: 3, nullable: true })
+  country_code: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  country_name: string;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  country_name: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   region: string;

@@ -6,8 +6,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ItemEntity, ItemStatus } from './entities/item.entity';
+import { ItemEntity, ItemStatus, PickupType } from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
+import { LocationEntity } from '../user/entities/location.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
@@ -27,6 +28,8 @@ export class ItemService {
     private readonly imageRepository: Repository<ItemImageEntity>,
     @InjectRepository(SavedItemEntity)
     private readonly savedItemRepository: Repository<SavedItemEntity>,
+    @InjectRepository(LocationEntity)
+    private readonly locationRepository: Repository<LocationEntity>,
     private readonly cloudinaryService: CloudinaryService,
     private readonly distanceService: DistanceService,
     private readonly itemViewService: ItemViewService,
@@ -39,6 +42,228 @@ export class ItemService {
       select: ['item_id'],
     });
     return new Set(saved.map((s) => s.item_id));
+  }
+
+  /**
+   * A pickup date and time only mean anything for a specific-date pickup.
+   * Switching the type to anything else — or clearing it — must not leave the
+   * old schedule behind on the item.
+   *
+   * Only acts when the request actually states a type, so a client that never
+   * sends pickup_type does not silently lose a date it set earlier.
+   */
+  private clearScheduleUnlessSpecificDate(
+    item: ItemEntity,
+    pickupType: PickupType | null | undefined,
+  ): void {
+    if (pickupType === undefined) return;
+    if (pickupType === PickupType.SPECIFIC_DATE) return;
+
+    item.pickup_date = null;
+    item.pickup_time = null;
+  }
+
+  /**
+   * Rejects a half-supplied or ambiguous location before anything is written.
+   */
+  private assertLocationInputIsCoherent(dto: {
+    latitude?: number;
+    longitude?: number;
+    location_id?: string;
+  }): void {
+    const hasLatitude = dto.latitude !== undefined;
+    const hasLongitude = dto.longitude !== undefined;
+
+    if (hasLatitude !== hasLongitude) {
+      throw new BadRequestException(
+        'latitude and longitude must be provided together',
+      );
+    }
+
+    if (hasLatitude && dto.location_id !== undefined) {
+      throw new BadRequestException(
+        'Provide either location_id or latitude/longitude, not both',
+      );
+    }
+  }
+
+  /**
+   * Turn posted coordinates into a location the item can point at.
+   *
+   * The row is deliberately left unattached to any user, so posting an item
+   * never adds an entry to the poster's saved locations. An item whose current
+   * location is one of these throwaway rows has it updated in place rather
+   * than orphaned; a saved location is never mutated, only pointed away from.
+   */
+  private async resolveCoordinates(
+    latitude: number,
+    longitude: number,
+    currentLocationId?: string | null,
+  ): Promise<string> {
+    if (currentLocationId) {
+      const current = await this.locationRepository.findOne({
+        where: { id: currentLocationId, is_deleted: false },
+      });
+
+      if (current && current.user_id === null) {
+        current.latitude = latitude;
+        current.longitude = longitude;
+        const updated = await this.locationRepository.save(current);
+        return updated.id;
+      }
+    }
+
+    const location = this.locationRepository.create({
+      user_id: null,
+      latitude,
+      longitude,
+    });
+    const saved = await this.locationRepository.save(location);
+    return saved.id;
+  }
+
+  /**
+   * Upload files to Cloudinary and persist them as images of an item. A file
+   * that fails to upload is skipped rather than failing the whole request, and
+   * is named in `failed` so the caller can tell the client what did not save.
+   */
+  private async uploadImages(
+    itemId: string,
+    files: Express.Multer.File[],
+    startOrder: number,
+  ): Promise<{ images: ItemImageEntity[]; failed: string[] }> {
+    const results = await Promise.all(
+      files.map((file, i) =>
+        this.cloudinaryService
+          .uploadImage(file, { folder: 'items' })
+          .then((uploadResult) =>
+            this.imageRepository.create({
+              item_id: itemId,
+              cloudinary_public_id: uploadResult.publicId,
+              cloudinary_url: uploadResult.secureUrl,
+              cloudinary_secure_url: uploadResult.secureUrl,
+              cloudinary_format: uploadResult.format,
+              width: uploadResult.width,
+              height: uploadResult.height,
+              size_bytes: uploadResult.bytes,
+              is_primary: false,
+            }),
+          )
+          .catch((error) => {
+            console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
+            return file.originalname || `image ${i + 1}`;
+          }),
+      ),
+    );
+
+    const imageEntities: ItemImageEntity[] = [];
+    const failed: string[] = [];
+    for (const result of results) {
+      if (typeof result === 'string') {
+        failed.push(result);
+      } else {
+        // Numbered over the uploads that survived, so a failure in the middle
+        // does not leave a hole in the item's display order.
+        result.display_order = startOrder + imageEntities.length;
+        imageEntities.push(result);
+      }
+    }
+
+    if (imageEntities.length === 0) return { images: [], failed };
+
+    return { images: await this.imageRepository.save(imageEntities), failed };
+  }
+
+  /**
+   * Remove the requested images and append any newly uploaded ones, then
+   * return the item's resulting image list in display order, along with the
+   * names of any uploads that did not make it. Called on every update so the
+   * response always carries the current images, even when the request changed
+   * none of them.
+   */
+  private async applyImageChanges(
+    itemId: string,
+    removeImageIds?: string[],
+    files?: Express.Multer.File[],
+  ): Promise<{ images: ItemImageEntity[]; failed: string[] }> {
+    const existing = await this.imageRepository.find({
+      where: { item_id: itemId, is_deleted: false },
+      order: { display_order: 'ASC', created_at: 'ASC' },
+    });
+
+    let remaining = existing;
+    let failed: string[] = [];
+    const uploadCount = files?.length ?? 0;
+
+    const idsToRemove = [...new Set(removeImageIds ?? [])];
+    if (idsToRemove.length > 0) {
+      const byId = new Map(existing.map((image) => [image.id, image]));
+      const toRemove = idsToRemove.map((id) => {
+        const image = byId.get(id);
+        if (!image) {
+          throw new NotFoundException(
+            `Image with ID ${id} not found on item ${itemId}`,
+          );
+        }
+        return image;
+      });
+
+      // Mirrors the rule enforced when deleting a single image: an item that
+      // has images must keep at least one, unless this request replaces them.
+      if (toRemove.length === existing.length && uploadCount === 0) {
+        throw new BadRequestException(
+          'Cannot remove every image. Items must have at least one image.',
+        );
+      }
+
+      const deletedAt = new Date();
+      for (const image of toRemove) {
+        image.is_deleted = true;
+        image.deleted_at = deletedAt;
+      }
+      await this.imageRepository.save(toRemove);
+
+      const removed = new Set(toRemove.map((image) => image.id));
+      remaining = existing.filter((image) => !removed.has(image.id));
+    }
+
+    if (uploadCount > 0) {
+      const nextOrder = remaining.reduce(
+        (max, image) => Math.max(max, image.display_order + 1),
+        0,
+      );
+      const uploaded = await this.uploadImages(itemId, files!, nextOrder);
+      remaining = [...remaining, ...uploaded.images];
+      failed = uploaded.failed;
+    }
+
+    // Removing the primary image, or adding the first ever image, leaves the
+    // item without one.
+    if (remaining.length > 0 && !remaining.some((image) => image.is_primary)) {
+      remaining[0].is_primary = true;
+      await this.imageRepository.save(remaining[0]);
+    }
+
+    return { images: remaining, failed };
+  }
+
+  /**
+   * Turns skipped uploads into a message and warnings the client can show,
+   * so a partial success is never reported as a clean one.
+   */
+  private describeFailedUploads(
+    successMessage: string,
+    attempted: number,
+    failed: string[],
+  ): Pick<ServiceResponseDto<unknown>, 'message' | 'warnings'> {
+    if (failed.length === 0) return { message: successMessage };
+
+    return {
+      message: `${successMessage}, but ${failed.length} of ${attempted} images failed to upload`,
+      warnings: failed.map(
+        (name) => `Image "${name}" could not be uploaded and was not saved.`,
+      ),
+    };
   }
 
   /**
@@ -56,49 +281,37 @@ export class ItemService {
       );
     }
 
+    this.assertLocationInputIsCoherent(createDto);
+
+    const { latitude, longitude, ...fields } = createDto;
+
     const item = this.itemRepository.create({
-      ...createDto,
+      ...fields,
       user_id: userId,
       price: createDto.is_free ? 0 : createDto.price || 0,
     });
 
-    const saved = await this.itemRepository.save(item);
-
-    // Upload and associate images if provided
-    if (files && files.length > 0) {
-      const results = await Promise.all(
-        files.map((file, i) =>
-          this.cloudinaryService
-            .uploadImage(file, { folder: 'items' })
-            .then((uploadResult) =>
-              this.imageRepository.create({
-                item_id: saved.id,
-                cloudinary_public_id: uploadResult.publicId,
-                cloudinary_url: uploadResult.secureUrl,
-                cloudinary_secure_url: uploadResult.secureUrl,
-                cloudinary_format: uploadResult.format,
-                width: uploadResult.width,
-                height: uploadResult.height,
-                size_bytes: uploadResult.bytes,
-                display_order: i,
-                is_primary: i === 0,
-              }),
-            )
-            .catch((error) => {
-              console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
-              return null;
-            }),
-        ),
-      );
-
-      const imageEntities = results.filter(Boolean) as ItemImageEntity[];
-      if (imageEntities.length > 0) {
-        saved.images = await this.imageRepository.save(imageEntities);
-      }
+    if (latitude !== undefined && longitude !== undefined) {
+      item.location_id = await this.resolveCoordinates(latitude, longitude);
     }
 
+    this.clearScheduleUnlessSpecificDate(item, createDto.pickup_type);
+
+    const saved = await this.itemRepository.save(item);
+
+    const { images, failed } = await this.applyImageChanges(
+      saved.id,
+      undefined,
+      files,
+    );
+    saved.images = images;
+
     return {
-      message: 'Item created successfully',
+      ...this.describeFailedUploads(
+        'Item created successfully',
+        files?.length ?? 0,
+        failed,
+      ),
       data: ItemResponseDto.fromEntity(saved),
       state: true,
       statusCode: 201,
@@ -263,6 +476,7 @@ export class ItemService {
     userId: string,
     itemId: string,
     updateDto: UpdateItemDto,
+    files?: Express.Multer.File[],
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
@@ -284,16 +498,50 @@ export class ItemService {
       );
     }
 
-    Object.assign(item, updateDto);
+    this.assertLocationInputIsCoherent(updateDto);
+
+    const { remove_image_ids, latitude, longitude, ...fields } = updateDto;
+
+    // Only copy fields the client actually sent. The validation pipe builds the
+    // DTO instance with every declared field present, so unsent optional fields
+    // arrive as `undefined` and would otherwise wipe the loaded entity values.
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined) {
+        (item as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
 
     // If marked as free, set price to 0
     if (updateDto.is_free) {
       item.price = 0;
     }
 
+    this.clearScheduleUnlessSpecificDate(item, updateDto.pickup_type);
+
+    if (latitude !== undefined && longitude !== undefined) {
+      item.location_id = await this.resolveCoordinates(
+        latitude,
+        longitude,
+        item.location_id,
+      );
+    }
+
+    // Applied before the item is saved so a bad image ID rejects the whole
+    // edit instead of leaving the other fields already persisted.
+    const { images, failed } = await this.applyImageChanges(
+      itemId,
+      remove_image_ids,
+      files,
+    );
+
     const updated = await this.itemRepository.save(item);
+    updated.images = images;
     return {
-      message: 'Item updated successfully',
+      ...this.describeFailedUploads(
+        'Item updated successfully',
+        files?.length ?? 0,
+        failed,
+      ),
       data: ItemResponseDto.fromEntity(updated),
       state: true,
       statusCode: 200,

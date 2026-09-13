@@ -8,28 +8,30 @@ import {
   Min,
   Max,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateUserLocationDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'ISO 3166-1 alpha-3 country code',
     example: 'USA',
     maxLength: 3,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(3)
-  country_code: string;
+  country_code?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Country name',
     example: 'United States',
     maxLength: 100,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  country_name: string;
+  country_name?: string;
 
   @ApiPropertyOptional({
     description: 'Region or state',

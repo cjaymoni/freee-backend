@@ -5,11 +5,13 @@ import {
   IsOptional,
   IsEnum,
   IsNumber,
+  IsInt,
   IsBoolean,
   IsUUID,
   IsDate,
   MaxLength,
   Min,
+  Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ItemCondition, PickupType } from '../entities/item.entity';
@@ -61,9 +63,18 @@ export class CreateItemDto {
   @IsOptional()
   is_free?: boolean;
 
-  @ApiPropertyOptional({ description: 'Quantity available', default: 1, minimum: 1 })
-  @Transform(({ value }) => (value !== undefined && value !== '' ? Number(value) : value))
-  @IsNumber()
+  @ApiPropertyOptional({
+    description:
+      'Quantity available. Accepts a number or its string form, as multipart sends. Blank is treated as unset and falls back to 1.',
+    default: 1,
+    minimum: 1,
+  })
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : Number(value),
+  )
+  @IsInt()
   @IsOptional()
   @Min(1)
   quantity?: number;
@@ -75,6 +86,38 @@ export class CreateItemDto {
   @IsUUID()
   @IsOptional()
   location_id?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Latitude of the item. Send together with `longitude` to post coordinates directly instead of referencing a saved `location_id`.',
+    example: 5.6037,
+    minimum: -90,
+    maximum: 90,
+  })
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? Number(value) : undefined,
+  )
+  @IsNumber()
+  @IsOptional()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Longitude of the item. Send together with `latitude` to post coordinates directly instead of referencing a saved `location_id`.',
+    example: -0.187,
+    minimum: -180,
+    maximum: 180,
+  })
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? Number(value) : undefined,
+  )
+  @IsNumber()
+  @IsOptional()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
 
   @ApiPropertyOptional({ description: 'Pickup date' })
   @Transform(({ value }) => {

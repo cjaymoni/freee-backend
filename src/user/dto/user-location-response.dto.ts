@@ -11,11 +11,16 @@ export class UserLocationResponseDto {
   @ApiProperty({
     description: 'ISO 3166-1 alpha-3 country code',
     example: 'USA',
+    nullable: true,
   })
-  country_code: string;
+  country_code: string | null;
 
-  @ApiProperty({ description: 'Country name', example: 'United States' })
-  country_name: string;
+  @ApiProperty({
+    description: 'Country name',
+    example: 'United States',
+    nullable: true,
+  })
+  country_name: string | null;
 
   @ApiPropertyOptional({
     description: 'Region or state',

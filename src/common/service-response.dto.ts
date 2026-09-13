@@ -24,6 +24,13 @@ export class ServiceResponseDto<T> {
   @ApiPropertyOptional({ description: 'Page size for paginated responses' })
   limit?: number;
 
+  @ApiPropertyOptional({
+    description:
+      'Non-fatal problems encountered while completing the request. The request still succeeded, but part of it did not take effect.',
+    type: [String],
+  })
+  warnings?: string[];
+
   @ApiPropertyOptional()
   error?: string;
 
