@@ -29,6 +29,8 @@ import { AppError } from '../common/app-error';
 import { ItemRequestResponseDto } from './dto/item-request-response.dto';
 import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { ItemUserDto } from '../item/dto/item-user.dto';
+import { ChatService } from '../chat/chat.service';
+import { SystemEvent } from '../chat/entities/message.entity';
 
 @Injectable()
 export class ItemRequestService {
@@ -40,6 +42,7 @@ export class ItemRequestService {
     @InjectRepository(ItemEntity)
     private readonly itemRepository: Repository<ItemEntity>,
     private readonly dataSource: DataSource,
+    private readonly chatService: ChatService,
   ) {}
 
   /**
@@ -244,6 +247,17 @@ export class ItemRequestService {
 
       this.logger.log(`Request created`);
 
+      // Posts the "You've requested for this item" card into the two users'
+      // thread. Deliberately after the transaction and non-throwing: the
+      // request is already committed, and a chat failure must not undo it.
+      await this.chatService.createSystemMessage({
+        actorId: result.requester_id,
+        otherUserId: result.owner_id,
+        event: SystemEvent.ITEM_REQUESTED,
+        itemId: result.item_id,
+        requestId: result.id,
+      });
+
       return {
         message: 'Request created successfully',
         data: this.toResponseDto(result),
@@ -329,6 +343,14 @@ export class ItemRequestService {
 
       this.logger.log(`Request confirmed`);
 
+      await this.chatService.createSystemMessage({
+        actorId: result.owner_id,
+        otherUserId: result.requester_id,
+        event: SystemEvent.REQUEST_CONFIRMED,
+        itemId: result.item_id,
+        requestId: result.id,
+      });
+
       return {
         message: 'Request confirmed successfully',
         data: this.toResponseDto(result),
@@ -403,6 +425,15 @@ export class ItemRequestService {
 
       this.logger.log(`Request cancelled`);
 
+      await this.chatService.createSystemMessage({
+        actorId: userId,
+        otherUserId:
+          userId === result.requester_id ? result.owner_id : result.requester_id,
+        event: SystemEvent.REQUEST_CANCELLED,
+        itemId: result.item_id,
+        requestId: result.id,
+      });
+
       return {
         message: 'Request cancelled successfully',
         data: this.toResponseDto(result),
@@ -459,6 +490,14 @@ export class ItemRequestService {
       });
 
       this.logger.log(`Pickup confirmed`);
+
+      await this.chatService.createSystemMessage({
+        actorId: result.requester_id,
+        otherUserId: result.owner_id,
+        event: SystemEvent.PICKUP_CONFIRMED,
+        itemId: result.item_id,
+        requestId: result.id,
+      });
 
       return {
         message: 'Pickup confirmed successfully',

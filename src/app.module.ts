@@ -25,6 +25,7 @@ import { SavedItemModule } from './saved-item/saved-item.module';
 import { ItemViewModule } from './item-view/item-view.module';
 import { ItemRequestModule } from './item-request/item-request.module';
 import { ModerationModule } from './moderation/moderation.module';
+import { ChatModule } from './chat/chat.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -106,6 +107,7 @@ import { envValidationSchema } from './config/env.validation';
     ItemViewModule,
     ItemRequestModule,
     ModerationModule,
+    ChatModule,
     HealthModule,
     CommonModule,
     FirebaseModule,
