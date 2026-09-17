@@ -45,8 +45,9 @@ export enum SystemEvent {
  * side-of-the-pair comparison.
  */
 @Entity('chat_messages')
-@Index(['conversation_id'])
-@Index(['sender_id'])
+// Named to match the migration - see the note on ConversationEntity.
+@Index('IDX_chat_messages_conversation', ['conversation_id'])
+@Index('IDX_chat_messages_sender', ['sender_id'])
 // Drives message pagination, which pages backwards through
 // (created_at, id) within one conversation.
 @Index('IDX_CHAT_MESSAGES_CONVERSATION_CURSOR', [
@@ -122,14 +123,23 @@ export class MessageEntity {
 
   // Relations
   @ManyToOne(() => ConversationEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'conversation_id' })
+  @JoinColumn({
+    name: 'conversation_id',
+    foreignKeyConstraintName: 'FK_chat_messages_conversation',
+  })
   conversation: ConversationEntity;
 
   @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'sender_id' })
+  @JoinColumn({
+    name: 'sender_id',
+    foreignKeyConstraintName: 'FK_chat_messages_sender',
+  })
   sender: UserEntity;
 
   @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'recipient_id' })
+  @JoinColumn({
+    name: 'recipient_id',
+    foreignKeyConstraintName: 'FK_chat_messages_recipient',
+  })
   recipient: UserEntity;
 }

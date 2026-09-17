@@ -7,6 +7,7 @@ import {
   Index,
   ManyToOne,
   JoinColumn,
+  Check,
 } from 'typeorm';
 import { UserEntity } from '../../user/entities/user.entity';
 import { ItemEntity } from '../../item/entities/item.entity';
@@ -28,13 +29,20 @@ import { ItemEntity } from '../../item/entities/item.entity';
  * renders in the banner above the message list.
  */
 @Entity('conversations')
-@Index(['user_a_id'])
-@Index(['user_b_id'])
-@Index(['item_id'])
-@Index(['last_message_at'])
+// Index and constraint names are pinned to the ones the migration creates.
+// Left unnamed, TypeORM derives hashed names, does not recognise the migration's
+// as its own, and `synchronize` in development drops and recreates all of them.
+@Index('IDX_conversations_user_a', ['user_a_id'])
+@Index('IDX_conversations_user_b', ['user_b_id'])
+@Index('IDX_conversations_item', ['item_id'])
+@Index('IDX_conversations_last_message_at', ['last_message_at'])
 // Declared here as well as in the migration so that `synchronize` in
 // development does not drop it.
 @Index('UQ_CONVERSATIONS_PAIR', ['user_a_id', 'user_b_id'], { unique: true })
+// Likewise: the pair-order invariant the class comment relies on. TypeORM knows
+// a check constraint only if the entity declares it, and drops the ones it does
+// not know.
+@Check('CHK_CONVERSATIONS_PAIR_ORDER', '"user_a_id" < "user_b_id"')
 export class ConversationEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -89,14 +97,23 @@ export class ConversationEntity {
 
   // Relations
   @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_a_id' })
+  @JoinColumn({
+    name: 'user_a_id',
+    foreignKeyConstraintName: 'FK_conversations_user_a',
+  })
   userA: UserEntity;
 
   @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_b_id' })
+  @JoinColumn({
+    name: 'user_b_id',
+    foreignKeyConstraintName: 'FK_conversations_user_b',
+  })
   userB: UserEntity;
 
   @ManyToOne(() => ItemEntity, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'item_id' })
+  @JoinColumn({
+    name: 'item_id',
+    foreignKeyConstraintName: 'FK_conversations_item',
+  })
   item: ItemEntity | null;
 }
