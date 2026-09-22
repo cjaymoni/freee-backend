@@ -16,11 +16,8 @@ import { ItemImageEntity } from './item-image.entity';
 
 export enum ItemCondition {
   NEW = 'new',
-  LIKE_NEW = 'like_new',
   GOOD = 'good',
-  FAIR = 'fair',
-  POOR = 'poor',
-  USED = 'used',
+  OLD = 'old',
 }
 
 export enum ItemStatus {

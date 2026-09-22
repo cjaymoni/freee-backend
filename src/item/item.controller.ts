@@ -65,7 +65,7 @@ export class ItemController {
         title: { type: 'string' },
         description: { type: 'string' },
         category_id: { type: 'string', format: 'uuid' },
-        condition: { type: 'string', enum: ['new', 'like_new', 'good', 'fair', 'poor'] },
+        condition: { type: 'string', enum: ['new', 'good', 'old'] },
         price: { type: 'number', default: 0 },
         is_free: { type: 'boolean', default: true },
         quantity: { type: 'integer', default: 1, minimum: 1 },
@@ -300,7 +300,7 @@ export class ItemController {
         category_id: { type: 'string', format: 'uuid' },
         condition: {
           type: 'string',
-          enum: ['new', 'like_new', 'good', 'fair', 'poor'],
+          enum: ['new', 'good', 'old'],
         },
         status: {
           type: 'string',

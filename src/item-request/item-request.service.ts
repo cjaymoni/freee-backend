@@ -22,7 +22,7 @@ import {
 import { CreateItemRequestDto } from './dto/create-item-request.dto';
 import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
-import { ItemEntity, ItemCondition, ItemStatus } from '../item/entities/item.entity';
+import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
 import { UserEntity } from '../user/entities/user.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
@@ -197,12 +197,6 @@ export class ItemRequestService {
         // Serialises against every other transition for this item, so the
         // duplicate-request check below cannot be raced.
         const item = await this.lockItem(manager, item_id);
-
-        if (item.condition === ItemCondition.USED) {
-          throw new BadRequestException(
-            'Items with condition "used" cannot be requested',
-          );
-        }
 
         if (item.status !== ItemStatus.AVAILABLE) {
           throw new BadRequestException('Item is not available for request');

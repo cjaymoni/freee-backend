@@ -24,7 +24,7 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => CategoryResponseDto })
   category?: CategoryResponseDto;
 
-  @ApiProperty({ enum: ItemCondition, enumName: 'ItemCondition', description: 'Item condition. Note: items with condition "used" cannot be requested.' })
+  @ApiProperty({ enum: ItemCondition, enumName: 'ItemCondition', description: 'Item condition. Allowed values: new, good, old.' })
   condition: ItemCondition;
 
   @ApiProperty({ enum: ItemStatus, enumName: 'ItemStatus' })

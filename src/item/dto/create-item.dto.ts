@@ -35,7 +35,7 @@ export class CreateItemDto {
   category_id?: string;
 
   @ApiProperty({
-    description: 'Item condition. Note: items with condition "used" cannot be requested.',
+    description: 'Item condition. Allowed values: new, good, old.',
     enum: ItemCondition,
     enumName: 'ItemCondition',
   })
