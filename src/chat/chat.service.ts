@@ -648,10 +648,14 @@ export class ChatService {
         )
         // A thread with no messages yet sorts by when it was opened, so it
         // does not fall to the bottom of the list before the first reply.
-        .orderBy(
+        // The expression is selected under an alias because skip/take with
+        // joins makes TypeORM parse ORDER BY keys as `alias.property`, which
+        // a raw COALESCE(...) cannot satisfy.
+        .addSelect(
           'COALESCE(conversation.last_message_at, conversation.created_at)',
-          'DESC',
+          'activity_at',
         )
+        .orderBy('activity_at', 'DESC')
         .addOrderBy('conversation.id', 'DESC')
         .skip(skip)
         .take(limit);
