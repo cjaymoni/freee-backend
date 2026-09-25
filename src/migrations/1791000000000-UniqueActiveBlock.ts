@@ -8,6 +8,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * (A, B, true) row and failed with a duplicate key - leaving the block in
  * place for good. Only one *active* block per pair needs to be unique; the
  * soft-deleted rows are history and may repeat.
+ *
+ * The entity declares the same index, so a development database synchronised
+ * from the entities may already have it; creation is skipped in that case.
  */
 export class UniqueActiveBlock1791000000000 implements MigrationInterface {
   name = 'UniqueActiveBlock1791000000000';
@@ -15,7 +18,7 @@ export class UniqueActiveBlock1791000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS "idx_blocked_users_unique"`);
     await queryRunner.query(`
-      CREATE UNIQUE INDEX "UQ_BLOCKED_USERS_ACTIVE_PAIR"
+      CREATE UNIQUE INDEX IF NOT EXISTS "UQ_BLOCKED_USERS_ACTIVE_PAIR"
       ON blocked_users (blocker_id, blocked_id)
       WHERE is_deleted = false
     `);
