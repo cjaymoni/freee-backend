@@ -160,27 +160,38 @@ describe('UserController authorization', () => {
       expect(userService.update).not.toHaveBeenCalled();
     });
 
-    it('lets an admin change role and is_active on another user', async () => {
+    it('lets an admin change is_active on another user', async () => {
       await controller.update(
         OTHER_ID,
-        { role: 'ADMIN', is_active: false },
+        { is_active: false },
         USER_ID,
         UserRole.ADMIN,
       );
       expect(userService.update).toHaveBeenCalledWith(OTHER_ID, {
-        role: 'ADMIN',
         is_active: false,
       });
     });
 
-    it.each([[{ role: 'USER' }], [{ is_active: false }]])(
-      'stops an admin locking themselves out with %j',
-      async (body) => {
+    it.each([UserRole.USER, UserRole.MODERATOR, UserRole.ADMIN])(
+      'refuses an admin setting role %s here',
+      async (role) => {
         await expect(
-          controller.update(USER_ID, body, USER_ID, UserRole.ADMIN),
-        ).rejects.toThrow('Admins cannot demote or deactivate themselves');
+          controller.update(OTHER_ID, { role }, USER_ID, UserRole.ADMIN),
+        ).rejects.toMatchObject({ status: 400 });
+        expect(userService.update).not.toHaveBeenCalled();
       },
     );
+
+    it('stops an admin deactivating themselves', async () => {
+      await expect(
+        controller.update(
+          USER_ID,
+          { is_active: false },
+          USER_ID,
+          UserRole.ADMIN,
+        ),
+      ).rejects.toThrow('Admins cannot deactivate themselves');
+    });
   });
 
   describe('remove', () => {

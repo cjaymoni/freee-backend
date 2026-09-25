@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ModerationService } from './moderation.service';
 import { BlockedUser } from './entities/blocked-user.entity';
@@ -8,6 +8,7 @@ import { ModerationComplaint } from './entities/moderation-complaint.entity';
 import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
 import { ActionTaken } from './dto/resolve-report.dto';
+import { UserRole } from '../user/entities/user.entity';
 
 const build = (repos: {
   reportedItem?: object;
@@ -102,10 +103,66 @@ describe('ModerationService.resolveItemReport', () => {
       'rep-2',
       { status: 'resolved', actionTaken: ActionTaken.ITEM_REMOVED } as never,
       'admin',
+      UserRole.ADMIN,
     );
 
     expect(save).toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'resolved', reviewedBy: 'admin' });
+  });
+
+  const setup = () => {
+    const findOne = jest
+      .fn()
+      .mockResolvedValue({ id: 'rep-3', itemId: 'item-1', reporterId: 'rep' });
+    const save = jest.fn((row: object) => Promise.resolve(row));
+    const adminRemove = jest.fn().mockResolvedValue({});
+    const service = build({
+      reportedItem: { findOne, save },
+      itemService: { adminRemove },
+    });
+    return { service, findOne, save, adminRemove };
+  };
+
+  it('refuses a moderator removing the item', async () => {
+    const { service, save, adminRemove } = setup();
+
+    await expect(
+      service.resolveItemReport(
+        'rep-3',
+        { status: 'resolved', actionTaken: ActionTaken.ITEM_REMOVED } as never,
+        'mod-1',
+        UserRole.MODERATOR,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(adminRemove).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator resolve without removing', async () => {
+    const { service, adminRemove } = setup();
+
+    await service.resolveItemReport(
+      'rep-3',
+      { status: 'resolved', actionTaken: ActionTaken.USER_WARNED } as never,
+      'mod-1',
+      UserRole.MODERATOR,
+    );
+
+    expect(adminRemove).not.toHaveBeenCalled();
+  });
+
+  it('refuses reviewing a report you filed', async () => {
+    const { service, save } = setup();
+
+    await expect(
+      service.resolveItemReport(
+        'rep-3',
+        { status: 'dismissed' } as never,
+        'rep',
+        UserRole.ADMIN,
+      ),
+    ).rejects.toThrow('You cannot review a report you filed');
+    expect(save).not.toHaveBeenCalled();
   });
 });
 
@@ -141,5 +198,76 @@ describe('ModerationService targets that do not exist', () => {
     await expect(
       service.blockUser({ blockedId: 'nope' } as never, 'me'),
     ).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('ModerationService.resolveUserReport', () => {
+  const setup = (role: string) => {
+    const update = jest.fn().mockResolvedValue({});
+    const save = jest.fn((r: unknown) => Promise.resolve(r));
+    const service = build({
+      reportedUser: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'rep-1',
+          reporterId: 'reporter',
+          reportedUserId: 'target',
+          reportedUser: { id: 'target', role },
+        }),
+        save,
+      },
+      userService: { update },
+    });
+    return { service, update, save };
+  };
+
+  it.each([
+    ['ADMIN', ActionTaken.USER_SUSPENDED],
+    ['MODERATOR', ActionTaken.USER_SUSPENDED],
+    ['ADMIN', ActionTaken.ITEM_REMOVED],
+    ['MODERATOR', ActionTaken.ITEM_REMOVED],
+  ])(
+    'refuses to suspend a %s account from a report (%s)',
+    async (role, actionTaken) => {
+      const { service, update, save } = setup(role);
+
+      await expect(
+        service.resolveUserReport(
+          'rep-1',
+          { status: 'resolved', actionTaken } as never,
+          'mod-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(update).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+    },
+  );
+
+  it('suspends a regular user', async () => {
+    const { service, update } = setup('USER');
+
+    await service.resolveUserReport(
+      'rep-1',
+      { status: 'resolved', actionTaken: ActionTaken.USER_SUSPENDED } as never,
+      'mod-1',
+    );
+
+    expect(update).toHaveBeenCalledWith('target', { is_active: false });
+  });
+
+  it('refuses reviewing a report you filed', async () => {
+    const { service, update, save } = setup('USER');
+
+    await expect(
+      service.resolveUserReport(
+        'rep-1',
+        {
+          status: 'resolved',
+          actionTaken: ActionTaken.USER_SUSPENDED,
+        } as never,
+        'reporter',
+      ),
+    ).rejects.toThrow('You cannot review a report you filed');
+    expect(update).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 });

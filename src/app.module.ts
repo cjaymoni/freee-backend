@@ -27,6 +27,7 @@ import { ItemViewModule } from './item-view/item-view.module';
 import { ItemRequestModule } from './item-request/item-request.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { ChatModule } from './chat/chat.module';
+import { AdminModule } from './admin/admin.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -110,6 +111,7 @@ import { envValidationSchema } from './config/env.validation';
     ItemRequestModule,
     ModerationModule,
     ChatModule,
+    AdminModule,
     HealthModule,
     CommonModule,
     FirebaseModule,

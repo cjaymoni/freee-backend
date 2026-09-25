@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { UserRole } from '../entities/user.entity';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
 
 export class BaseUserDto {
@@ -62,9 +63,9 @@ export class BaseUserDto {
   @ApiProperty({
     example: 'USER',
     description: 'User role',
-    enum: ['USER', 'ADMIN'],
+    enum: UserRole,
   })
-  @IsEnum(['USER', 'ADMIN'])
+  @IsEnum(UserRole)
   @IsOptional()
   role?: string;
 

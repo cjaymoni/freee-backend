@@ -41,7 +41,7 @@ import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
-import { UserRole } from './entities/user.entity';
+import { STAFF_ROLES, UserRole, isStaff } from './entities/user.entity';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { AppError } from '../common/app-error';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -156,9 +156,9 @@ export class UserController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(...STAFF_ROLES)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all users (Admin only)' })
+  @ApiOperation({ summary: 'Get all users (staff only)' })
   @ApiResponse({
     status: 200,
     description: 'Users found successfully',
@@ -185,7 +185,7 @@ export class UserController {
   @ApiOperation({
     summary: 'Get a user by ID',
     description:
-      'Users may only fetch their own profile. Admins may fetch any user.',
+      'Users may only fetch their own profile. Staff may fetch any user.',
   })
   @ApiResponse({
     status: 200,
@@ -209,8 +209,8 @@ export class UserController {
   ) {
     // This record carries full PII (email, phone_number, date_of_birth) as well
     // as fcm_token and account-security state, so it is limited to the owner
-    // and to admins.
-    if (id !== requesterId && requesterRole !== UserRole.ADMIN) {
+    // and to staff.
+    if (id !== requesterId && !isStaff(requesterRole)) {
       throw new AppError(
         new ForbiddenException('You can only view your own profile'),
       );
@@ -352,7 +352,8 @@ export class UserController {
       '- **Screen 6** — Set gender: `{ gender }`\n\n' +
       'Non-admins may only update their own record. `role`, `is_active`, the ' +
       'verification flags and `firebase_uid` are admin-only: when a user sends ' +
-      'them they are ignored and listed in `warnings`. Changing `email` or ' +
+      'them they are ignored and listed in `warnings`. Admins cannot set `role` ' +
+      'here (400); use PATCH /admin/users/:id/role. Changing `email` or ' +
       '`phone_number` clears the matching verification flag.',
   })
   @ApiResponse({
@@ -423,15 +424,19 @@ export class UserController {
       return result;
     }
 
-    if (
-      id === requesterId &&
-      ((updateUserDto.role !== undefined &&
-        updateUserDto.role !== (UserRole.ADMIN as string)) ||
-        updateUserDto.is_active === false)
-    ) {
+    // A role change must end the user's sessions (the role travels in the
+    // access token) and be audited, which only the admin endpoint does.
+    if (updateUserDto.role !== undefined) {
+      throw new AppError(
+        new BadRequestException(
+          'Change roles with PATCH /admin/users/:id/role',
+        ),
+      );
+    }
+    if (id === requesterId && updateUserDto.is_active === false) {
       // Stops an admin from locking themselves (possibly the last admin) out.
       throw new AppError(
-        new ForbiddenException('Admins cannot demote or deactivate themselves'),
+        new ForbiddenException('Admins cannot deactivate themselves'),
       );
     }
 

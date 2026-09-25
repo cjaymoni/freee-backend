@@ -19,7 +19,15 @@ import { defaultAvatarUrl } from '../default-avatar';
 
 export enum UserRole {
   USER = 'USER',
+  MODERATOR = 'MODERATOR',
   ADMIN = 'ADMIN',
+}
+
+/** Roles that can sign in to the back office. */
+export const STAFF_ROLES = [UserRole.ADMIN, UserRole.MODERATOR];
+
+export function isStaff(role: string | undefined): boolean {
+  return STAFF_ROLES.includes(role as UserRole);
 }
 
 @Entity('users')
