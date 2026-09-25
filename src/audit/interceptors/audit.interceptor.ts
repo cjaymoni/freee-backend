@@ -9,6 +9,63 @@ import { tap, catchError } from 'rxjs/operators';
 import { AuditService } from '../audit.service';
 import { AuditHelperService } from '../audit-helper.service';
 
+type Params = Record<string, string | undefined>;
+
+/** Audited path prefixes, most specific first. */
+const AUDITED_ROUTES: {
+  prefix: string;
+  entityType: string;
+  entityId: (params: Params, request: any) => string | undefined;
+}[] = [
+  {
+    prefix: '/moderation/items/report',
+    entityType: 'reported_items',
+    entityId: (p) => p.id,
+  },
+  {
+    prefix: '/moderation/users/report',
+    entityType: 'reported_users',
+    entityId: (p) => p.id,
+  },
+  {
+    // DELETE carries the blocked user's id, not the block's; the block's id
+    // comes back in the response.
+    prefix: '/moderation/users/block',
+    entityType: 'blocked_users',
+    entityId: () => undefined,
+  },
+  {
+    prefix: '/moderation/complaints',
+    entityType: 'moderation_complaints',
+    entityId: (p) => p.id,
+  },
+  {
+    prefix: '/item-requests',
+    entityType: 'item_requests',
+    entityId: (p) => p.requestId,
+  },
+  {
+    prefix: '/items/[^/]+/images',
+    entityType: 'item_images',
+    entityId: (p) => p.imageId ?? p.id,
+  },
+  {
+    prefix: '/items',
+    entityType: 'items',
+    entityId: (p, r) => p.id || r.body?.id,
+  },
+  {
+    prefix: '/categories',
+    entityType: 'categories',
+    entityId: (p, r) => p.id || r.body?.id,
+  },
+  {
+    prefix: '/user',
+    entityType: 'users',
+    entityId: (p, r) => p.id || r.user?.userId,
+  },
+];
+
 /**
  * Interceptor to automatically log API requests to audit logs
  */
@@ -105,35 +162,28 @@ export class AuditInterceptor implements NestInterceptor {
     }
   }
 
+  /**
+   * Which entity a mutation touches, from the request path. Matched on whole
+   * path segments, most specific first: substring matching logged a
+   * moderation report's id as an item or user id, and skipped item requests
+   * and complaints entirely (neither path contains "/items" or "/user").
+   * Where the id isn't in the path it comes from the response (see logAudit).
+   */
   private extractEntityInfo(request: any): {
     entityType: string;
     entityId?: string;
   } | null {
-    const url = request.url;
+    const path = String(request.path ?? request.url ?? '').split('?')[0];
+    const params = request.params ?? {};
+    const route = AUDITED_ROUTES.find(({ prefix }) =>
+      new RegExp(`^${prefix}(/|$)`).test(path),
+    );
+    if (!route) return null;
 
-    // Extract entity type from URL
-    if (url.includes('/items')) {
-      return {
-        entityType: 'items',
-        entityId: request.params?.id || request.body?.id,
-      };
-    }
-
-    if (url.includes('/categories')) {
-      return {
-        entityType: 'categories',
-        entityId: request.params?.id || request.body?.id,
-      };
-    }
-
-    if (url.includes('/user')) {
-      return {
-        entityType: 'users',
-        entityId: request.params?.id || request.user?.userId,
-      };
-    }
-
-    return null;
+    return {
+      entityType: route.entityType,
+      entityId: route.entityId(params, request),
+    };
   }
 
   private mapMethodToAction(method: string): string {

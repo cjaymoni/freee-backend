@@ -110,7 +110,11 @@ export class ItemResponseDto {
     dto.pickup_date = entity.pickup_date;
     dto.pickup_time = entity.pickup_time;
     dto.pickup_type = entity.pickup_type;
-    dto.is_featured = entity.is_featured;
+    // A feature past its featured_until has ended, even though the stored
+    // flag is still set.
+    dto.is_featured =
+      entity.is_featured &&
+      (!entity.featured_until || new Date(entity.featured_until) > new Date());
     dto.featured_until = entity.featured_until;
     dto.created_at = entity.created_at;
     dto.updated_at = entity.updated_at;
@@ -127,11 +131,12 @@ export class ItemResponseDto {
       dto.category = CategoryResponseDto.fromEntity(entity.category);
     }
 
-    // Include images if loaded
+    // Include images if loaded, in display order: joins return them in no
+    // particular order, and clients show images[0] as the cover.
     if (entity.images) {
-      dto.images = entity.images.map((image) =>
-        ItemImageResponseDto.fromEntity(image),
-      );
+      dto.images = [...entity.images]
+        .sort((a, b) => a.display_order - b.display_order)
+        .map((image) => ItemImageResponseDto.fromEntity(image));
     }
 
     // Include user details if loaded

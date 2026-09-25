@@ -112,6 +112,29 @@ describe('UserService.update verification flags', () => {
     expect(written()).not.toHaveProperty('is_phone_verified');
   });
 
+  it('answers an email that belongs to another account with 409', async () => {
+    manager.findOne.mockImplementation(
+      (_e: unknown, { where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          where.id ? existing : { id: 'someone-else', email: where.email },
+        ),
+    );
+    await expect(run({ email: 'taken@example.com' })).rejects.toThrow(
+      'Email already exists',
+    );
+    expect(manager.update).not.toHaveBeenCalled();
+  });
+
+  it('answers a phone number that belongs to another account with 409', async () => {
+    manager.findOne.mockImplementation(
+      (_e: unknown, { where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(where.id ? existing : { id: 'someone-else', ...where }),
+    );
+    await expect(run({ phone_number: '+233209999999' })).rejects.toThrow(
+      'Phone number already exists',
+    );
+  });
+
   it('respects an explicit flag from an admin', async () => {
     await run({ email: 'new@example.com', is_email_verified: true });
     expect(written()).toMatchObject({ is_email_verified: true });
@@ -132,6 +155,8 @@ describe('UserService.remove', () => {
         cloudinary_avatar_public_id: 'avatars/user_u1',
       }),
       update: jest.fn().mockResolvedValue(undefined),
+      // No active item requests to close.
+      find: jest.fn().mockResolvedValue([]),
       createQueryBuilder: jest.fn(() => ({
         innerJoin: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
@@ -307,5 +332,113 @@ describe('UserService.updatePhoneFromFirebase', () => {
       409,
     );
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserService.create from POST /user (actingUserId)', () => {
+  const me = {
+    id: 'me',
+    email: 'me@example.com',
+    phone_number: '+233200000001',
+    firebase_uid: 'fb-me',
+    password_hash: null as string | null,
+    is_email_verified: true,
+    is_phone_verified: true,
+    is_active: true,
+    is_onboarded: false,
+    cloudinary_avatar_url: 'https://x/me.png',
+  };
+  const other = { id: 'other', email: 'admin@example.com' };
+  let service: UserService;
+  let manager: {
+    createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+    update: jest.Mock;
+  };
+  let caller: typeof me;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(UserEntity), useValue: {} },
+        { provide: CloudinaryService, useValue: {} },
+        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
+        { provide: DataSource, useValue: {} },
+        { provide: FirebaseService, useValue: {} },
+      ],
+    }).compile();
+    service = module.get<UserService>(UserService);
+    caller = { ...me };
+    const qb = {
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getOne: jest.fn(() => Promise.resolve(caller)),
+    };
+    manager = {
+      createQueryBuilder: jest.fn(() => qb),
+      // Lookups by identifier find the other account; by id, the caller.
+      findOne: jest.fn(
+        (_e: unknown, { where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(
+            where.id === 'me'
+              ? caller
+              : where.email === other.email
+                ? other
+                : null,
+          ),
+      ),
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+  });
+
+  const run = (dto: Record<string, unknown>) =>
+    service.create(
+      dto as never,
+      undefined,
+      { actingUserId: 'me' },
+      manager as never,
+    );
+
+  it("rejects another account's email instead of patching that account", async () => {
+    await expect(
+      run({ email: other.email, password: 'Hacked123!' }),
+    ).rejects.toThrow('Email already exists');
+    expect(manager.update).not.toHaveBeenCalled();
+  });
+
+  it('patches only the caller, whatever identifiers the body carries', async () => {
+    await run({ first_name: 'Ama', firebase_uid: 'fb-someone-else' });
+    expect(manager.update).toHaveBeenCalledTimes(1);
+    const [, id, data] = manager.update.mock.calls[0] as [
+      unknown,
+      string,
+      Record<string, unknown>,
+    ];
+    expect(id).toBe('me');
+    expect(data).toMatchObject({ first_name: 'Ama', firebase_uid: 'fb-me' });
+  });
+
+  it('refuses to overwrite an existing password', async () => {
+    caller.password_hash = 'hash';
+    await expect(run({ password: 'new-pass-1' })).rejects.toThrow(
+      '/auth/change-password',
+    );
+    expect(manager.update).not.toHaveBeenCalled();
+  });
+
+  it('clears is_email_verified when the caller changes to a free email', async () => {
+    await run({ email: 'new@example.com' });
+    const [, , data] = manager.update.mock.calls[0] as [
+      unknown,
+      string,
+      Record<string, unknown>,
+    ];
+    expect(data).toMatchObject({
+      email: 'new@example.com',
+      is_email_verified: false,
+      is_onboarded: false,
+    });
   });
 });

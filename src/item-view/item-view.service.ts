@@ -13,6 +13,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { ItemViewResponseDto } from './dto/item-view-response.dto';
+import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { SystemEventService } from '../audit/system-event.service';
 import { SystemEventType } from '../audit/entities/system-event.entity';
 
@@ -33,7 +34,19 @@ export class ItemViewService {
    */
   private toResponseDto(entity: ItemViewEntity): ItemViewResponseDto {
     const dto = new ItemViewResponseDto();
-    Object.assign(dto, entity);
+    dto.id = entity.id;
+    dto.item_id = entity.item_id;
+    dto.viewer_id = entity.viewer_id;
+    dto.ip_address = entity.ip_address;
+    dto.device_type = entity.device_type;
+    dto.referrer = entity.referrer;
+    dto.view_duration_seconds = entity.view_duration_seconds;
+    dto.created_at = entity.created_at;
+    // Through the public item shape: copying the entity would serialize the
+    // owner's whole UserEntity (email, fcm_token, date_of_birth, ...).
+    if (entity.item) {
+      dto.item = ItemResponseDto.fromEntity(entity.item);
+    }
     return dto;
   }
 
@@ -206,10 +219,12 @@ export class ItemViewService {
         .groupBy('view.device_type')
         .getRawMany<{ device: string; count: string }>();
 
-      // Views by date
+      // Views by date. Formatted in SQL: a DATE column would be parsed by
+      // node-pg as midnight in the server's zone (UTC+2 in production) and
+      // serialised as the previous day's 22:00Z.
       const viewsByDate = await this.itemViewRepository
         .createQueryBuilder('view')
-        .select('DATE(view.created_at)', 'date')
+        .select("TO_CHAR(DATE(view.created_at), 'YYYY-MM-DD')", 'date')
         .addSelect('COUNT(*)', 'count')
         .where('view.item_id = :itemId', { itemId })
         .andWhere('view.created_at > :startDate', { startDate })

@@ -3,11 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { ItemEntity, ItemStatus, PickupType } from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
+import { CategoryEntity } from '../category/entities/category.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
@@ -21,6 +23,11 @@ import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
 import { escapeLike, foldSql, foldText } from '../common/text-fold';
 import type { Express } from 'express';
+import {
+  ITEM_IMAGE_FOLDER,
+  isItemImagePublicId,
+} from './item-image-upload.options';
+import { closeActiveRequests } from '../item-request/close-active-requests';
 
 @Injectable()
 export class ItemService {
@@ -92,6 +99,49 @@ export class ItemService {
     }
   }
 
+  /** A category_id must name a live category; the FK alone would be a 500. */
+  private async assertCategoryUsable(categoryId: string): Promise<void> {
+    const exists = await this.dataSource
+      .getRepository(CategoryEntity)
+      .exists({ where: { id: categoryId, is_deleted: false } });
+    if (!exists) {
+      throw new BadRequestException(`Category ${categoryId} not found`);
+    }
+  }
+
+  /**
+   * A client-sent location_id must be the caller's own saved location, or a
+   * temporary (ownerless) one that no other live item points at. Temporary
+   * rows are edited in place when the item's coordinates change, so sharing
+   * one with somebody else's item would let that edit move their item.
+   */
+  private async assertLocationUsable(
+    userId: string,
+    locationId: string,
+    itemId?: string,
+  ): Promise<void> {
+    const location = await this.locationRepository.findOne({
+      where: { id: locationId, is_deleted: false },
+    });
+    if (!location) {
+      throw new BadRequestException(`Location ${locationId} not found`);
+    }
+    if (location.user_id === userId) return;
+
+    const usedElsewhere =
+      location.user_id !== null ||
+      (await this.itemRepository.exists({
+        where: {
+          location_id: locationId,
+          is_deleted: false,
+          ...(itemId && { id: Not(itemId) }),
+        },
+      }));
+    if (usedElsewhere) {
+      throw new ForbiddenException('You can only use your own locations');
+    }
+  }
+
   /**
    * Turn posted coordinates into a location the item can point at.
    *
@@ -103,17 +153,29 @@ export class ItemService {
   private async resolveCoordinates(
     latitude: number,
     longitude: number,
-    currentLocationId?: string | null,
+    current?: { itemId: string; locationId: string | null },
   ): Promise<string> {
-    if (currentLocationId) {
-      const current = await this.locationRepository.findOne({
-        where: { id: currentLocationId, is_deleted: false },
+    if (current?.locationId) {
+      const location = await this.locationRepository.findOne({
+        where: { id: current.locationId, is_deleted: false },
       });
+      // Never edit a row another live item also points at (possible for
+      // rows shared before assertLocationUsable existed): moving this item
+      // must not move theirs.
+      const shared =
+        !!location &&
+        (await this.itemRepository.exists({
+          where: {
+            location_id: location.id,
+            is_deleted: false,
+            id: Not(current.itemId),
+          },
+        }));
 
-      if (current && current.user_id === null) {
-        current.latitude = latitude;
-        current.longitude = longitude;
-        const updated = await this.locationRepository.save(current);
+      if (location && location.user_id === null && !shared) {
+        location.latitude = latitude;
+        location.longitude = longitude;
+        const updated = await this.locationRepository.save(location);
         return updated.id;
       }
     }
@@ -139,7 +201,7 @@ export class ItemService {
     const results = await Promise.all(
       files.map((file, i) =>
         this.cloudinaryService
-          .uploadImage(file, { folder: 'items' })
+          .uploadImage(file, { folder: ITEM_IMAGE_FOLDER })
           .catch((error) => {
             console.error(
               `Failed to upload file at index ${i} to Cloudinary:`,
@@ -296,7 +358,9 @@ export class ItemService {
       // Only after the commit, so a rollback never strands rows pointing at
       // deleted assets.
       await this.cloudinaryService.deleteImagesQuietly(
-        toRemove.map((image) => image.cloudinary_public_id),
+        toRemove
+          .map((image) => image.cloudinary_public_id)
+          .filter(isItemImagePublicId),
       );
       return { item: saved, failed };
     } catch (error) {
@@ -340,6 +404,12 @@ export class ItemService {
     }
 
     this.assertLocationInputIsCoherent(createDto);
+    if (createDto.category_id) {
+      await this.assertCategoryUsable(createDto.category_id);
+    }
+    if (createDto.location_id) {
+      await this.assertLocationUsable(userId, createDto.location_id);
+    }
 
     const { latitude, longitude, ...fields } = createDto;
 
@@ -347,6 +417,9 @@ export class ItemService {
       ...fields,
       user_id: userId,
       price: createDto.is_free ? 0 : createDto.price || 0,
+      // Left unset, the column defaults to true - so an item posted with a
+      // price and no is_free would be listed as free.
+      is_free: createDto.is_free ?? !(createDto.price && createDto.price > 0),
     });
 
     if (latitude !== undefined && longitude !== undefined) {
@@ -396,7 +469,11 @@ export class ItemService {
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
       .leftJoinAndSelect('item.user', 'user')
-      .leftJoinAndSelect('item.category', 'category')
+      .leftJoinAndSelect(
+        'item.category',
+        'category',
+        'category.is_deleted = false',
+      )
       .leftJoinAndSelect(
         'item.images',
         'images',
@@ -428,9 +505,16 @@ export class ItemService {
     }
 
     if (filters?.is_featured !== undefined) {
-      query.andWhere('item.is_featured = :is_featured', {
-        is_featured: filters.is_featured,
-      });
+      // featured_until ends a feature on its own; nothing clears the flag.
+      // Compared with a bound JS date, not now(): the column has no time zone
+      // and is written from JS dates, so both sides are serialised alike
+      // whatever the server's zone.
+      const featured =
+        'item.is_featured = true AND (item.featured_until IS NULL OR item.featured_until > :featured_now)';
+      query.andWhere(
+        filters.is_featured ? `(${featured})` : `NOT (${featured})`,
+        { featured_now: new Date() },
+      );
     }
 
     if (filters?.is_free !== undefined) {
@@ -473,12 +557,17 @@ export class ItemService {
           )
         : entities;
 
-    filtered.forEach((entity, i) => {
-      const rawIndex = entities.indexOf(entity);
+    // Keyed by poster rather than by position: the images join yields one
+    // raw row per image, so raw[i] is not the row for entities[i].
+    const itemsCountByUser = new Map<string, number>();
+    const rows = raw as { item_user_id: string; user_items_count: string }[];
+    for (const row of rows) {
+      itemsCountByUser.set(row.item_user_id, Number(row.user_items_count ?? 0));
+    }
+    filtered.forEach((entity) => {
       if (entity.user) {
-        (entity.user as any).items_count = Number(
-          raw[rawIndex]?.user_items_count ?? 0,
-        );
+        (entity.user as any).items_count =
+          itemsCountByUser.get(entity.user_id) ?? 0;
       }
     });
 
@@ -516,7 +605,11 @@ export class ItemService {
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.location', 'location')
       .leftJoinAndSelect('item.user', 'user')
-      .leftJoinAndSelect('item.category', 'category')
+      .leftJoinAndSelect(
+        'item.category',
+        'category',
+        'category.is_deleted = false',
+      )
       .leftJoinAndSelect(
         'item.images',
         'images',
@@ -596,6 +689,28 @@ export class ItemService {
     }
 
     this.assertLocationInputIsCoherent(updateDto);
+    if (updateDto.category_id && updateDto.category_id !== item.category_id) {
+      await this.assertCategoryUsable(updateDto.category_id);
+    }
+    if (updateDto.location_id && updateDto.location_id !== item.location_id) {
+      await this.assertLocationUsable(userId, updateDto.location_id, item.id);
+    }
+
+    // reserved / picked_up are owned by the request flow, which holds the item
+    // lock while it moves them. Letting the owner flip a reserved item back to
+    // available here would allow a second confirm and a second pickup; to
+    // release a reservation, the owner cancels the confirmed request instead.
+    if (updateDto.status !== undefined && updateDto.status !== item.status) {
+      const ownerSettable = [ItemStatus.AVAILABLE, ItemStatus.UNAVAILABLE];
+      if (
+        !ownerSettable.includes(updateDto.status) ||
+        !ownerSettable.includes(item.status)
+      ) {
+        throw new ConflictException(
+          'Status can only be switched between available and unavailable; reserved and picked-up items change through their requests',
+        );
+      }
+    }
 
     const { remove_image_ids, latitude, longitude, ...fields } = updateDto;
 
@@ -611,16 +726,22 @@ export class ItemService {
     // If marked as free, set price to 0
     if (updateDto.is_free) {
       item.price = 0;
+    } else if (
+      updateDto.is_free === undefined &&
+      updateDto.price !== undefined &&
+      updateDto.price > 0
+    ) {
+      // Pricing a free item without saying otherwise makes it not free.
+      item.is_free = false;
     }
 
     this.clearScheduleUnlessSpecificDate(item, updateDto.pickup_type);
 
     if (latitude !== undefined && longitude !== undefined) {
-      item.location_id = await this.resolveCoordinates(
-        latitude,
-        longitude,
-        item.location_id,
-      );
+      item.location_id = await this.resolveCoordinates(latitude, longitude, {
+        itemId: item.id,
+        locationId: item.location_id,
+      });
     }
 
     // Saved with the image changes, so a bad image ID or a failed
@@ -707,12 +828,22 @@ export class ItemService {
             );
         }
         const deleted = await manager.getRepository(ItemEntity).save(item);
+        // Otherwise a later cancel would flip the deleted item back to
+        // available and it could be requested and handed over again.
+        await closeActiveRequests(
+          manager,
+          { itemIds: [item.id] },
+          deletedBy,
+          'Item was removed',
+        );
         return { deleted, images };
       },
     );
 
     await this.cloudinaryService.deleteImagesQuietly(
-      images.map((image) => image.cloudinary_public_id),
+      images
+        .map((image) => image.cloudinary_public_id)
+        .filter(isItemImagePublicId),
     );
     return deleted;
   }
@@ -759,6 +890,13 @@ export class ItemService {
 
     if (!item) {
       throw new NotFoundException(`Item with ID ${itemId} not found`);
+    }
+
+    if (
+      featuredUntil &&
+      (Number.isNaN(featuredUntil.getTime()) || featuredUntil <= new Date())
+    ) {
+      throw new BadRequestException('featured_until must be a future date');
     }
 
     item.is_featured = true;

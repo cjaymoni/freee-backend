@@ -48,18 +48,24 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { avatarUploadOptions } from './avatar-upload.options';
 
 /**
- * Fields only an admin may set via PATCH /user/:id. When a user sends them for
- * their own record they are dropped (and reported in `warnings`) rather than
- * rejected, so existing clients that echo these fields back keep working. The
- * backend maintains the verification flags and firebase_uid itself at login.
+ * The only fields a user may set on their own record via PATCH /user/:id.
+ * Anything else (role, verification flags, firebase_uid, deletion and lockout
+ * state, timestamps, avatar public id, ...) is dropped and reported in
+ * `warnings` rather than rejected, so existing clients that echo the whole
+ * profile back keep working. `password` is handled separately below.
  */
-const ADMIN_ONLY_FIELDS = [
-  'role',
-  'is_active',
-  'is_email_verified',
-  'is_phone_verified',
-  'firebase_uid',
-] as const;
+const SELF_EDITABLE_FIELDS = new Set<string>([
+  'first_name',
+  'last_name',
+  'email',
+  'phone_number',
+  'date_of_birth',
+  'gender',
+  'bio',
+  'cloudinary_avatar_url',
+  'fcm_token',
+  'notification_enabled',
+]);
 
 @ApiTags('user')
 @ApiBearerAuth()
@@ -131,6 +137,7 @@ export class UserController {
   })
   @UseInterceptors(FileInterceptor('file', avatarUploadOptions))
   async create(
+    @GetUser('userId') userId: string,
     @Body() createUserDto: CreateUserDto,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -142,8 +149,8 @@ export class UserController {
     }
     return this.userService.create(createUserDto, file, {
       source: 'user.controller.create',
-      upsertOnConflict: true,
       markOnboardedOnCreate: true,
+      actingUserId: userId,
     });
   }
 
@@ -375,17 +382,43 @@ export class UserController {
           new ForbiddenException('You can only update your own profile'),
         );
       }
-      const ignored = ADMIN_ONLY_FIELDS.filter(
-        (key) => updateUserDto[key] !== undefined,
-      );
-      const allowed = { ...updateUserDto };
-      ignored.forEach((key) => delete allowed[key]);
+      const allowed: UpdateUserDto = {};
+      const ignored: string[] = [];
+      for (const [key, value] of Object.entries(updateUserDto)) {
+        if (value === undefined || key === 'password') continue;
+        if (SELF_EDITABLE_FIELDS.has(key)) {
+          (allowed as Record<string, unknown>)[key] = value;
+        } else {
+          ignored.push(key);
+        }
+      }
+
+      const warnings: string[] = [];
+      if (updateUserDto.password !== undefined) {
+        // Replacing a password must prove the current one, which only
+        // /auth/change-password does. Setting a first one is fine here.
+        const current = await this.userService.findOneEntityWithPassword(id);
+        if (current?.password_hash) {
+          warnings.push(
+            'password was ignored; use /auth/change-password to change it',
+          );
+        } else if (updateUserDto.password.length < 6) {
+          throw new AppError(
+            new BadRequestException('password must be at least 6 characters'),
+          );
+        } else {
+          allowed.password = updateUserDto.password;
+        }
+      }
+      if (ignored.length) {
+        warnings.push(
+          `These fields can't be changed here and were ignored: ${ignored.join(', ')}`,
+        );
+      }
 
       const result = await this.userService.update(id, allowed);
-      if (ignored.length) {
-        result.warnings = [
-          `These fields can only be changed by an admin and were ignored: ${ignored.join(', ')}`,
-        ];
+      if (warnings.length) {
+        result.warnings = warnings;
       }
       return result;
     }

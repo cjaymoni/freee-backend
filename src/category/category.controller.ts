@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -166,7 +167,7 @@ export class CategoryController {
   })
   @ApiResponse({ status: 404, description: 'Category not found' })
   async findOne(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ServiceResponseDto<CategoryResponseDto>> {
     return this.categoryService.findOne(id);
   }

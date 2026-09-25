@@ -38,7 +38,11 @@ describe('UserController', () => {
 
 describe('UserController authorization', () => {
   let controller: UserController;
-  let userService: { update: jest.Mock; remove: jest.Mock };
+  let userService: {
+    update: jest.Mock;
+    remove: jest.Mock;
+    findOneEntityWithPassword: jest.Mock;
+  };
 
   const USER_ID = '11111111-1111-1111-1111-111111111111';
   const OTHER_ID = '22222222-2222-2222-2222-222222222222';
@@ -47,6 +51,9 @@ describe('UserController authorization', () => {
     userService = {
       update: jest.fn().mockResolvedValue({ state: true }),
       remove: jest.fn().mockResolvedValue({ state: true }),
+      findOneEntityWithPassword: jest
+        .fn()
+        .mockResolvedValue({ id: USER_ID, password_hash: null }),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UserController],
@@ -89,7 +96,7 @@ describe('UserController authorization', () => {
       [{ phone_number: '+233201234567' }],
       [{ password: 'hunter22' }],
       [{ cloudinary_avatar_url: 'https://example.com/a.png' }],
-    ])('lets a user change their own %j', async (body) => {
+    ])('lets a user set their own %j', async (body) => {
       const result = await controller.update(
         USER_ID,
         body,
@@ -106,8 +113,15 @@ describe('UserController authorization', () => {
       ['is_email_verified', true],
       ['is_phone_verified', true],
       ['firebase_uid', 'someone-else'],
+      ['is_deleted', true],
+      ['deleted_at', new Date()],
+      ['failed_login_attempts', 0],
+      ['account_locked_until', new Date()],
+      ['member_since', new Date('2001-01-01')],
+      ['cloudinary_avatar_public_id', 'avatars/user_someone-else'],
+      ['requires_password_change', false],
     ])(
-      'ignores admin-only field %s from a user and says so',
+      'ignores non-profile field %s from a user and says so',
       async (field, value) => {
         const result = await controller.update(
           USER_ID,
@@ -121,6 +135,30 @@ describe('UserController authorization', () => {
         expect(result.warnings?.[0]).toContain(field);
       },
     );
+
+    it('ignores a password change when the account already has one', async () => {
+      userService.findOneEntityWithPassword.mockResolvedValue({
+        id: USER_ID,
+        password_hash: 'hash',
+      });
+      const result = await controller.update(
+        USER_ID,
+        { first_name: 'Ama', password: 'x-new-pass' },
+        USER_ID,
+        UserRole.USER,
+      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+        first_name: 'Ama',
+      });
+      expect(result.warnings?.[0]).toContain('/auth/change-password');
+    });
+
+    it('rejects a too-short first password', async () => {
+      await expect(
+        controller.update(USER_ID, { password: 'x' }, USER_ID, UserRole.USER),
+      ).rejects.toThrow('at least 6 characters');
+      expect(userService.update).not.toHaveBeenCalled();
+    });
 
     it('lets an admin change role and is_active on another user', async () => {
       await controller.update(

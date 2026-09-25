@@ -1,4 +1,4 @@
-import { Logger, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -27,6 +27,7 @@ import {
   WsTypingDto,
 } from './dto/ws-events.dto';
 import { AuthService } from '../auth/auth.service';
+import { WsHttpExceptionFilter } from './ws-http-exception.filter';
 
 /** What we hang off the socket once its token has been verified. */
 interface AuthenticatedSocket extends Socket {
@@ -69,6 +70,7 @@ interface JwtPayload {
     transform: true,
   }),
 )
+@UseFilters(new WsHttpExceptionFilter())
 export class ChatGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
@@ -163,6 +165,16 @@ export class ChatGateway
       client.data.email = payload.email;
 
       await client.join(ChatRealtimeService.roomForUser(payload.sub));
+
+      // The lookups above take real time. If the client dropped meanwhile,
+      // handleDisconnect has already run and found nothing to unregister, so
+      // registering now would leave the user "online" - and their pushes
+      // suppressed - until restart. Nothing is awaited between this check
+      // and registerSocket, so a disconnect can't slip in between them; any
+      // later one sees userId and unregisters normally.
+      if (!client.connected) {
+        return;
+      }
 
       const cameOnline = this.realtime.registerSocket(payload.sub, client.id);
 

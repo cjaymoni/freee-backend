@@ -25,6 +25,7 @@ import {
 import { UserAgent } from '../common/decorators/user-agent.decorator';
 import { UseGuards, Get } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { AllowSuspended } from './decorators/allow-suspended.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { GetUser } from '../common/decorators/get-user.decorator';
@@ -45,6 +46,7 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @AllowSuspended()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user info' })
   @ApiOkResponse({
@@ -170,11 +172,13 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
+  @AllowSuspended()
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout user and invalidate session' })
-  async logout(@GetUser() user: { userId: string; session_token: string }) {
-    return this.authService.logout(user.userId, user.session_token);
+  async logout(@GetUser() user: { userId: string; sessionToken: string }) {
+    // JwtStrategy.validate exposes the session as `sessionToken`.
+    return this.authService.logout(user.userId, user.sessionToken);
   }
 
   @Post('change-password')

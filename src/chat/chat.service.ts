@@ -816,9 +816,13 @@ export class ChatService {
           );
         }
 
+        // Compared against the cursor row inside SQL: created_at has
+        // microsecond precision, and a round trip through a JS Date keeps
+        // only milliseconds, which skipped older messages in the cursor's
+        // millisecond.
         queryBuilder.andWhere(
-          '(message.created_at, message.id) < (:cursorAt, :cursorId)',
-          { cursorAt: cursor.created_at, cursorId: cursor.id },
+          '(message.created_at, message.id) < (SELECT c.created_at, c.id FROM chat_messages c WHERE c.id = :cursorId)',
+          { cursorId: cursor.id },
         );
       }
 

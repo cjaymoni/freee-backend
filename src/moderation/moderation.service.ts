@@ -6,7 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
 import { ReportedItem } from './entities/reported-item.entity';
@@ -19,6 +19,47 @@ import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
 import { ActionTaken, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { ResolveComplaintDto } from './dto/resolve-complaint.dto';
+
+const PRIORITY_RANK: Record<string, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+/**
+ * Most urgent first, newest first within a priority. Sorting the varchar
+ * column in SQL would be alphabetical: urgent, medium, low, high. The lists
+ * aren't paged, so ranking in memory is exact. Sorts in place.
+ */
+function byPriority<T extends { priority: string }>(reports: T[]): T[] {
+  // Array.prototype.sort is stable, so the createdAt order is kept within
+  // each priority.
+  return reports.sort(
+    (a, b) =>
+      (PRIORITY_RANK[a.priority] ?? Number.MAX_SAFE_INTEGER) -
+      (PRIORITY_RANK[b.priority] ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+/**
+ * Reports and blocks name their target by id with a foreign key, so an id
+ * that doesn't exist fails the insert (23503). Answer that as a 404 rather
+ * than a 500.
+ */
+async function saveOr404<T>(save: Promise<T>, message: string): Promise<T> {
+  try {
+    return await save;
+  } catch (error) {
+    if (
+      error instanceof QueryFailedError &&
+      (error.driverError as { code?: string } | undefined)?.code === '23503'
+    ) {
+      throw new NotFoundException(message);
+    }
+    throw error;
+  }
+}
 
 @Injectable()
 export class ModerationService {
@@ -43,7 +84,7 @@ export class ModerationService {
       reporterId,
       priority: dto.priority || 'medium',
     });
-    return this.reportedItemRepo.save(report);
+    return saveOr404(this.reportedItemRepo.save(report), 'Item not found');
   }
 
   async reportUser(dto: CreateReportedUserDto, reporterId: string) {
@@ -55,7 +96,7 @@ export class ModerationService {
       reporterId,
       priority: dto.priority || 'medium',
     });
-    return this.reportedUserRepo.save(report);
+    return saveOr404(this.reportedUserRepo.save(report), 'User not found');
   }
 
   async blockUser(dto: CreateBlockedUserDto, blockerId: string) {
@@ -69,7 +110,7 @@ export class ModerationService {
       throw new BadRequestException('User already blocked');
     }
     const block = this.blockedUserRepo.create({ ...dto, blockerId });
-    return this.blockedUserRepo.save(block);
+    return saveOr404(this.blockedUserRepo.save(block), 'User not found');
   }
 
   async unblockUser(blockedId: string, blockerId: string) {
@@ -85,11 +126,23 @@ export class ModerationService {
   }
 
   async getBlockedUsers(blockerId: string) {
-    return this.blockedUserRepo.find({
+    const blocks = await this.blockedUserRepo.find({
       where: { blockerId, isDeleted: false },
       relations: ['blocked'],
       order: { createdAt: 'DESC' },
     });
+    // Anyone can block any user id, so the embedded user must be the public
+    // profile only - never email, fcm_token, date_of_birth, lockout state...
+    // Field names are kept as before so existing clients keep parsing.
+    return blocks.map(({ blocked, ...block }) => ({
+      ...block,
+      blocked: blocked && {
+        id: blocked.id,
+        first_name: blocked.first_name,
+        last_name: blocked.last_name,
+        cloudinary_avatar_url: blocked.cloudinary_avatar_url,
+      },
+    }));
   }
 
   async resolveItemReport(
@@ -111,11 +164,19 @@ export class ModerationService {
     });
 
     if (dto.actionTaken === ActionTaken.ITEM_REMOVED) {
-      await this.itemService.adminRemove(
-        reviewerId,
-        report.itemId,
-        'Removed due to moderation',
-      );
+      try {
+        await this.itemService.adminRemove(
+          reviewerId,
+          report.itemId,
+          'Removed due to moderation',
+        );
+      } catch (error) {
+        // adminRemove only finds live items, and reports reference items by
+        // foreign key, so a 404 means an earlier report (or the owner)
+        // already removed it. The outcome this report asks for holds, so it
+        // still gets resolved instead of being stuck in the queue.
+        if (!(error instanceof NotFoundException)) throw error;
+      }
     }
 
     return this.reportedItemRepo.save(report);
@@ -158,13 +219,14 @@ export class ModerationService {
    * regular user filed; the reviewing admin is then left out.
    */
   async getItemReports(status?: string, reporterId?: string) {
-    return this.reportedItemRepo.find({
+    const reports = await this.reportedItemRepo.find({
       where: { ...(status && { status }), ...(reporterId && { reporterId }) },
       relations: reporterId
         ? ['item', 'reporter']
         : ['item', 'reporter', 'reviewer'],
-      order: { priority: 'DESC', createdAt: 'DESC' },
+      order: { createdAt: 'DESC' },
     });
+    return byPriority(reports);
   }
 
   /**
@@ -178,8 +240,9 @@ export class ModerationService {
       relations: reporterId
         ? ['reportedUser', 'reporter']
         : ['reportedUser', 'reporter', 'reviewer'],
-      order: { priority: 'DESC', createdAt: 'DESC' },
+      order: { createdAt: 'DESC' },
     });
+    byPriority(reports);
     if (!reporterId) return reports;
 
     return reports.map((report) => ({

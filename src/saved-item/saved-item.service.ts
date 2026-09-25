@@ -28,7 +28,10 @@ export class SavedItemService {
   /**
    * Transform SavedItemEntity to SavedItemResponseDto
    */
-  private toResponseDto(entity: SavedItemEntity): SavedItemResponseDto {
+  private toResponseDto(
+    entity: SavedItemEntity,
+    itemsCount?: Map<string, number>,
+  ): SavedItemResponseDto {
     const dto = new SavedItemResponseDto();
     dto.id = entity.id;
     dto.user_id = entity.user_id;
@@ -37,9 +40,37 @@ export class SavedItemService {
     dto.deleted_at = entity.deleted_at;
     dto.created_at = entity.created_at;
     if (entity.item) {
-      dto.item = ItemResponseDto.fromEntity(entity.item);
+      const item = {
+        ...entity.item,
+        // Relations load unfiltered; removed photos are already gone from
+        // Cloudinary, so their URLs would be broken.
+        images: entity.item.images?.filter((image) => !image.is_deleted),
+      } as ItemEntity;
+      if (item.user && itemsCount) {
+        (item.user as unknown as { items_count: number }).items_count =
+          itemsCount.get(item.user_id) ?? 0;
+      }
+      // The row is the user's save, so the item is saved unless it was
+      // just unsaved.
+      dto.item = ItemResponseDto.fromEntity(item, !entity.is_deleted);
     }
     return dto;
+  }
+
+  /** Active listings per poster, for each item's `user.items_count`. */
+  private async countItemsByUser(
+    userIds: string[],
+  ): Promise<Map<string, number>> {
+    if (!userIds.length) return new Map();
+    const rows = await this.itemRepository
+      .createQueryBuilder('item')
+      .select('item.user_id', 'user_id')
+      .addSelect('COUNT(item.id)', 'count')
+      .where('item.user_id IN (:...userIds)', { userIds })
+      .andWhere('item.is_deleted = false')
+      .groupBy('item.user_id')
+      .getRawMany<{ user_id: string; count: string }>();
+    return new Map(rows.map((row) => [row.user_id, Number(row.count)]));
   }
 
   async saveItem(
@@ -52,7 +83,7 @@ export class SavedItemService {
 
       // Check if item exists
       const item = await this.itemRepository.findOne({
-        where: { id: item_id },
+        where: { id: item_id, is_deleted: false },
       });
       if (!item) {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
@@ -168,6 +199,8 @@ export class SavedItemService {
         where: {
           user_id: userId,
           is_deleted: false,
+          // A listing its owner or a moderator removed is no longer there.
+          item: { is_deleted: false },
         },
         relations: ['item', 'item.category', 'item.location', 'item.user', 'item.images'],
         order: {
@@ -179,9 +212,13 @@ export class SavedItemService {
 
       this.logger.log(`Found ${items.length} saved items`);
 
+      const itemsCount = await this.countItemsByUser([
+        ...new Set(items.map((saved) => saved.item?.user_id).filter(Boolean)),
+      ]);
+
       return {
         message: 'Saved items retrieved successfully',
-        data: items.map((item) => this.toResponseDto(item)),
+        data: items.map((item) => this.toResponseDto(item, itemsCount)),
         total,
         page,
         limit,

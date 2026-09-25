@@ -2,11 +2,13 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { MailService } from '../mail/mail.service';
 import { UserService } from '../user/user.service';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class FirebaseAuthService {
@@ -89,15 +91,24 @@ export class FirebaseAuthService {
     }
   }
 
-  async revokeRefreshTokens(email: string) {
+  async revokeRefreshTokens(
+    email: string,
+    requester: { userId: string; role: UserRole },
+  ) {
     const user = await this.userService.findByEmail(email);
+    // Same answer for "someone else" and "no such user", so non-admins
+    // can't use this to probe which emails have accounts.
+    if (requester.role !== UserRole.ADMIN && user?.id !== requester.userId) {
+      throw new ForbiddenException('You can only revoke your own sessions');
+    }
     if (!user || !user.firebase_uid) {
       throw new NotFoundException('Firebase user not found');
     }
 
     try {
       await admin.auth().revokeRefreshTokens(user.firebase_uid);
-      this.logger.log(`Tokens revoked`);      return { message: 'All active sessions have been signed out' };
+      this.logger.log(`Tokens revoked`);
+      return { message: 'All active sessions have been signed out' };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);

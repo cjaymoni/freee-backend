@@ -21,6 +21,11 @@ import { UserPreferenceService } from './user-preference.service';
 import { CreateUserPreferenceDto } from './dto/create-user-preference.dto';
 import { UpdateUserPreferenceDto } from './dto/update-user-preference.dto';
 import { UserPreferenceResponseDto } from './dto/user-preference-response.dto';
+import {
+  SetPreferredCategoriesDto,
+  UpdateLanguageDto,
+  UpdateThemeDto,
+} from './dto/preference-fields.dto';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ServiceResponseDto } from '../common/service-response.dto';
@@ -204,9 +209,9 @@ export class UserPreferenceController {
   @ApiResponse({ status: 404, description: 'Preferences not found' })
   async setCategories(
     @GetUser('userId') userId: string,
-    @Body('category_ids') categoryIds: string[],
+    @Body() { category_ids }: SetPreferredCategoriesDto,
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
-    return this.preferenceService.setPreferredCategories(userId, categoryIds);
+    return this.preferenceService.setPreferredCategories(userId, category_ids);
   }
 
   @Patch('notifications')
@@ -303,7 +308,7 @@ export class UserPreferenceController {
   })
   async updateLanguage(
     @GetUser('userId') userId: string,
-    @Body('language') language: string,
+    @Body() { language }: UpdateLanguageDto,
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateLanguage(userId, language);
   }
@@ -355,7 +360,7 @@ export class UserPreferenceController {
   })
   async updateTheme(
     @GetUser('userId') userId: string,
-    @Body('theme') theme: string,
+    @Body() { theme }: UpdateThemeDto,
   ): Promise<ServiceResponseDto<UserPreferenceResponseDto>> {
     return this.preferenceService.updateTheme(userId, theme);
   }

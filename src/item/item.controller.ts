@@ -12,6 +12,8 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  ParseUUIDPipe,
+  ParseEnumPipe,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
@@ -210,9 +212,11 @@ export class ItemController {
   })
   async findAll(
     @GetUser('userId') viewerId?: string,
-    @Query('user_id') user_id?: string,
-    @Query('category_id') category_id?: string,
-    @Query('status') status?: ItemStatus,
+    @Query('user_id', new ParseUUIDPipe({ optional: true })) user_id?: string,
+    @Query('category_id', new ParseUUIDPipe({ optional: true }))
+    category_id?: string,
+    @Query('status', new ParseEnumPipe(ItemStatus, { optional: true }))
+    status?: ItemStatus,
     @Query('is_featured') is_featured?: boolean,
     @Query('is_free') is_free?: boolean,
     @Query('lat') lat?: string,
@@ -320,7 +324,7 @@ export class ItemController {
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findOne(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @GetUser('userId') userId: string,
     @Req() request: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto>> {

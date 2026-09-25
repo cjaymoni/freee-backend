@@ -75,7 +75,7 @@ const mockImage = (
   ({
     id,
     item_id: 'item-1',
-    cloudinary_public_id: `public-${id}`,
+    cloudinary_public_id: `items/${id}`,
     cloudinary_url: `https://res.cloudinary.com/${id}.jpg`,
     cloudinary_secure_url: `https://res.cloudinary.com/${id}.jpg`,
     cloudinary_format: 'jpg',
@@ -217,6 +217,8 @@ describe('ItemService', () => {
     create: jest.fn(),
     save: jest.fn(),
     update: jest.fn(),
+    // No other item shares the location unless a test says so.
+    exists: jest.fn().mockResolvedValue(false),
   };
 
   const mockImageRepo = {
@@ -252,7 +254,10 @@ describe('ItemService', () => {
 
   // Runs the work against the same mocked repositories, so tests see what the
   // transaction wrote.
+  const mockCategoryRepo = { exists: jest.fn().mockResolvedValue(true) };
+
   const mockDataSource = {
+    getRepository: jest.fn(() => mockCategoryRepo),
     transaction: jest.fn((work: (manager: unknown) => Promise<unknown>) =>
       work({
         getRepository: (entity: unknown) =>
@@ -298,6 +303,107 @@ describe('ItemService', () => {
   });
 
   afterEach(() => jest.clearAllMocks());
+
+  describe('category_id', () => {
+    it('refuses a category that does not exist or was deleted', async () => {
+      mockCategoryRepo.exists.mockResolvedValueOnce(false);
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        category_id: '00000000-0000-4000-8000-000000000000',
+      });
+
+      await expect(service.create('user-1', createDto)).rejects.toThrow(
+        'Category 00000000-0000-4000-8000-000000000000 not found',
+      );
+      expect(mockCategoryRepo.exists).toHaveBeenCalledWith({
+        where: {
+          id: '00000000-0000-4000-8000-000000000000',
+          is_deleted: false,
+        },
+      });
+    });
+  });
+
+  describe('is_free and price', () => {
+    beforeEach(() => {
+      mockItemRepo.create.mockImplementation((data: Partial<ItemEntity>) => ({
+        ...data,
+      }));
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve({ ...entity, id: entity.id ?? 'item-1' }),
+      );
+    });
+
+    it('does not list an item posted with a price as free', async () => {
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        price: 50,
+      });
+      const result = await service.create('user-1', createDto);
+
+      expect(result.data).toMatchObject({ is_free: false, price: 50 });
+    });
+
+    it('keeps an item posted without a price free', async () => {
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+      });
+      const result = await service.create('user-1', createDto);
+
+      expect(result.data).toMatchObject({ is_free: true, price: 0 });
+    });
+
+    it('makes a free item not free when it is given a price', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      const updateDto = plainToInstance(UpdateItemDto, { price: 20 });
+
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data).toMatchObject({ is_free: false, price: 20 });
+    });
+  });
+
+  describe('featured_until', () => {
+    const hour = 60 * 60 * 1000;
+
+    it.each([
+      ['no end date', null, true],
+      ['an end date ahead', new Date(Date.now() + hour), true],
+      ['an end date passed', new Date(Date.now() - hour), false],
+    ])('reports a feature with %s as featured=%s', (_, until, expected) => {
+      const dto = ItemResponseDto.fromEntity({
+        ...mockItemEntity,
+        is_featured: true,
+        featured_until: until,
+      } as ItemEntity);
+      expect(dto.is_featured).toBe(expected);
+    });
+
+    it('filters featured items by the end date too', async () => {
+      mockQueryBuilder = buildQueryBuilder([], []);
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+
+      await service.findAll({ is_featured: true });
+
+      const featuredFilter = (
+        mockQueryBuilder.andWhere.mock.calls as [
+          string,
+          { featured_now?: unknown }?,
+        ][]
+      ).find(([sql]) => sql.includes('item.featured_until > :featured_now'));
+      expect(featuredFilter?.[1]?.featured_now).toBeInstanceOf(Date);
+    });
+
+    it('refuses to feature an item until a past date', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      await expect(
+        service.feature('item-1', new Date(Date.now() - hour)),
+      ).rejects.toThrow('featured_until must be a future date');
+    });
+  });
 
   describe('findOne', () => {
     it('returns item with user object and items_count from subquery', async () => {
@@ -481,6 +587,69 @@ describe('ItemService', () => {
       mockImageRepo.find.mockResolvedValue([]);
     });
 
+    it("refuses another user's saved location", async () => {
+      mockLocationRepo.findOne.mockResolvedValueOnce({
+        id: 'loc-theirs',
+        user_id: 'user-2',
+      });
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+        location_id: '11111111-1111-4111-8111-111111111111',
+      });
+
+      await expect(service.create('user-1', createDto)).rejects.toThrow(
+        'You can only use your own locations',
+      );
+    });
+
+    it('refuses a temporary location already used by another item', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockLocationRepo.findOne.mockResolvedValueOnce({
+        id: 'loc-victim',
+        user_id: null,
+      });
+      mockItemRepo.exists.mockResolvedValueOnce(true);
+      const updateDto = plainToInstance(UpdateItemDto, {
+        location_id: '22222222-2222-4222-8222-222222222222',
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto),
+      ).rejects.toThrow('You can only use your own locations');
+      expect(mockItemRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('does not edit a location row another item also points at', async () => {
+      mockItemRepo.findOne.mockResolvedValue({
+        ...mockItemEntity,
+        location_id: 'loc-shared',
+      });
+      mockLocationRepo.findOne.mockResolvedValueOnce({
+        id: 'loc-shared',
+        user_id: null,
+        latitude: 5.6,
+        longitude: -0.18,
+      });
+      mockItemRepo.exists.mockResolvedValueOnce(true);
+      mockLocationRepo.save.mockClear();
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        latitude: 0,
+        longitude: 0,
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      const written = mockLocationRepo.save.mock.calls[0][0] as {
+        id?: string;
+      };
+      expect(written.id).toBeUndefined();
+      expect(result.data.location_id).not.toBe('loc-shared');
+    });
+
     it('creates an unattached location from coordinates on create', async () => {
       mockLocationRepo.save.mockResolvedValue({ id: 'loc-new' });
 
@@ -644,6 +813,47 @@ describe('ItemService', () => {
       expect(result.data.title).toBe('Test Item');
     });
 
+    it.each([
+      [ItemStatus.RESERVED, ItemStatus.AVAILABLE],
+      [ItemStatus.PICKED_UP, ItemStatus.AVAILABLE],
+      [ItemStatus.AVAILABLE, ItemStatus.RESERVED],
+      [ItemStatus.AVAILABLE, ItemStatus.PICKED_UP],
+    ])(
+      'refuses to move a %s item to %s outside the request flow',
+      async (current, requested) => {
+        mockItemRepo.findOne.mockResolvedValue({
+          ...mockItemEntity,
+          status: current,
+        });
+        mockItemRepo.save.mockClear();
+
+        const updateDto = plainToInstance(UpdateItemDto, { status: requested });
+
+        await expect(
+          service.update('user-1', 'item-1', updateDto),
+        ).rejects.toThrow('change through their requests');
+        expect(mockItemRepo.save).not.toHaveBeenCalled();
+      },
+    );
+
+    it('accepts a reserved item echoing its own status back', async () => {
+      mockItemRepo.findOne.mockResolvedValue({
+        ...mockItemEntity,
+        status: ItemStatus.RESERVED,
+      });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        title: 'New title',
+        status: ItemStatus.RESERVED,
+      });
+      const result = await service.update('user-1', 'item-1', updateDto);
+
+      expect(result.data.status).toBe(ItemStatus.RESERVED);
+    });
+
     it('returns the existing images when the edit does not touch them', async () => {
       mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
       mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
@@ -700,7 +910,7 @@ describe('ItemService', () => {
       expect(result.data.images).toHaveLength(1);
       expect(result.data.images![0].id).toBe('img-1');
       expect(mockCloudinary.deleteImagesQuietly).toHaveBeenCalledWith([
-        'public-img-2',
+        'items/img-2',
       ]);
     });
 
@@ -1067,7 +1277,7 @@ describe('ItemService', () => {
     it('returns items with user object and items_count from subquery', async () => {
       mockQueryBuilder = buildQueryBuilder(
         [mockItemEntity],
-        [{ user_items_count: '5' }],
+        [{ item_user_id: 'user-1', user_items_count: '5' }],
       );
       mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
 
@@ -1077,6 +1287,63 @@ describe('ItemService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0].user).toBeDefined();
       expect(result.data[0].user!.items_count).toBe(5);
+    });
+
+    it("gives each item its own poster's items_count when items have several images", async () => {
+      const byA = {
+        ...mockItemEntity,
+        id: 'item-a',
+        user_id: 'user-a',
+        user: { ...mockItemEntity.user, id: 'user-a' },
+      } as ItemEntity;
+      const byB = {
+        ...mockItemEntity,
+        id: 'item-b',
+        user_id: 'user-b',
+        user: { ...mockItemEntity.user, id: 'user-b' },
+      } as ItemEntity;
+      // The images join yields one raw row per image: item-a has three.
+      mockQueryBuilder = buildQueryBuilder(
+        [byA, byB],
+        [
+          { item_user_id: 'user-a', user_items_count: '30' },
+          { item_user_id: 'user-a', user_items_count: '30' },
+          { item_user_id: 'user-a', user_items_count: '30' },
+          { item_user_id: 'user-b', user_items_count: '1' },
+        ],
+      );
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+
+      const result = await service.findAll();
+
+      expect(result.data.map((item) => item.user!.items_count)).toEqual([
+        30, 1,
+      ]);
+    });
+
+    it("returns each item's images in display order", async () => {
+      mockQueryBuilder = buildQueryBuilder(
+        [
+          {
+            ...mockItemEntity,
+            images: [
+              mockImage('img-3', 2, false),
+              mockImage('img-1', 0, true),
+              mockImage('img-2', 1, false),
+            ],
+          } as ItemEntity,
+        ],
+        [{ item_user_id: 'user-1', user_items_count: '1' }],
+      );
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+
+      const result = await service.findAll();
+
+      expect(result.data[0].images!.map((image) => image.id)).toEqual([
+        'img-1',
+        'img-2',
+        'img-3',
+      ]);
     });
 
     it('returns empty array when no items exist', async () => {
