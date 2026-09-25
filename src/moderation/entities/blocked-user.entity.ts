@@ -12,7 +12,13 @@ import { UserEntity } from '../../user/entities/user.entity';
 @Entity('blocked_users')
 @Index(['blockerId'])
 @Index(['blockedId'])
-@Index(['blockerId', 'blockedId', 'isDeleted'], { unique: true })
+// One active block per pair; unblocked (soft-deleted) rows may repeat.
+// Declared here as well as in the migration so that `synchronize` in
+// development does not drop it.
+@Index('UQ_BLOCKED_USERS_ACTIVE_PAIR', ['blockerId', 'blockedId'], {
+  unique: true,
+  where: 'is_deleted = false',
+})
 export class BlockedUser {
   @PrimaryGeneratedColumn('uuid')
   id: string;

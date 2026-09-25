@@ -6,13 +6,24 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiOkResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiOkResponse,
+  ApiUnauthorizedResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { FirebaseAuthService } from './firebase-auth.service';
 import { FirebaseAuthDto } from './dto/firebase-auth.dto';
 import { FirebaseEmailDto } from './dto/firebase-email.dto';
 import { UserAgent } from '../common/decorators/user-agent.decorator';
+import { GetUser } from '../common/decorators/get-user.decorator';
+import { UserRole } from '../user/entities/user.entity';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { AllowSuspended } from './decorators/allow-suspended.decorator';
 
 @ApiTags('Firebase Auth')
 @Controller('firebase-auth')
@@ -54,7 +65,9 @@ export class FirebaseAuthController {
       },
     },
   })
-  @ApiUnauthorizedResponse({ description: 'Invalid or expired Firebase ID token' })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid or expired Firebase ID token',
+  })
   async authenticate(
     @Body() firebaseAuthDto: FirebaseAuthDto,
     @Ip() ip: string,
@@ -94,9 +107,21 @@ export class FirebaseAuthController {
   }
 
   @Post('revoke-sessions')
+  @UseGuards(JwtAuthGuard)
+  @AllowSuspended()
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Revoke all active Firebase sessions for a user' })
-  async revokeSessions(@Body() firebaseEmailDto: FirebaseEmailDto) {
-    return this.firebaseAuthService.revokeRefreshTokens(firebaseEmailDto.email);
+  @ApiOperation({
+    summary: 'Revoke all active Firebase sessions for a user',
+    description: 'Users may only revoke their own sessions; admins any.',
+  })
+  async revokeSessions(
+    @Body() firebaseEmailDto: FirebaseEmailDto,
+    @GetUser() requester: { userId: string; role: UserRole },
+  ) {
+    return this.firebaseAuthService.revokeRefreshTokens(
+      firebaseEmailDto.email,
+      requester,
+    );
   }
 }

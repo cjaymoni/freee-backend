@@ -31,8 +31,9 @@ export class AppError extends HttpException {
         responseError = error.name;
       }
     } else if (error instanceof Error) {
-      message = error.message;
-      responseError = error.name;
+      // Not an HTTP error, so not meant for the client: a QueryFailedError's
+      // message is raw SQL detail. Callers log the original before wrapping.
+      message = 'Internal server error';
     } else if (typeof error === 'string') {
       message = error;
     }

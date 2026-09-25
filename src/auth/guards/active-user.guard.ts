@@ -5,15 +5,16 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ALLOW_SUSPENDED_KEY } from '../decorators/allow-suspended.decorator';
 
 @Injectable()
 export class ActiveUserGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const allowSuspended = this.reflector.get<boolean>(
-      'allowSuspended',
-      context.getHandler(),
+    const allowSuspended = this.reflector.getAllAndOverride<boolean>(
+      ALLOW_SUSPENDED_KEY,
+      [context.getHandler(), context.getClass()],
     );
 
     if (allowSuspended) {

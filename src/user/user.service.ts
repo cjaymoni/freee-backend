@@ -18,6 +18,7 @@ import {
   FindOptionsWhere,
   DataSource,
   EntityManager,
+  QueryFailedError,
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { UserEntity } from './entities/user.entity';
@@ -34,6 +35,8 @@ import { FindUserDto } from './dto/find-user.dto';
 import { AppError } from 'src/common/app-error';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import { FirebaseService } from '../firebase/firebase.service';
+import { closeActiveRequests } from '../item-request/close-active-requests';
+import { isItemImagePublicId } from '../item/item-image-upload.options';
 
 type UploadFile = {
   buffer: Buffer;
@@ -146,6 +149,12 @@ export class UserService {
       source?: string;
       upsertOnConflict?: boolean;
       markOnboardedOnCreate?: boolean;
+      /**
+       * The signed-in user calling POST /user. The call may then only patch
+       * that user's own row; identifiers in the body are never used to pick
+       * which account gets written.
+       */
+      actingUserId?: string;
     } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -162,22 +171,32 @@ export class UserService {
       const source = options.source ?? 'unknown';
       this.logger.log(`[create][source=${source}] Creating user`);
 
-      const whereConditions: FindOptionsWhere<UserEntity>[] = [];
-      if (createUserDto.firebase_uid) {
-        whereConditions.push({ firebase_uid: createUserDto.firebase_uid });
+      let existingUser: UserEntity | null;
+      if (options.actingUserId) {
+        existingUser = await this.loadOwnProfileForPatch(
+          entityManager,
+          options.actingUserId,
+          createUserDto,
+        );
+      } else {
+        const whereConditions: FindOptionsWhere<UserEntity>[] = [];
+        if (createUserDto.firebase_uid) {
+          whereConditions.push({ firebase_uid: createUserDto.firebase_uid });
+        }
+        if (createUserDto.email) {
+          whereConditions.push({ email: createUserDto.email });
+        }
+        if (createUserDto.phone_number) {
+          whereConditions.push({ phone_number: createUserDto.phone_number });
+        }
+        existingUser = whereConditions.length
+          ? await entityManager.findOne(UserEntity, { where: whereConditions })
+          : null;
       }
-      if (createUserDto.email) {
-        whereConditions.push({ email: createUserDto.email });
-      }
-      if (createUserDto.phone_number) {
-        whereConditions.push({ phone_number: createUserDto.phone_number });
-      }
-      const existingUser = whereConditions.length
-        ? await entityManager.findOne(UserEntity, { where: whereConditions })
-        : null;
 
       if (existingUser) {
         const shouldPatchExisting =
+          !!options.actingUserId ||
           options.upsertOnConflict ||
           (createUserDto.firebase_uid &&
             existingUser.firebase_uid === createUserDto.firebase_uid);
@@ -217,10 +236,18 @@ export class UserService {
           is_onboarded: options.markOnboardedOnCreate
             ? true
             : existingUser.is_onboarded,
+          // A changed identifier has not been verified yet.
           is_email_verified:
-            options.is_email_verified ?? existingUser.is_email_verified,
+            options.is_email_verified ??
+            (createUserDto.email && createUserDto.email !== existingUser.email
+              ? false
+              : existingUser.is_email_verified),
           is_phone_verified:
-            options.is_phone_verified ?? existingUser.is_phone_verified,
+            options.is_phone_verified ??
+            (createUserDto.phone_number &&
+            createUserDto.phone_number !== existingUser.phone_number
+              ? false
+              : existingUser.is_phone_verified),
         };
 
         if (passwordHash) {
@@ -408,6 +435,50 @@ export class UserService {
     }
   }
 
+  /**
+   * Resolve the row POST /user may patch: always the caller's own. Rejects an
+   * email or phone that belongs to another account, and a password when the
+   * account already has one (that goes through /auth/change-password, which
+   * checks the current password). firebase_uid is set by the backend at
+   * sign-in, so a client-sent value is dropped.
+   */
+  private async loadOwnProfileForPatch(
+    manager: EntityManager,
+    userId: string,
+    dto: CreateUserDto,
+  ): Promise<UserEntity> {
+    const user = await manager
+      .createQueryBuilder(UserEntity, 'user')
+      .addSelect('user.password_hash')
+      .where('user.id = :userId', { userId })
+      .andWhere('user.is_deleted = false')
+      .getOne();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    dto.firebase_uid = undefined;
+
+    if (dto.email && dto.email !== user.email) {
+      const taken = await manager.findOne(UserEntity, {
+        where: { email: dto.email },
+      });
+      if (taken) throw new ConflictException('Email already exists');
+    }
+    if (dto.phone_number && dto.phone_number !== user.phone_number) {
+      const taken = await manager.findOne(UserEntity, {
+        where: { phone_number: dto.phone_number },
+      });
+      if (taken) throw new ConflictException('Phone number already exists');
+    }
+    if (dto.password && user.password_hash) {
+      throw new BadRequestException(
+        'Password is already set; use /auth/change-password',
+      );
+    }
+    return user;
+  }
+
   async findAll(
     findUserDto: FindUserDto,
   ): Promise<ServiceResponseDto<UserResponseDto[]>> {
@@ -509,6 +580,28 @@ export class UserService {
       if (!user) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
+      // Both columns are unique: answer a taken value with a 409 rather than
+      // letting the insert fail as a 500 carrying the raw constraint name.
+      if (updateUserDto.email && updateUserDto.email !== user.email) {
+        const taken = await entityManager.findOne(UserEntity, {
+          where: { email: updateUserDto.email },
+        });
+        if (taken && taken.id !== id) {
+          throw new ConflictException('Email already exists');
+        }
+      }
+      if (
+        updateUserDto.phone_number &&
+        updateUserDto.phone_number !== user.phone_number
+      ) {
+        const taken = await entityManager.findOne(UserEntity, {
+          where: { phone_number: updateUserDto.phone_number },
+        });
+        if (taken && taken.id !== id) {
+          throw new ConflictException('Phone number already exists');
+        }
+      }
+
       const { password, ...otherData } = updateUserDto;
       const updateData = {
         ...(otherData as any),
@@ -583,6 +676,15 @@ export class UserService {
         this.logger.error(
           `Error updating user ${id}: ${error.message}`,
           error.stack,
+        );
+      }
+      // A concurrent update claimed the value between the check and the write.
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as { code?: string } | undefined)?.code === '23505'
+      ) {
+        throw new AppError(
+          new ConflictException('Email or phone number already exists'),
         );
       }
       throw new AppError(error);
@@ -736,13 +838,22 @@ export class UserService {
             },
           );
 
+          await closeActiveRequests(
+            entityManager,
+            { userId: id },
+            deletedById ?? id,
+            'Account was deleted',
+          );
+
           const deletedUser = await entityManager.findOne(UserEntity, {
             where: { id },
           });
           return {
             user,
             deletedUser,
-            imageIds: images.map((image) => image.cloudinary_public_id),
+            imageIds: images
+              .map((image) => image.cloudinary_public_id)
+              .filter(isItemImagePublicId),
           };
         },
       );

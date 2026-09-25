@@ -8,6 +8,18 @@ import type { MulterOptions } from '@nestjs/platform-express/multer/interfaces/m
  */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+/** Cloudinary folder the server uploads item images into. */
+export const ITEM_IMAGE_FOLDER = 'items';
+
+/**
+ * Whether a public id is one of our item uploads. Item-image deletes only ever
+ * destroy these, so a row pointing at another asset (an avatar, a chat image)
+ * can never make the server delete it.
+ */
+export const isItemImagePublicId = (
+  publicId: string | null | undefined,
+): publicId is string => !!publicId?.startsWith(`${ITEM_IMAGE_FOLDER}/`);
+
 /** Files accepted in a single create or update request. */
 export const MAX_IMAGES_PER_REQUEST = 10;
 

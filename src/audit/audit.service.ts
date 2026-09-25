@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLogEntity } from './entities/audit-log.entity';
+import { isUUID } from 'class-validator';
 
 export interface AuditLogData {
   userId?: string;
@@ -99,6 +100,16 @@ export class AuditService {
     limit?: number;
     offset?: number;
   }): Promise<{ logs: AuditLogEntity[]; total: number }> {
+    // Both columns are uuid, so Postgres rejects anything else outright (a
+    // 500). No row can match a non-UUID, and the backoffice filters as the
+    // admin types, so a partly typed id is simply "no results".
+    if (
+      (filters.userId && !isUUID(filters.userId)) ||
+      (filters.entityId && !isUUID(filters.entityId))
+    ) {
+      return { logs: [], total: 0 };
+    }
+
     const query = this.auditLogRepository.createQueryBuilder('audit');
 
     if (filters.userId) {
@@ -157,6 +168,7 @@ export class AuditService {
     entityType: string,
     entityId: string,
   ): Promise<AuditLogEntity[]> {
+    if (!isUUID(entityId)) return [];
     return this.auditLogRepository.find({
       where: {
         entity_type: entityType,

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -12,6 +13,10 @@ import { ItemEntity } from './entities/item.entity';
 import { CreateItemImageDto } from './dto/create-item-image.dto';
 import { ItemImageResponseDto } from './dto/item-image-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
+import {
+  ITEM_IMAGE_FOLDER,
+  isItemImagePublicId,
+} from './item-image-upload.options';
 
 @Injectable()
 export class ItemImageService {
@@ -42,6 +47,21 @@ export class ItemImageService {
 
     if (item.user_id !== userId) {
       throw new ForbiddenException('You can only add images to your own items');
+    }
+
+    // The public id is later passed to Cloudinary's destroy when the image or
+    // item is deleted, so only accept an unused asset from our items folder.
+    if (!isItemImagePublicId(createDto.cloudinary_public_id)) {
+      throw new BadRequestException(
+        `cloudinary_public_id must be an image in the "${ITEM_IMAGE_FOLDER}" folder`,
+      );
+    }
+    const alreadyUsed = await this.imageRepository.exists({
+      // Includes soft-deleted rows (is_deleted), whose assets may be gone.
+      where: { cloudinary_public_id: createDto.cloudinary_public_id },
+    });
+    if (alreadyUsed) {
+      throw new ConflictException('This image is already attached to an item');
     }
 
     // If setting as primary, unset other primary images
@@ -238,9 +258,11 @@ export class ItemImageService {
     }
 
     const deleted = await this.imageRepository.save(image);
-    await this.cloudinaryService.deleteImagesQuietly([
-      image.cloudinary_public_id,
-    ]);
+    if (isItemImagePublicId(image.cloudinary_public_id)) {
+      await this.cloudinaryService.deleteImagesQuietly([
+        image.cloudinary_public_id,
+      ]);
+    }
     return {
       message: 'Image deleted successfully',
       data: ItemImageResponseDto.fromEntity(deleted),

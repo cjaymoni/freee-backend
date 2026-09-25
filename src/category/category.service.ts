@@ -20,21 +20,60 @@ export class CategoryService {
   ) {}
 
   /**
+   * Make `slug` available to a new or renamed category. The column is unique
+   * across every row, deleted ones included, so a soft-deleted category that
+   * still holds the slug gives it up by moving to a slug suffixed with its own
+   * id. A live holder is a real conflict.
+   */
+  private async claimSlug(slug: string, forId?: string): Promise<void> {
+    const holder = await this.categoryRepository.findOne({ where: { slug } });
+    if (!holder || holder.id === forId) return;
+
+    if (!holder.is_deleted) {
+      throw new ConflictException(
+        `Category with slug '${slug}' already exists`,
+      );
+    }
+
+    // 100 is the column length; the suffix is "~" plus a 36-char uuid.
+    await this.categoryRepository.update(holder.id, {
+      slug: `${slug.slice(0, 100 - 37)}~${holder.id}`,
+    });
+  }
+
+  /**
+   * Refuse a parent that sits below `categoryId`: A under B under A would
+   * leave neither top-level, and the list only returns top-level categories,
+   * so both would vanish from the app and the backoffice.
+   */
+  private async assertNotDescendant(
+    parentId: string,
+    categoryId: string,
+  ): Promise<void> {
+    const seen = new Set<string>();
+    let currentId: string | null = parentId;
+    while (currentId && !seen.has(currentId)) {
+      if (currentId === categoryId) {
+        throw new BadRequestException(
+          'A category cannot be moved under one of its own subcategories',
+        );
+      }
+      seen.add(currentId);
+      const current = await this.categoryRepository.findOne({
+        where: { id: currentId },
+        select: { id: true, parent_category_id: true },
+      });
+      currentId = current?.parent_category_id ?? null;
+    }
+  }
+
+  /**
    * Create a new category
    */
   async create(
     createDto: CreateCategoryDto,
   ): Promise<ServiceResponseDto<CategoryResponseDto>> {
-    // Check if slug already exists
-    const existing = await this.categoryRepository.findOne({
-      where: { slug: createDto.slug, is_deleted: false },
-    });
-
-    if (existing) {
-      throw new ConflictException(
-        `Category with slug '${createDto.slug}' already exists`,
-      );
-    }
+    await this.claimSlug(createDto.slug);
 
     // Validate parent category exists if provided
     if (createDto.parent_category_id) {
@@ -122,6 +161,11 @@ export class CategoryService {
       throw new NotFoundException(`Category with ID ${id} not found`);
     }
 
+    // Relations load unfiltered; show the same children the public list does.
+    category.subcategories = category.subcategories?.filter(
+      (sub) => !sub.is_deleted && sub.is_active,
+    );
+
     return {
       message: 'Category retrieved successfully',
       data: CategoryResponseDto.fromEntity(category, true),
@@ -144,6 +188,11 @@ export class CategoryService {
     if (!category) {
       throw new NotFoundException(`Category with slug '${slug}' not found`);
     }
+
+    // Relations load unfiltered; show the same children the public list does.
+    category.subcategories = category.subcategories?.filter(
+      (sub) => !sub.is_deleted && sub.is_active,
+    );
 
     return {
       message: 'Category retrieved successfully',
@@ -168,17 +217,8 @@ export class CategoryService {
       throw new NotFoundException(`Category with ID ${id} not found`);
     }
 
-    // Check slug uniqueness if being updated
     if (updateDto.slug && updateDto.slug !== category.slug) {
-      const existing = await this.categoryRepository.findOne({
-        where: { slug: updateDto.slug, is_deleted: false },
-      });
-
-      if (existing) {
-        throw new ConflictException(
-          `Category with slug '${updateDto.slug}' already exists`,
-        );
-      }
+      await this.claimSlug(updateDto.slug, id);
     }
 
     // Validate parent category if being updated
@@ -187,6 +227,7 @@ export class CategoryService {
       if (updateDto.parent_category_id === id) {
         throw new BadRequestException('Category cannot be its own parent');
       }
+      await this.assertNotDescendant(updateDto.parent_category_id, id);
 
       const parent = await this.categoryRepository.findOne({
         where: { id: updateDto.parent_category_id, is_deleted: false },

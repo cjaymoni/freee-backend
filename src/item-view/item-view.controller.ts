@@ -8,6 +8,9 @@ import {
   UseGuards,
   Request,
   Ip,
+  ParseUUIDPipe,
+  ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,6 +25,7 @@ import {
 import { ItemViewService } from './item-view.service';
 import { CreateItemViewDto } from './dto/create-item-view.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { ItemViewResponseDto } from './dto/item-view-response.dto';
 
@@ -32,6 +36,11 @@ export class ItemViewController {
   constructor(private readonly itemViewService: ItemViewService) {}
 
   @Post()
+  // Without a guard req.user is never populated, so a signed-in view was
+  // stored as anonymous and counted a second time next to the one
+  // GET /items/:id records for the same viewer.
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Record an item view (authenticated or anonymous)',
     description:
@@ -121,10 +130,13 @@ export class ItemViewController {
   })
   @ApiResponse({ status: 404, description: 'Item not found' })
   async getItemViewStats(
-    @Param('itemId') itemId: string,
-    @Query('days') days: number = 30,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Query('days', new ParseIntPipe({ optional: true })) days = 30,
   ) {
-    return await this.itemViewService.getItemViewStats(itemId, Number(days));
+    if (days < 1 || days > 365) {
+      throw new BadRequestException('days must be between 1 and 365');
+    }
+    return await this.itemViewService.getItemViewStats(itemId, days);
   }
 
   @Get('history')

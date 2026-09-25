@@ -31,6 +31,8 @@ import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { ItemUserDto } from '../item/dto/item-user.dto';
 import { ChatService } from '../chat/chat.service';
 import { SystemEvent } from '../chat/entities/message.entity';
+import { BlockedUser } from '../moderation/entities/blocked-user.entity';
+import { closeActiveRequests } from './close-active-requests';
 
 @Injectable()
 export class ItemRequestService {
@@ -201,12 +203,35 @@ export class ItemRequestService {
         // duplicate-request check below cannot be raced.
         const item = await this.lockItem(manager, item_id);
 
-        if (item.status !== ItemStatus.AVAILABLE) {
+        if (item.is_deleted || item.status !== ItemStatus.AVAILABLE) {
           throw new BadRequestException('Item is not available for request');
         }
 
         if (item.user_id === requesterId) {
           throw new BadRequestException('Cannot request your own item');
+        }
+
+        // A request opens a thread with the owner and pushes them a card, so
+        // it is a new approach like a chat message and obeys blocks the same
+        // way, in either direction and with the same neutral wording.
+        const blocked = await manager.exists(BlockedUser, {
+          where: [
+            {
+              blockerId: item.user_id,
+              blockedId: requesterId,
+              isDeleted: false,
+            },
+            {
+              blockerId: requesterId,
+              blockedId: item.user_id,
+              isDeleted: false,
+            },
+          ],
+        });
+        if (blocked) {
+          throw new ForbiddenException(
+            'You can no longer exchange messages with this user',
+          );
         }
 
         // Check for existing pending request
@@ -318,7 +343,7 @@ export class ItemRequestService {
         // already has a confirmed request (or has been picked up / withdrawn).
         // Without this check two pending requests could both be confirmed and
         // both holders could then confirm pickup.
-        if (item.status !== ItemStatus.AVAILABLE) {
+        if (item.is_deleted || item.status !== ItemStatus.AVAILABLE) {
           throw new ConflictException(
             'This item is no longer available to confirm; it already has a confirmed request or is not available',
           );
@@ -373,7 +398,7 @@ export class ItemRequestService {
     try {
       const result = await this.dataSource.transaction(async (manager) => {
         const itemId = await this.findRequestItemId(manager, requestId);
-        await this.lockItem(manager, itemId);
+        const item = await this.lockItem(manager, itemId);
         const request = await this.loadRequestUnderLock(manager, requestId);
 
         // Check if user is either requester or owner
@@ -400,8 +425,9 @@ export class ItemRequestService {
         // "leave unchanged" instead of writing the column.
         request.cancellation_reason = cancelDto.cancellation_reason ?? null;
 
-        // If request was confirmed, make item available again
-        if (originalStatus === RequestStatus.CONFIRMED) {
+        // If request was confirmed, make item available again - but never a
+        // deleted one, which would then be requestable and handed over again.
+        if (originalStatus === RequestStatus.CONFIRMED && !item.is_deleted) {
           await manager.update(
             ItemEntity,
             { id: request.item_id },
@@ -456,11 +482,21 @@ export class ItemRequestService {
     try {
       const result = await this.dataSource.transaction(async (manager) => {
         const itemId = await this.findRequestItemId(manager, requestId);
-        await this.lockItem(manager, itemId);
+        const item = await this.lockItem(manager, itemId);
         const request = await this.loadRequestUnderLock(manager, requestId);
 
         if (request.requester_id !== requesterId) {
           throw new ForbiddenException('Only the requester can confirm pickup');
+        }
+
+        if (item.is_deleted) {
+          throw new ConflictException('This item has been removed');
+        }
+
+        // A confirmed request holds the item's reservation; anything else
+        // means it was already handed over or released.
+        if (item.status !== ItemStatus.RESERVED) {
+          throw new ConflictException('This item is no longer reserved');
         }
 
         if (request.status !== RequestStatus.CONFIRMED) {
@@ -483,7 +519,18 @@ export class ItemRequestService {
           { status: ItemStatus.PICKED_UP, picked_by_id: requesterId },
         );
 
-        return manager.save(request);
+        const completed = await manager.save(request);
+
+        // Everyone else still waiting can never be confirmed now; close their
+        // requests instead of leaving them pending forever.
+        await closeActiveRequests(
+          manager,
+          { itemIds: [request.item_id] },
+          request.owner_id,
+          'Item was picked up by another requester',
+        );
+
+        return completed;
       });
 
       this.logger.log(`Pickup confirmed`);

@@ -8,12 +8,7 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Repository,
-  DataSource,
-  FindOptionsWhere,
-  QueryFailedError,
-} from 'typeorm';
+import { Repository, DataSource, QueryFailedError } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomInt } from 'crypto';
@@ -155,7 +150,9 @@ export class AuthService {
         message: 'Registration successful. Verification code sent to email.',
       };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -210,7 +207,9 @@ export class AuthService {
 
       return { message: 'Verification code resent successfully' };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -267,7 +266,12 @@ export class AuthService {
       await queryRunner.commitTransaction();
       return { message: 'Email verified successfully' };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      // A wrong code commits its attempt_count before throwing, so the
+      // transaction may already be over; rolling that back would replace
+      // the 400 with TransactionNotStartedError (a 500).
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -299,27 +303,27 @@ export class AuthService {
       const sessionRepo = manager.getRepository(UserSessionEntity);
 
       let user = await userRepo.findOne({ where: { firebase_uid } });
+      // The token's email, unless another account holds it verified and the
+      // token can't prove ownership; then the new account goes without it.
+      let usableEmail = email;
 
       if (!user) {
-        const whereConditions: FindOptionsWhere<UserEntity>[] = [];
-        if (email) {
-          whereConditions.push({ email });
-        }
-        if (phone_number) {
-          whereConditions.push({ phone_number });
-        }
-
-        if (whereConditions.length > 0) {
-          user = await userRepo.findOne({ where: whereConditions });
-        }
+        const link = await this.resolveFirebaseLink(userRepo, {
+          email,
+          emailVerified: decodedToken.email_verified === true,
+          phone_number,
+        });
+        user = link.user;
+        usableEmail = link.usableEmail;
 
         if (user) {
           user.firebase_uid = firebase_uid;
-          if (email && !user.email) {
-            user.email = email;
+          if (usableEmail && !user.email) {
+            user.email = usableEmail;
           }
           if (phone_number && !user.phone_number) {
             user.phone_number = phone_number;
+            user.is_phone_verified = true;
           }
           await userRepo.save(user);
         }
@@ -340,7 +344,7 @@ export class AuthService {
 
       if (!user) {
         const createUserDto: CreateUserDto = {
-          email: email || undefined,
+          email: usableEmail || undefined,
           phone_number,
           firebase_uid,
         };
@@ -351,10 +355,13 @@ export class AuthService {
             undefined,
             {
               is_active: true,
-              is_email_verified: decodedToken.email_verified || false,
+              is_email_verified:
+                !!usableEmail && decodedToken.email_verified === true,
               is_phone_verified: !!phone_number,
               source: 'auth.firebaseAuthenticate',
-              upsertOnConflict: true,
+              // Linking to an existing row is decided above; anything that
+              // still collides here is a concurrent sign-in, handled below.
+              upsertOnConflict: false,
             },
             manager,
           );
@@ -367,17 +374,9 @@ export class AuthService {
             throw error;
           }
 
-          const conflictWhere: FindOptionsWhere<UserEntity>[] = [
-            { firebase_uid },
-          ];
-          if (email) {
-            conflictWhere.push({ email });
-          }
-          if (phone_number) {
-            conflictWhere.push({ phone_number });
-          }
-
-          user = await userRepo.findOne({ where: conflictWhere });
+          // Only a concurrent sign-in with this same Firebase account may be
+          // adopted; matching on email/phone would re-open account linking.
+          user = await userRepo.findOne({ where: { firebase_uid } });
           if (!user) {
             throw error;
           }
@@ -613,6 +612,52 @@ export class AuthService {
     }
   }
 
+  /**
+   * Decide which existing account, if any, a first-time Firebase sign-in
+   * belongs to. An identifier only links when both sides have verified it:
+   * Firebase phone numbers are always verified; emails only when the token
+   * says so. An unverified claim on the same identifier by another account
+   * is released to the verified token holder, so nobody can pre-claim a
+   * victim's email or number and have their sign-in land in the claimant's
+   * account.
+   */
+  private async resolveFirebaseLink(
+    userRepo: Repository<UserEntity>,
+    token: { email?: string; emailVerified: boolean; phone_number?: string },
+  ): Promise<{ user: UserEntity | null; usableEmail?: string }> {
+    let linked: UserEntity | null = null;
+    let usableEmail = token.email;
+
+    if (token.phone_number) {
+      const holder = await userRepo.findOne({
+        where: { phone_number: token.phone_number },
+      });
+      if (holder?.is_phone_verified) {
+        linked = holder;
+      } else if (holder) {
+        await userRepo.update(holder.id, {
+          phone_number: null as unknown as string,
+        });
+      }
+    }
+
+    if (token.email) {
+      const holder = await userRepo.findOne({ where: { email: token.email } });
+      if (holder && holder.id !== linked?.id) {
+        if (holder.is_email_verified && token.emailVerified && !linked) {
+          linked = holder;
+        } else if (!holder.is_email_verified && token.emailVerified) {
+          await userRepo.update(holder.id, { email: null });
+        } else {
+          // Held by an account we aren't linking to; keep it off ours.
+          usableEmail = undefined;
+        }
+      }
+    }
+
+    return { user: linked, usableEmail };
+  }
+
   async refresh(refreshToken: string, ip: string, userAgent: string) {
     const session = await this.userSessionRepository.findOne({
       where: { refresh_token: refreshToken, is_active: true },
@@ -669,7 +714,9 @@ export class AuthService {
         refresh_token: newRefreshToken,
       };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -717,6 +764,10 @@ export class AuthService {
   }
 
   async logout(userId: string, sessionToken: string) {
+    // Without a token the UPDATE matches nothing and logout silently no-ops.
+    if (!sessionToken) {
+      throw new UnauthorizedException('Invalid token payload');
+    }
     await this.userSessionRepository.update(
       { user: { id: userId }, session_token: sessionToken, is_active: true },
       { is_active: false },
@@ -770,7 +821,9 @@ export class AuthService {
 
       return { message: 'Password reset code sent to email.' };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -827,7 +880,12 @@ export class AuthService {
       await queryRunner.commitTransaction();
       return { message: 'Password reset successfully' };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      // A wrong code commits its attempt_count before throwing, so the
+      // transaction may already be over; rolling that back would replace
+      // the 400 with TransactionNotStartedError (a 500).
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();

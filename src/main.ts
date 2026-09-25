@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import helmet from 'helmet';
 import * as express from 'express';
 
@@ -40,7 +41,9 @@ async function bootstrap() {
     }),
   );
 
-  // Enable class-transformer serialization globally
+  // Every HTTP error in the documented ApiError shape.
+  app.useGlobalFilters(new ApiExceptionFilter());
+
   // Enable class-transformer serialization globally
   app.useGlobalInterceptors(
     new ClassSerializerInterceptor(app.get(Reflector)),
