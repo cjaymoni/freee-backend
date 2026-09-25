@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ModerationService } from './moderation.service';
 import { BlockedUser } from './entities/blocked-user.entity';
@@ -141,5 +141,56 @@ describe('ModerationService targets that do not exist', () => {
     await expect(
       service.blockUser({ blockedId: 'nope' } as never, 'me'),
     ).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('ModerationService.resolveUserReport', () => {
+  const setup = (role: string) => {
+    const update = jest.fn().mockResolvedValue({});
+    const save = jest.fn((r: unknown) => Promise.resolve(r));
+    const service = build({
+      reportedUser: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'rep-1',
+          reportedUserId: 'target',
+          reportedUser: { id: 'target', role },
+        }),
+        save,
+      },
+      userService: { update },
+    });
+    return { service, update, save };
+  };
+
+  it.each(['ADMIN', 'MODERATOR'])(
+    'refuses to suspend a %s account from a report',
+    async (role) => {
+      const { service, update, save } = setup(role);
+
+      await expect(
+        service.resolveUserReport(
+          'rep-1',
+          {
+            status: 'resolved',
+            actionTaken: ActionTaken.USER_SUSPENDED,
+          } as never,
+          'mod-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(update).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+    },
+  );
+
+  it('suspends a regular user', async () => {
+    const { service, update } = setup('USER');
+
+    await service.resolveUserReport(
+      'rep-1',
+      { status: 'resolved', actionTaken: ActionTaken.USER_SUSPENDED } as never,
+      'mod-1',
+    );
+
+    expect(update).toHaveBeenCalledWith('target', { is_active: false });
   });
 });

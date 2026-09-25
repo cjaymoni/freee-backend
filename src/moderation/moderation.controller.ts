@@ -23,7 +23,7 @@ import { AllowSuspended } from '../auth/decorators/allow-suspended.decorator';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { STAFF_ROLES, UserRole, isStaff } from '../user/entities/user.entity';
 
 @ApiTags('Moderation')
 @Controller('moderation')
@@ -73,8 +73,8 @@ export class ModerationController {
 
   @Patch('items/report/:id/resolve')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Resolve item report (admin)' })
+  @Roles(...STAFF_ROLES)
+  @ApiOperation({ summary: 'Resolve item report (staff)' })
   resolveItemReport(
     @Param('id') id: string,
     @Body() dto: ResolveReportDto,
@@ -85,8 +85,8 @@ export class ModerationController {
 
   @Patch('users/report/:id/resolve')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Resolve user report (admin)' })
+  @Roles(...STAFF_ROLES)
+  @ApiOperation({ summary: 'Resolve user report (staff)' })
   resolveUserReport(
     @Param('id') id: string,
     @Body() dto: ResolveReportDto,
@@ -96,11 +96,11 @@ export class ModerationController {
   }
 
   // The list endpoints stay open to regular users (existing clients may use
-  // them) but only return that user's own records; admins see everything.
+  // them) but only return that user's own records; staff see everything.
   @Get('items/reports')
   @ApiOperation({
     summary: 'Get item reports',
-    description: 'Admins get all reports; other users get the ones they filed.',
+    description: 'Staff get all reports; other users get the ones they filed.',
   })
   getItemReports(
     @GetUser('id') userId: string,
@@ -109,14 +109,14 @@ export class ModerationController {
   ) {
     return this.moderationService.getItemReports(
       status,
-      role === UserRole.ADMIN ? undefined : userId,
+      isStaff(role) ? undefined : userId,
     );
   }
 
   @Get('users/reports')
   @ApiOperation({
     summary: 'Get user reports',
-    description: 'Admins get all reports; other users get the ones they filed.',
+    description: 'Staff get all reports; other users get the ones they filed.',
   })
   getUserReports(
     @GetUser('id') userId: string,
@@ -125,7 +125,7 @@ export class ModerationController {
   ) {
     return this.moderationService.getUserReports(
       status,
-      role === UserRole.ADMIN ? undefined : userId,
+      isStaff(role) ? undefined : userId,
     );
   }
 
@@ -142,7 +142,7 @@ export class ModerationController {
   @Get('complaints')
   @ApiOperation({
     summary: 'Get complaints',
-    description: 'Admins get all complaints; other users get their own.',
+    description: 'Staff get all complaints; other users get their own.',
   })
   getComplaints(
     @GetUser('id') userId: string,
@@ -151,7 +151,7 @@ export class ModerationController {
   ) {
     return this.moderationService.getComplaints(
       status,
-      role === UserRole.ADMIN ? undefined : userId,
+      isStaff(role) ? undefined : userId,
     );
   }
 
@@ -164,8 +164,8 @@ export class ModerationController {
 
   @Patch('complaints/:id/resolve')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Resolve complaint (admin)' })
+  @Roles(...STAFF_ROLES)
+  @ApiOperation({ summary: 'Resolve complaint (staff)' })
   resolveComplaint(
     @Param('id') id: string,
     @Body() dto: ResolveComplaintDto,

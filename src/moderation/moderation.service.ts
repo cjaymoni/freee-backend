@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
+import { isStaff } from '../user/entities/user.entity';
 import { ReportedItem } from './entities/reported-item.entity';
 import { ReportedUser } from './entities/reported-user.entity';
 import { BlockedUser } from './entities/blocked-user.entity';
@@ -187,7 +189,10 @@ export class ModerationService {
     dto: ResolveReportDto,
     reviewerId: string,
   ) {
-    const report = await this.reportedUserRepo.findOne({ where: { id } });
+    const report = await this.reportedUserRepo.findOne({
+      where: { id },
+      relations: ['reportedUser'],
+    });
     if (!report) {
       throw new NotFoundException('Report not found');
     }
@@ -206,6 +211,13 @@ export class ModerationService {
       dto.actionTaken === ActionTaken.USER_SUSPENDED ||
       dto.actionTaken === ActionTaken.ITEM_REMOVED
     ) {
+      // Moderators resolve reports too; neither they nor an admin may lock a
+      // staff account out from a report.
+      if (isStaff(report.reportedUser?.role)) {
+        throw new ForbiddenException(
+          'Staff accounts cannot be suspended from a report',
+        );
+      }
       await this.userService.update(report.reportedUserId, {
         is_active: false,
       });

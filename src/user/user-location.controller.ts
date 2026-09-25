@@ -26,7 +26,7 @@ import { GetUser } from '../common/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from './entities/user.entity';
+import { STAFF_ROLES } from './entities/user.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 
 @ApiTags('User Locations')
@@ -103,8 +103,8 @@ export class UserLocationController {
 
   @Get('admin/all')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get all locations across all users (Admin only)' })
+  @Roles(...STAFF_ROLES)
+  @ApiOperation({ summary: 'Get all locations across all users (staff only)' })
   @ApiResponse({
     status: 200,
     description:

@@ -2,6 +2,25 @@
 
 As of 2026-09-25. Covers the backend (`free-backend`) and the back office (`free-backoffice`, Next.js).
 
+## Status
+
+Updated as each piece lands. ✅ done · 🚧 in progress · ⬜ not started.
+
+| Phase | Item | Status | Notes |
+| --- | --- | --- | --- |
+| 0 | `MODERATOR` role + migration | ✅ | `1791000000000-AddModeratorRole`; `STAFF_ROLES` / `isStaff()` in `user.entity.ts`. Not yet run against a database |
+| 0 | Moderators on existing staff endpoints | ✅ | User list/detail, all-locations, report and complaint queues + resolve. Staff accounts can't be suspended from a report |
+| 0 | `AdminModule` + `AdminAuditService` | ✅ | `src/admin/`; every admin write records actor, role, old/new values, reason |
+| 0 | `PATCH /admin/users/:id/role` | ✅ | Admin only; ends the user's sessions; can't change your own role |
+| 0 | Back office: moderator login, role in session, admin-only actions hidden | ✅ | `bo_staff` cookie → `useStaff()` / `useIsAdmin()`. Admin only: role changes, deactivate, feature/remove listings, category edits, Settings, Notifications |
+| 0 | Back office: V1 sidebar + placeholders | ✅ | Items → `/listings`, moderation queues → `/reports/*`, complaints → `/support`, audit → `/settings/audit`; old URLs redirect. Requests, Give-aways, Locations, Notifications are placeholders |
+| 1 | Users + Listings enforcement | ⬜ | |
+| 2 | Reports and moderation | ⬜ | |
+| 3 | Requests and Give-aways | ⬜ | |
+| 4 | Dashboard and Locations | ⬜ | |
+| 5 | Categories and Support | ⬜ | |
+| 6 | Notifications | ⬜ | |
+
 ## Where things stand
 
 The back office sends every call through `/api/backend/*` to this API. It already covers moderation queues, items, categories, users and the audit log. The backend has almost none of the admin surface the spec needs. What it does have is the right raw data, so most of the work is admin endpoints and aggregate queries, not new domain models.
@@ -34,8 +53,8 @@ Everything else depends on this.
 
 - Add `MODERATOR` to `UserRole` (migration).
 - Define the permission matrix:
-  - Moderator: view everything, act on reports, hide or restore listings, suspend users.
-  - Admin only: permanent bans, categories, notifications, role changes, settings.
+  - Moderator: view users, listings, requests and reports; act on reports; hide or restore listings; suspend users.
+  - Admin only: permanent bans, categories, notifications, role changes, settings (including the audit log), featuring and removing listings outright.
 - Create `AdminModule` with the audit helper.
 - `PATCH /admin/users/:id/role` (admin only).
 
