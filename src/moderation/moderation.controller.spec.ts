@@ -28,9 +28,12 @@ describe('ModerationController list scoping', () => {
     ['getItemReports', 'getItemReports'],
     ['getUserReports', 'getUserReports'],
     ['getComplaints', 'getComplaints'],
-  ] as const)('%s: admins see everything', async (handler, method) => {
-    await controller[handler]('admin-id', UserRole.ADMIN, 'pending');
-    expect(service[method]).toHaveBeenCalledWith('pending', undefined);
+  ] as const)('%s: staff see everything', async (handler, method) => {
+    for (const role of [UserRole.ADMIN, UserRole.MODERATOR]) {
+      service[method].mockClear();
+      await controller[handler]('staff-id', role, 'pending');
+      expect(service[method]).toHaveBeenCalledWith('pending', undefined);
+    }
   });
 
   it.each([

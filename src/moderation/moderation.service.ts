@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
-import { isStaff } from '../user/entities/user.entity';
+import { UserRole, isStaff } from '../user/entities/user.entity';
 import { ReportedItem } from './entities/reported-item.entity';
 import { ReportedUser } from './entities/reported-user.entity';
 import { BlockedUser } from './entities/blocked-user.entity';
@@ -60,6 +60,13 @@ async function saveOr404<T>(save: Promise<T>, message: string): Promise<T> {
       throw new NotFoundException(message);
     }
     throw error;
+  }
+}
+
+/** Staff can file reports too; someone else has to review them. */
+function assertNotOwnReport(reporterId: string, reviewerId: string) {
+  if (reporterId === reviewerId) {
+    throw new ForbiddenException('You cannot review a report you filed');
   }
 }
 
@@ -151,11 +158,21 @@ export class ModerationService {
     id: string,
     dto: ResolveReportDto,
     reviewerId: string,
+    reviewerRole: UserRole,
   ) {
+    // Removing deletes the listing's images for good, so it stays admin only;
+    // moderators get a reversible hide in Phase 1.
+    if (
+      dto.actionTaken === ActionTaken.ITEM_REMOVED &&
+      reviewerRole !== UserRole.ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can remove a listing');
+    }
     const report = await this.reportedItemRepo.findOne({ where: { id } });
     if (!report) {
       throw new NotFoundException('Report not found');
     }
+    assertNotOwnReport(report.reporterId, reviewerId);
     Object.assign(report, {
       ...dto,
       reviewedBy: reviewerId,
@@ -196,6 +213,7 @@ export class ModerationService {
     if (!report) {
       throw new NotFoundException('Report not found');
     }
+    assertNotOwnReport(report.reporterId, reviewerId);
     Object.assign(report, {
       ...dto,
       reviewedBy: reviewerId,

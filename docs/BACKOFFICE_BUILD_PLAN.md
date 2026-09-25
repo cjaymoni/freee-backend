@@ -9,10 +9,10 @@ Updated as each piece lands. ✅ done · 🚧 in progress · ⬜ not started.
 | Phase | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 0 | `MODERATOR` role + migration | ✅ | `1791000000000-AddModeratorRole`; `STAFF_ROLES` / `isStaff()` in `user.entity.ts`. Not yet run against a database |
-| 0 | Moderators on existing staff endpoints | ✅ | User list/detail, all-locations, report and complaint queues + resolve. Staff accounts can't be suspended from a report |
+| 0 | Moderators on existing staff endpoints | ✅ | User list/detail, all-locations, report and complaint queues + resolve. Staff accounts can't be suspended from a report; `item_removed` is admin only; nobody reviews a report they filed. `src/auth/roles-matrix.spec.ts` pins every `@Roles` handler |
 | 0 | `AdminModule` + `AdminAuditService` | ✅ | `src/admin/`; every admin write records actor, role, old/new values, reason |
-| 0 | `PATCH /admin/users/:id/role` | ✅ | Admin only; ends the user's sessions; can't change your own role |
-| 0 | Back office: moderator login, role in session, admin-only actions hidden | ✅ | `bo_staff` cookie → `useStaff()` / `useIsAdmin()`. Admin only: role changes, deactivate, feature/remove listings, category edits, Settings, Notifications |
+| 0 | `PATCH /admin/users/:id/role` | ✅ | Admin only; ends the user's sessions; can't change your own role. The only way to change a role: `PATCH /user/:id` now rejects `role` |
+| 0 | Back office: moderator login, role in session, admin-only actions hidden | ✅ | `bo_staff` cookie → `useStaff()` / `useIsAdmin()`, renewed with each token refresh; if missing, looked up via `/auth/me`, else shown as moderator. Admin only: role changes, deactivate, feature/remove listings, category edits, Settings, Notifications |
 | 0 | Back office: V1 sidebar + placeholders | ✅ | Items → `/listings`, moderation queues → `/reports/*`, complaints → `/support`, audit → `/settings/audit`; old URLs redirect. Requests, Give-aways, Locations, Notifications are placeholders |
 | 1 | Users + Listings enforcement | ⬜ | |
 | 2 | Reports and moderation | ⬜ | |

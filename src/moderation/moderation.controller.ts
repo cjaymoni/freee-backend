@@ -74,13 +74,18 @@ export class ModerationController {
   @Patch('items/report/:id/resolve')
   @UseGuards(RolesGuard)
   @Roles(...STAFF_ROLES)
-  @ApiOperation({ summary: 'Resolve item report (staff)' })
+  @ApiOperation({
+    summary: 'Resolve item report (staff)',
+    description:
+      'Removing the item (item_removed) is admin only. Nobody can review a report they filed.',
+  })
   resolveItemReport(
     @Param('id') id: string,
     @Body() dto: ResolveReportDto,
     @GetUser('id') userId: string,
+    @GetUser('role') role: UserRole,
   ) {
-    return this.moderationService.resolveItemReport(id, dto, userId);
+    return this.moderationService.resolveItemReport(id, dto, userId, role);
   }
 
   @Patch('users/report/:id/resolve')
