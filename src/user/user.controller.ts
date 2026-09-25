@@ -252,15 +252,25 @@ export class UserController {
     }
     const previous = await this.userService.findOneEntity(userId);
     const upload = await this.cloudinaryService.uploadAvatar(file, userId);
-    const result = await this.userService.update(userId, {
-      cloudinary_avatar_public_id: upload.publicId,
-      cloudinary_avatar_url: upload.secureUrl,
-    });
+    const previousId = previous?.cloudinary_avatar_public_id;
+    let result: ServiceResponseDto<UserResponseDto>;
+    try {
+      result = await this.userService.update(userId, {
+        cloudinary_avatar_public_id: upload.publicId,
+        cloudinary_avatar_url: upload.secureUrl,
+      });
+    } catch (error) {
+      // Don't leak the new upload, unless it overwrote the avatar the user
+      // still references.
+      if (previousId !== upload.publicId) {
+        await this.cloudinaryService.deleteImagesQuietly([upload.publicId]);
+      }
+      throw error;
+    }
 
     // uploadAvatar overwrites avatars/user_<id> in place, but an avatar set
     // during onboarding (POST /user) lives under a different id and would
     // otherwise be orphaned.
-    const previousId = previous?.cloudinary_avatar_public_id;
     if (previousId && previousId !== upload.publicId) {
       await this.cloudinaryService.deleteImagesQuietly([previousId]);
     }

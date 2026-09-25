@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { ItemEntity, ItemStatus, PickupType } from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
 import { LocationEntity } from '../user/entities/location.entity';
@@ -702,7 +702,7 @@ export class ItemService {
           await manager
             .getRepository(ItemImageEntity)
             .update(
-              { item_id: item.id, is_deleted: false },
+              { id: In(images.map((image) => image.id)) },
               { is_deleted: true, deleted_at: deletedAt },
             );
         }
