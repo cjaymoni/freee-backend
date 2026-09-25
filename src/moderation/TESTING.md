@@ -62,7 +62,7 @@ PATCH /moderation/users/report/<report_id>/resolve
 Authorization: Bearer <admin_token>
 {
   "status": "resolved",
-  "actionTaken": "item_removed",
+  "actionTaken": "user_suspended",
   "resolutionNotes": "User suspended for testing"
 }
 ```

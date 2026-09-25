@@ -60,4 +60,7 @@ export class CategoryEntity {
 
   @OneToMany(() => ItemEntity, (item) => item.category)
   items: ItemEntity[];
+
+  /** Not a column: populated by loadRelationCountAndMap in list queries. */
+  item_count?: number;
 }

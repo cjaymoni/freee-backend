@@ -16,7 +16,7 @@ import { ModerationComplaint } from './entities/moderation-complaint.entity';
 import { CreateReportedItemDto } from './dto/create-reported-item.dto';
 import { CreateReportedUserDto } from './dto/create-reported-user.dto';
 import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
-import { ResolveReportDto } from './dto/resolve-report.dto';
+import { ActionTaken, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { ResolveComplaintDto } from './dto/resolve-complaint.dto';
 
@@ -110,7 +110,7 @@ export class ModerationService {
         : null,
     });
 
-    if (dto.actionTaken === 'item_removed') {
+    if (dto.actionTaken === ActionTaken.ITEM_REMOVED) {
       await this.itemService.adminRemove(
         reviewerId,
         report.itemId,
@@ -139,7 +139,12 @@ export class ModerationService {
         : null,
     });
 
-    if (dto.actionTaken === 'item_removed') {
+    // item_removed is the pre-user_suspended way of suspending from a user
+    // report; still honoured so existing admin tooling keeps working.
+    if (
+      dto.actionTaken === ActionTaken.USER_SUSPENDED ||
+      dto.actionTaken === ActionTaken.ITEM_REMOVED
+    ) {
       await this.userService.update(report.reportedUserId, {
         is_active: false,
       });
@@ -148,20 +153,44 @@ export class ModerationService {
     return this.reportedUserRepo.save(report);
   }
 
-  async getItemReports(status?: string) {
+  /**
+   * All item reports for admins. Pass `reporterId` to list only the reports a
+   * regular user filed; the reviewing admin is then left out.
+   */
+  async getItemReports(status?: string, reporterId?: string) {
     return this.reportedItemRepo.find({
-      where: status ? { status } : {},
-      relations: ['item', 'reporter', 'reviewer'],
+      where: { ...(status && { status }), ...(reporterId && { reporterId }) },
+      relations: reporterId
+        ? ['item', 'reporter']
+        : ['item', 'reporter', 'reviewer'],
       order: { priority: 'DESC', createdAt: 'DESC' },
     });
   }
 
-  async getUserReports(status?: string) {
-    return this.reportedUserRepo.find({
-      where: status ? { status } : {},
-      relations: ['reportedUser', 'reporter', 'reviewer'],
+  /**
+   * All user reports for admins. Pass `reporterId` to list only the reports a
+   * regular user filed; the reported user is then reduced to public profile
+   * fields and the reviewing admin is left out.
+   */
+  async getUserReports(status?: string, reporterId?: string) {
+    const reports = await this.reportedUserRepo.find({
+      where: { ...(status && { status }), ...(reporterId && { reporterId }) },
+      relations: reporterId
+        ? ['reportedUser', 'reporter']
+        : ['reportedUser', 'reporter', 'reviewer'],
       order: { priority: 'DESC', createdAt: 'DESC' },
     });
+    if (!reporterId) return reports;
+
+    return reports.map((report) => ({
+      ...report,
+      reportedUser: report.reportedUser && {
+        id: report.reportedUser.id,
+        first_name: report.reportedUser.first_name,
+        last_name: report.reportedUser.last_name,
+        cloudinary_avatar_url: report.reportedUser.cloudinary_avatar_url,
+      },
+    }));
   }
 
   async createComplaint(dto: CreateComplaintDto, userId: string) {
@@ -189,10 +218,11 @@ export class ModerationService {
     return this.complaintRepo.save(complaint);
   }
 
-  async getComplaints(status?: string) {
+  /** All complaints for admins, or only `userId`'s own for a regular user. */
+  async getComplaints(status?: string, userId?: string) {
     return this.complaintRepo.find({
-      where: status ? { status } : {},
-      relations: ['user', 'reviewer'],
+      where: { ...(status && { status }), ...(userId && { userId }) },
+      relations: userId ? ['user'] : ['user', 'reviewer'],
       order: { createdAt: 'DESC' },
     });
   }

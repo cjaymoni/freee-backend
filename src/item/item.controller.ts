@@ -11,6 +11,7 @@ import {
   Req,
   UseInterceptors,
   UploadedFiles,
+  BadRequestException,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
@@ -74,7 +75,10 @@ export class ItemController {
         longitude: { type: 'number', example: -0.187 },
         pickup_date: { type: 'string', format: 'date' },
         pickup_time: { type: 'string', example: '14:30' },
-        pickup_type: { type: 'string', enum: ['anytime', 'contact_me', 'specific_date'] },
+        pickup_type: {
+          type: 'string',
+          enum: ['anytime', 'contact_me', 'specific_date'],
+        },
         images: { type: 'array', items: { type: 'string', format: 'binary' } },
       },
     },
@@ -154,7 +158,8 @@ export class ItemController {
     name: 'radius',
     required: false,
     type: Number,
-    description: 'Radius in km (default: 10). Only applied when lat & lng are provided',
+    description:
+      'Radius in km (default: 10). Only applied when lat & lng are provided',
   })
   @ApiResponse({
     status: 200,
@@ -369,7 +374,11 @@ export class ItemController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Soft delete an item' })
+  @ApiOperation({
+    summary: 'Soft delete an item',
+    description:
+      'Owners may delete their own items. Admins may remove any item.',
+  })
   @ApiParam({ name: 'id', description: 'Item ID' })
   @ApiQuery({
     name: 'reason',
@@ -398,9 +407,17 @@ export class ItemController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async remove(
     @GetUser('userId') userId: string,
+    @GetUser('role') role: UserRole,
     @Param('id') id: string,
     @Query('reason') reason?: string,
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
+    // deletion_reason is varchar(100).
+    if (reason && reason.length > 100) {
+      throw new BadRequestException('reason must be at most 100 characters');
+    }
+    if (role === UserRole.ADMIN) {
+      return this.itemService.adminRemove(userId, id, reason);
+    }
     return this.itemService.remove(userId, id, reason);
   }
 

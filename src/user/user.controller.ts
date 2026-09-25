@@ -44,6 +44,20 @@ import { GetUser } from '../common/decorators/get-user.decorator';
 import { AppError } from '../common/app-error';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
+/**
+ * Fields only an admin may set via PATCH /user/:id. When a user sends them for
+ * their own record they are dropped (and reported in `warnings`) rather than
+ * rejected, so existing clients that echo these fields back keep working. The
+ * backend maintains the verification flags and firebase_uid itself at login.
+ */
+const ADMIN_ONLY_FIELDS = [
+  'role',
+  'is_active',
+  'is_email_verified',
+  'is_phone_verified',
+  'firebase_uid',
+] as const;
+
 @ApiTags('user')
 @ApiBearerAuth()
 @ApiExtraModels(
@@ -237,30 +251,6 @@ export class UserController {
     });
   }
 
-  @Patch(':id')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Update a user by ID',
-    description:
-      'Used across multiple onboarding steps:\n' +
-      '- **Screen 4** — Set name: `{ first_name, last_name }`\n' +
-      '- **Screen 5** — Set date of birth: `{ date_of_birth }`\n' +
-      '- **Screen 6** — Set gender: `{ gender }`',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'User updated successfully',
-    type: UserResponseDto,
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-    type: ErrorResponseDto,
-  })
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.userService.update(id, updateUserDto);
-  }
-
   @Patch('fcm-token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update FCM token for push notifications' })
@@ -275,9 +265,84 @@ export class UserController {
     return this.userService.update(userId, fcmTokenDto);
   }
 
+  @Patch(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a user by ID',
+    description:
+      'Used across multiple onboarding steps:\n' +
+      '- **Screen 4** — Set name: `{ first_name, last_name }`\n' +
+      '- **Screen 5** — Set date of birth: `{ date_of_birth }`\n' +
+      '- **Screen 6** — Set gender: `{ gender }`\n\n' +
+      'Non-admins may only update their own record. `role`, `is_active`, the ' +
+      'verification flags and `firebase_uid` are admin-only: when a user sends ' +
+      'them they are ignored and listed in `warnings`. Changing `email` or ' +
+      '`phone_number` clears the matching verification flag.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User updated successfully',
+    type: UserResponseDto,
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - non-admins may only update their own profile',
+    type: ErrorResponseDto,
+  })
+  async update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+    @GetUser('userId') requesterId: string,
+    @GetUser('role') requesterRole: UserRole,
+  ) {
+    if (requesterRole !== UserRole.ADMIN) {
+      if (id !== requesterId) {
+        throw new AppError(
+          new ForbiddenException('You can only update your own profile'),
+        );
+      }
+      const ignored = ADMIN_ONLY_FIELDS.filter(
+        (key) => updateUserDto[key] !== undefined,
+      );
+      const allowed = { ...updateUserDto };
+      ignored.forEach((key) => delete allowed[key]);
+
+      const result = await this.userService.update(id, allowed);
+      if (ignored.length) {
+        result.warnings = [
+          `These fields can only be changed by an admin and were ignored: ${ignored.join(', ')}`,
+        ];
+      }
+      return result;
+    }
+
+    if (
+      id === requesterId &&
+      ((updateUserDto.role !== undefined &&
+        updateUserDto.role !== (UserRole.ADMIN as string)) ||
+        updateUserDto.is_active === false)
+    ) {
+      // Stops an admin from locking themselves (possibly the last admin) out.
+      throw new AppError(
+        new ForbiddenException('Admins cannot demote or deactivate themselves'),
+      );
+    }
+
+    return this.userService.update(id, updateUserDto);
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Delete a user by ID' })
+  @ApiOperation({
+    summary: 'Delete a user by ID',
+    description:
+      'Users may only delete their own account. Admins may delete any user.',
+  })
   @ApiResponse({
     status: 200,
     description: 'User deleted successfully',
@@ -288,7 +353,21 @@ export class UserController {
     description: 'Internal server error',
     type: ErrorResponseDto,
   })
-  remove(@Param('id') id: string) {
-    return this.userService.remove(id);
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - non-admins may only delete their own account',
+    type: ErrorResponseDto,
+  })
+  remove(
+    @Param('id') id: string,
+    @GetUser('userId') requesterId: string,
+    @GetUser('role') requesterRole: UserRole,
+  ) {
+    if (id !== requesterId && requesterRole !== UserRole.ADMIN) {
+      throw new AppError(
+        new ForbiddenException('You can only delete your own account'),
+      );
+    }
+    return this.userService.remove(id, requesterId);
   }
 }

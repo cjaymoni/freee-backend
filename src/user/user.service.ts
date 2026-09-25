@@ -18,6 +18,8 @@ import {
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { UserEntity } from './entities/user.entity';
+import { UserSessionEntity } from '../auth/entities/user-session.entity';
+import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
 import { UserPreferenceEntity } from './entities/user-preference.entity';
 import { CategoryEntity } from '../category/entities/category.entity';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -30,6 +32,15 @@ import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 type UploadFile = {
   buffer: Buffer;
 };
+
+const USER_SORT_COLUMNS = new Set([
+  'created_at',
+  'member_since',
+  'last_active',
+  'first_name',
+  'last_name',
+  'email',
+]);
 
 @Injectable()
 export class UserService {
@@ -311,7 +322,6 @@ export class UserService {
         member_since: new Date(),
       });
 
-
       const result = await entityManager.save(UserEntity, user);
 
       // Replace temp seed with the real user id for a stable, unique avatar
@@ -365,16 +375,29 @@ export class UserService {
     findUserDto: FindUserDto,
   ): Promise<ServiceResponseDto<UserResponseDto[]>> {
     try {
-      const { page = 1, limit = 20, ...query } = findUserDto;
+      const {
+        page = 1,
+        limit = 20,
+        sortBy,
+        order = 'DESC',
+        ...query
+      } = findUserDto;
 
-      const where = { ...query } as unknown as FindOptionsWhere<UserEntity>;
+      const where = {
+        ...query,
+        is_deleted: false,
+      } as unknown as FindOptionsWhere<UserEntity>;
 
       if (query.date_of_birth) {
         where.date_of_birth = new Date(query.date_of_birth);
       }
 
-      const [users] = await this.userRepository.findAndCount({
+      const [users, total] = await this.userRepository.findAndCount({
         where,
+        order: {
+          [sortBy && USER_SORT_COLUMNS.has(sortBy) ? sortBy : 'created_at']:
+            order,
+        },
         take: limit,
         skip: (page - 1) * limit,
       });
@@ -389,6 +412,9 @@ export class UserService {
         data: responseDto,
         state: true,
         statusCode: 200,
+        total,
+        page,
+        limit,
       };
     } catch (error) {
       if (error instanceof Error) {
@@ -439,9 +465,8 @@ export class UserService {
     id: string,
     updateUserDto: UpdateUserDto,
     manager?: EntityManager,
-  ) {
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
     try {
-
       const entityManager = manager || this.userRepository.manager;
       const user = await entityManager.findOne(UserEntity, { where: { id } });
       if (!user) {
@@ -455,6 +480,23 @@ export class UserService {
       if (password) {
         const saltRounds = 12;
         updateData.password_hash = await bcrypt.hash(password, saltRounds);
+      }
+
+      // A new address hasn't been verified yet, unless the caller (an admin)
+      // says otherwise explicitly.
+      if (
+        updateUserDto.email !== undefined &&
+        updateUserDto.email !== user.email &&
+        updateUserDto.is_email_verified === undefined
+      ) {
+        updateData.is_email_verified = false;
+      }
+      if (
+        updateUserDto.phone_number !== undefined &&
+        updateUserDto.phone_number !== user.phone_number &&
+        updateUserDto.is_phone_verified === undefined
+      ) {
+        updateData.is_phone_verified = false;
       }
 
       // Check for onboarding completion
@@ -478,6 +520,9 @@ export class UserService {
       if (freshUser) {
         await this.cacheManager.del(`user:id:${id}`);
         await this.cacheManager.del(`user:email:${freshUser.email}`);
+        if (user.email && user.email !== freshUser.email) {
+          await this.cacheManager.del(`user:email:${user.email}`);
+        }
       }
 
       const responseDto = new UserResponseDto();
@@ -499,20 +544,72 @@ export class UserService {
     }
   }
 
-  async remove(id: string, manager?: EntityManager) {
+  async remove(id: string, deletedById?: string, manager?: EntityManager) {
     try {
+      const run = <T>(work: (em: EntityManager) => Promise<T>) =>
+        manager ? work(manager) : this.dataSource.transaction(work);
 
-      const entityManager = manager || this.userRepository.manager;
-      const user = await entityManager.findOne(UserEntity, { where: { id } });
-      if (!user) {
-        throw new NotFoundException(`User with ID ${id} not found`);
-      }
-      const deletedUser = await entityManager.softDelete(UserEntity, id);
+      const { user, deletedUser } = await run(async (entityManager) => {
+        const user = await entityManager.findOne(UserEntity, {
+          where: { id, is_deleted: false },
+        });
+        if (!user) {
+          throw new NotFoundException(`User with ID ${id} not found`);
+        }
+
+        // UserEntity tracks deletion with its own columns (there is no
+        // @DeleteDateColumn, so repository.softDelete would throw).
+        //
+        // email, phone_number and firebase_uid are unique and are how Firebase
+        // sign-in finds an account, so they are released: signing in again
+        // with the same Google account or phone creates a fresh account
+        // instead of landing in this deleted one, and nobody is locked out of
+        // re-registering. Deactivating blocks password login.
+        await entityManager.update(UserEntity, id, {
+          is_deleted: true,
+          deleted_at: new Date(),
+          is_active: false,
+          email: null,
+          phone_number: null as unknown as string,
+          firebase_uid: null,
+          fcm_token: null as unknown as string,
+          ...(deletedById && { deleted_by: { id: deletedById } }),
+        });
+
+        // End live sessions so existing access and refresh tokens stop working.
+        await entityManager.update(
+          UserSessionEntity,
+          { user: { id }, is_active: true },
+          { is_active: false },
+        );
+
+        // Take down the user's listings so nobody requests items from a
+        // deleted account.
+        await entityManager.update(
+          ItemEntity,
+          { user_id: id, is_deleted: false },
+          {
+            is_deleted: true,
+            deleted_at: new Date(),
+            deleted_by: deletedById ?? id,
+            deletion_reason: 'Owner account deleted',
+            status: ItemStatus.UNAVAILABLE,
+          },
+        );
+
+        const deletedUser = await entityManager.findOne(UserEntity, {
+          where: { id },
+        });
+        return { user, deletedUser };
+      });
 
       // Invalidate cache
       await this.cacheManager.del(`user:id:${id}`);
       if (user.email) {
         await this.cacheManager.del(`user:email:${user.email}`);
+      }
+      if (user.firebase_uid) {
+        await this.cacheManager.del(`user:firebase_uid:${user.firebase_uid}`);
       }
 
       const responseDto = new UserResponseDto();

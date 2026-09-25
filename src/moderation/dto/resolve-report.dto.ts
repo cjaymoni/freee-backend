@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export enum ReportStatus {
@@ -11,6 +11,7 @@ export enum ReportStatus {
 export enum ActionTaken {
   ITEM_REMOVED = 'item_removed',
   USER_WARNED = 'user_warned',
+  USER_SUSPENDED = 'user_suspended',
   NO_ACTION = 'no_action',
 }
 

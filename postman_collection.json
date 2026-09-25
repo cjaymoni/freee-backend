@@ -39,6 +39,18 @@
     {
       "key": "imageId",
       "value": ""
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "messageId",
+      "value": ""
+    },
+    {
+      "key": "recipientId",
+      "value": ""
     }
   ],
   "auth": {
@@ -1661,9 +1673,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"item_id\": \"{{itemId}}\",\n  \"message\": \"I would love to have this item!\",\n  \"pickup_location_id\": \"{{locationId}}\"\n}"
+              "raw": "{\n  \"item_id\": \"{{itemId}}\"\n}"
             },
-            "description": "Creates a new item request. The requester user ID is automatically appended to the item's requester_ids array, so the UI can immediately reflect the requested state."
+            "description": "Creates a new item request. The requester user ID is automatically appended to the item's requester_ids array, so the UI can immediately reflect the requested state.\n\nitem_id is the only accepted field - the API runs a whitelisting validation pipe, so any extra property is rejected with a 400."
           }
         },
         {
@@ -1919,6 +1931,248 @@
                 }
               ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "description": "Direct messaging between two users, with optional item context.\n\nOne thread per pair of users, for all time: opening a conversation with the same recipient always returns the same thread. Passing item_id re-points that thread's item banner rather than creating a second thread.\n\nEvery endpoint here has a realtime twin on the socket.io namespace `/chat`, authenticated with the same access token (`io(host + '/chat', { auth: { token } })`).\n  Client sends: message:send, message:read, typing:start, typing:stop\n  Server emits: message:new, message:read, message:deleted, conversation:updated, typing, presence, unread:count, error\n\nPostman cannot drive a socket.io connection, so those are documented rather than scripted here. See docs/CHAT_MODULE.md for the full contract, including the two-perspective rendering of system messages.",
+      "item": [
+        {
+          "name": "Open Conversation",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/chat/conversations",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{recipientId}}\",\n  \"item_id\": \"{{itemId}}\"\n}"
+            },
+            "description": "Opens the thread with another user, creating it on first contact and returning the existing one otherwise. item_id is optional - omit it for a plain direct chat.\n\nSave the returned data.id into the conversationId collection variable.\n\n403 if either party has blocked the other; 400 if recipient_id is yourself."
+          }
+        },
+        {
+          "name": "List Conversations",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversations?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chat",
+                "conversations"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Matches the other participant's name and the last message preview",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "The chat list, ordered by most recent activity. Each entry carries the other participant, the item banner, the last message and your unread count."
+          }
+        },
+        {
+          "name": "Get Unread Count",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/chat/unread-count",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "Totals for the chat tab badge: total_unread and conversations_with_unread."
+          }
+        },
+        {
+          "name": "Get Conversation",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/chat/conversations/{{conversationId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "A conversation you are not part of returns 404, not 403."
+          }
+        },
+        {
+          "name": "Get Messages",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversations/{{conversationId}}/messages?limit=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "30"
+                },
+                {
+                  "key": "before",
+                  "value": "",
+                  "description": "Id of the oldest message you already hold - cursor for the next page",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "Newest first, paginated on a cursor rather than an offset so a thread growing mid-scroll cannot skip or repeat rows.\n\nTo page backwards, pass the id of the oldest message you hold as `before`. You have reached the top when a page comes back shorter than `limit`."
+          }
+        },
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/chat/conversations/{{conversationId}}/messages",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Hi, is this still available?\"\n}"
+            },
+            "description": "The REST twin of the `message:send` socket event. Both parties are notified over their sockets either way, and an offline recipient gets an FCM push."
+          }
+        },
+        {
+          "name": "Send Image Message",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/chat/conversations/{{conversationId}}/messages/image",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "caption",
+                  "value": "Here it is",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Uploads the attachment to Cloudinary (folder `chat/<conversationId>`) and posts it as a message. JPEG, PNG, WebP, GIF or HEIC, up to 10MB. caption is optional.\n\nLeave Content-Type unset - Postman sets the multipart boundary itself."
+          }
+        },
+        {
+          "name": "Mark Conversation as Read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/chat/conversations/{{conversationId}}/read",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "Clears your unread count for the thread and sends read receipts to the other party. Returns the ids it stamped."
+          }
+        },
+        {
+          "name": "Delete Message",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/chat/messages/{{messageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "description": "Retracts your own message for both parties. The row stays in the thread as a 'message deleted' placeholder. 403 if it is not yours; 400 for system messages, which cannot be deleted."
           }
         }
       ]

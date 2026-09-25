@@ -69,8 +69,19 @@ export class CategoryService {
   ): Promise<ServiceResponseDto<CategoryResponseDto[]>> {
     const query = this.categoryRepository
       .createQueryBuilder('category')
-      .leftJoinAndSelect('category.subcategories', 'subcategories')
-      .loadRelationCountAndMap('category.items', 'category.items')
+      .leftJoinAndSelect(
+        'category.subcategories',
+        'subcategories',
+        onlyActive
+          ? 'subcategories.is_deleted = false AND subcategories.is_active = true'
+          : 'subcategories.is_deleted = false',
+      )
+      .loadRelationCountAndMap(
+        'category.item_count',
+        'category.items',
+        'item',
+        (qb) => qb.andWhere('item.is_deleted = false'),
+      )
       .where('category.is_deleted = :is_deleted', { is_deleted: false })
       .andWhere('category.parent_category_id IS NULL');
 

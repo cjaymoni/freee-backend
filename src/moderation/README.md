@@ -23,7 +23,9 @@ Complete moderation system with user suspension and complaint/appeal mechanism f
 
 ### 4. Admin Moderation
 - Review and resolve reports
-- Take actions: item_removed, user_warned, no_action
+- Take actions: item_removed (item reports), user_suspended (user reports; `item_removed` is still accepted as a legacy alias), user_warned, no_action
+- Resolving reports and complaints requires the ADMIN role
+- Listing reports/complaints: admins see all; other users see only the ones they filed
 - Track resolution notes and timestamps
 
 ### 5. Complaint System
@@ -40,7 +42,7 @@ Complete moderation system with user suspension and complaint/appeal mechanism f
 - Item `deleted_by` → reviewer ID
 - Item `deletion_reason` → "Removed due to moderation"
 
-### When User is Suspended (action_taken: 'item_removed' on user report)
+### When User is Suspended (action_taken: 'user_suspended' on user report)
 - User `is_active` → `false`
 - User CANNOT access normal system features
 - User CAN ONLY access complaint endpoints
@@ -112,7 +114,7 @@ POST /moderation/users/report
 PATCH /moderation/users/report/:id/resolve
 {
   "status": "resolved",
-  "actionTaken": "item_removed",
+  "actionTaken": "user_suspended",
   "resolutionNotes": "User violated terms of service"
 }
 // User is now suspended (is_active = false)

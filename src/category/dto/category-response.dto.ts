@@ -56,7 +56,9 @@ export class CategoryResponseDto {
       );
     }
 
-    if (entity.items) {
+    if (entity.item_count !== undefined) {
+      dto.item_count = entity.item_count;
+    } else if (entity.items) {
       dto.item_count = entity.items.length;
     }
 
