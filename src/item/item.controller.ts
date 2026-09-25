@@ -42,6 +42,9 @@ import { UserRole } from '../user/entities/user.entity';
 import { UserActivityService } from '../audit/user-activity.service';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { AppError } from '../common/app-error';
+
+const MAX_PAGE_LIMIT = 100;
 
 @ApiTags('Items')
 @ApiBearerAuth()
@@ -161,6 +164,27 @@ export class ItemController {
     description:
       'Radius in km (default: 10). Only applied when lat & lng are provided',
   })
+  @ApiQuery({
+    name: 'query',
+    required: false,
+    description:
+      'Text search over item titles and descriptions, ignoring case and accents. ' +
+      'Can be combined with every other filter. Counts towards GET /search/popular.',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description:
+      'Page number (default: 1). Sending page or limit paginates the results; ' +
+      'otherwise every match is returned. `total` is always included.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: `Items per page (1-${MAX_PAGE_LIMIT}, default: 20)`,
+  })
   @ApiResponse({
     status: 200,
     description:
@@ -194,7 +218,34 @@ export class ItemController {
     @Query('lat') lat?: string,
     @Query('lng') lng?: string,
     @Query('radius') radius?: string,
+    @Query('query') query?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Req() request?: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
+    const parsedPage = page !== undefined ? Number(page) : undefined;
+    const parsedLimit = limit !== undefined ? Number(limit) : undefined;
+    if (
+      parsedPage !== undefined &&
+      (!Number.isInteger(parsedPage) || parsedPage < 1)
+    ) {
+      throw new AppError(
+        new BadRequestException('page must be a positive integer'),
+      );
+    }
+    if (
+      parsedLimit !== undefined &&
+      (!Number.isInteger(parsedLimit) ||
+        parsedLimit < 1 ||
+        parsedLimit > MAX_PAGE_LIMIT)
+    ) {
+      throw new AppError(
+        new BadRequestException(
+          `limit must be an integer between 1 and ${MAX_PAGE_LIMIT}`,
+        ),
+      );
+    }
+
     return this.itemService.findAll({
       user_id,
       category_id,
@@ -205,6 +256,10 @@ export class ItemController {
       lng: lng !== undefined ? Number(lng) : undefined,
       radius: radius !== undefined ? Number(radius) : undefined,
       viewer_id: viewerId,
+      query,
+      page: parsedPage,
+      limit: parsedLimit,
+      searcher_key: viewerId || request?.ip,
     });
   }
 

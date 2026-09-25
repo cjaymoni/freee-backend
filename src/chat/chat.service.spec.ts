@@ -172,6 +172,91 @@ describe('ChatService', () => {
   const statusOf = (error: unknown): number =>
     (error as AppError).getStatus();
 
+  describe('listConversations', () => {
+    const listBuilder = (rows: ConversationEntity[]) => ({
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([rows, rows.length]),
+    });
+
+    it('orders by last activity through a plain alias, then by ID', async () => {
+      const builder = listBuilder([]);
+      conversationRepository.createQueryBuilder.mockReturnValue(builder);
+
+      await service.listConversations(ALICE, { page: 1, limit: 20 });
+
+      // Messages sort by last_message_at, empty threads by created_at.
+      expect(builder.addSelect).toHaveBeenCalledWith(
+        'COALESCE(conversation.last_message_at, conversation.created_at)',
+        'activity_at',
+      );
+      // Ordering by the raw expression makes TypeORM treat it as a relation
+      // path under skip/take, so it must go through the alias.
+      expect(builder.orderBy).toHaveBeenCalledWith('activity_at', 'DESC');
+      expect(builder.addOrderBy).toHaveBeenCalledWith(
+        'conversation.id',
+        'DESC',
+      );
+    });
+
+    it('returns the paged envelope in database order', async () => {
+      const builder = listBuilder([
+        conversation({ id: 'conv-2', last_message_at: new Date('2026-09-05') }),
+        conversation({ id: 'conv-1' }),
+      ]);
+      conversationRepository.createQueryBuilder.mockReturnValue(builder);
+
+      const result = await service.listConversations(ALICE, {
+        page: 2,
+        limit: 10,
+      });
+
+      expect(builder.skip).toHaveBeenCalledWith(10);
+      expect(result.data.map((dto) => dto.id)).toEqual(['conv-2', 'conv-1']);
+      expect(result).toMatchObject({ total: 2, page: 2, limit: 10 });
+    });
+
+    it('applies the search filter without breaking the query', async () => {
+      const builder = listBuilder([]);
+      conversationRepository.createQueryBuilder.mockReturnValue(builder);
+
+      const result = await service.listConversations(ALICE, {
+        page: 1,
+        limit: 20,
+        search: 'bob',
+      });
+
+      expect(builder.andWhere).toHaveBeenCalled();
+      expect(result.state).toBe(true);
+    });
+
+    it('hides database details when the query fails', async () => {
+      const builder = listBuilder([]);
+      builder.getManyAndCount.mockRejectedValue(
+        new Error(
+          '"COALESCE(conversation" alias was not found. Maybe you forgot to join it?',
+        ),
+      );
+      conversationRepository.createQueryBuilder.mockReturnValue(builder);
+
+      const error = await service
+        .listConversations(ALICE, { page: 1, limit: 20 })
+        .catch((e: AppError) => e);
+
+      expect(statusOf(error)).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+      const body = JSON.stringify((error as AppError).getResponse());
+      expect(body).toContain('Could not load conversations');
+      expect(body).not.toContain('alias');
+      expect(body).not.toContain('COALESCE');
+    });
+  });
+
   describe('canonical pair ordering', () => {
     it('stores a new conversation with the smaller user id first, whichever way round it is opened', async () => {
       conversationRepository.findOne

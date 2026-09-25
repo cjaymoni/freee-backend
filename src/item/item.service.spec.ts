@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ItemService } from './item.service';
@@ -20,6 +21,7 @@ import { UserEntity } from '../user/entities/user.entity';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewService } from '../item-view/item-view.service';
+import { SearchService } from '../search/search.service';
 
 const mockUser: UserEntity & { items_count?: number } = {
   id: 'user-1',
@@ -235,7 +237,21 @@ describe('ItemService', () => {
             bytes: 1234,
           }),
     ),
+    deleteImage: jest.fn().mockResolvedValue({ result: 'ok' }),
   };
+
+  // Runs the work against the same mocked repositories, so tests see what the
+  // transaction wrote.
+  const mockDataSource = {
+    transaction: jest.fn((work: (manager: unknown) => Promise<unknown>) =>
+      work({
+        getRepository: (entity: unknown) =>
+          entity === ItemEntity ? mockItemRepo : mockImageRepo,
+      }),
+    ),
+  };
+
+  const mockSearchService = { record: jest.fn().mockResolvedValue(undefined) };
 
   const mockItemViewService = {
     recordUniqueView: jest
@@ -260,6 +276,8 @@ describe('ItemService', () => {
         { provide: CloudinaryService, useValue: mockCloudinary },
         DistanceService,
         { provide: ItemViewService, useValue: mockItemViewService },
+        { provide: DataSource, useValue: mockDataSource },
+        { provide: SearchService, useValue: mockSearchService },
       ],
     }).compile();
 
@@ -793,9 +811,238 @@ describe('ItemService', () => {
         0, 1, 2,
       ]);
     });
+
+    it('keeps the existing images when every replacement upload fails', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      const original = mockImage('img-1', 0, true);
+      mockImageRepo.find.mockResolvedValue([original]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        title: 'New title',
+        remove_image_ids: ['img-1'],
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto, [
+          mockFile('fail-1.jpg'),
+          mockFile('fail-2.jpg'),
+        ]),
+      ).rejects.toThrow(BadRequestException);
+      expect(original.is_deleted).toBe(false);
+      expect(original.is_primary).toBe(true);
+      expect(mockImageRepo.save).not.toHaveBeenCalled();
+      expect(mockItemRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('replaces every image when only some replacements upload', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      const oldA = mockImage('img-1', 0, true);
+      const oldB = mockImage('img-2', 1, false);
+      mockImageRepo.find.mockResolvedValue([oldA, oldB]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-1', 'img-2'],
+      });
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('fail.jpg'),
+        mockFile('new-a.jpg'),
+        mockFile('new-b.jpg'),
+      ]);
+
+      expect(oldA.is_deleted).toBe(true);
+      expect(oldB.is_deleted).toBe(true);
+      expect(result.warnings).toHaveLength(1);
+      const images = result.data.images!;
+      expect(images.map((image) => image.display_order)).toEqual([0, 1]);
+      expect(images.filter((image) => image.is_primary)).toHaveLength(1);
+      expect(images[0].is_primary).toBe(true);
+    });
+
+    it('rolls back and deletes the new uploads when saving fails', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+      mockImageRepo.save.mockRejectedValueOnce(new Error('db down'));
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-1'],
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto, [
+          mockFile('new-a.jpg'),
+          mockFile('new-b.jpg'),
+        ]),
+      ).rejects.toThrow('db down');
+      expect(mockCloudinary.deleteImage).toHaveBeenCalledTimes(2);
+      expect(mockCloudinary.deleteImage).toHaveBeenCalledWith(
+        'public-new-a.jpg',
+      );
+      expect(mockCloudinary.deleteImage).toHaveBeenCalledWith(
+        'public-new-b.jpg',
+      );
+    });
+
+    it('does not upload anything when an image ID is invalid', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([mockImage('img-1', 0, true)]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {
+        remove_image_ids: ['img-99'],
+      });
+
+      await expect(
+        service.update('user-1', 'item-1', updateDto, [mockFile('new.jpg')]),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockCloudinary.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('leaves exactly one primary when stored data has several', async () => {
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve(entity),
+      );
+      mockImageRepo.find.mockResolvedValue([
+        mockImage('img-1', 0, true),
+        mockImage('img-2', 3, true),
+      ]);
+
+      const updateDto = plainToInstance(UpdateItemDto, {});
+      const result = await service.update('user-1', 'item-1', updateDto, [
+        mockFile('new.jpg'),
+      ]);
+
+      const images = result.data.images!;
+      expect(images.map((image) => image.is_primary)).toEqual([
+        true,
+        false,
+        false,
+      ]);
+      expect(images.map((image) => image.display_order)).toEqual([0, 1, 2]);
+    });
   });
 
   describe('findAll', () => {
+    describe('text search and pagination', () => {
+      const items = (count: number) =>
+        Array.from({ length: count }, (_, i) => ({
+          ...mockItemEntity,
+          id: `item-${i + 1}`,
+        })) as ItemEntity[];
+
+      const useItems = (entities: ItemEntity[]) => {
+        mockQueryBuilder = buildQueryBuilder(
+          entities,
+          entities.map(() => ({ user_items_count: '1' })),
+        );
+        mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      };
+
+      it('matches title and description ignoring case and accents', async () => {
+        useItems([]);
+
+        await service.findAll({ query: '  Chaisé ', searcher_key: 'user-9' });
+
+        const call = mockQueryBuilder.andWhere.mock.calls.find(
+          ([sql]: [string]) => sql.includes(':search'),
+        );
+        expect(call).toBeDefined();
+        const [sql, params] = call as [string, { search: string }];
+        expect(sql).toContain('item.title');
+        expect(sql).toContain('item.description');
+        expect(sql).toContain('translate(lower(');
+        expect(params.search).toBe('%chaise%');
+      });
+
+      it('treats LIKE wildcards in the query literally', async () => {
+        useItems([]);
+
+        await service.findAll({ query: '50%_off' });
+
+        const [, params] = mockQueryBuilder.andWhere.mock.calls.find(
+          ([sql]: [string]) => sql.includes(':search'),
+        ) as [string, { search: string }];
+        expect(params.search).toBe('%50\\%\\_off%');
+      });
+
+      it('records the first page of a search for popular terms', async () => {
+        useItems([]);
+
+        await service.findAll({ query: 'chair', searcher_key: 'user-9' });
+        await service.findAll({
+          query: 'chair',
+          page: 2,
+          searcher_key: 'user-9',
+        });
+
+        expect(mockSearchService.record).toHaveBeenCalledTimes(1);
+        expect(mockSearchService.record).toHaveBeenCalledWith(
+          'chair',
+          'user-9',
+        );
+      });
+
+      it('does not record or filter by text without a query', async () => {
+        useItems([]);
+
+        await service.findAll({ query: '   ' });
+
+        expect(mockSearchService.record).not.toHaveBeenCalled();
+        expect(
+          mockQueryBuilder.andWhere.mock.calls.some(([sql]: [string]) =>
+            sql.includes(':search'),
+          ),
+        ).toBe(false);
+      });
+
+      it('returns the requested page with total, page and limit', async () => {
+        useItems(items(5));
+
+        const result = await service.findAll({ page: 2, limit: 2 });
+
+        expect(result.data.map((item) => item.id)).toEqual([
+          'item-3',
+          'item-4',
+        ]);
+        expect(result).toMatchObject({ total: 5, page: 2, limit: 2 });
+      });
+
+      it('returns every item when no page or limit is sent', async () => {
+        useItems(items(3));
+
+        const result = await service.findAll();
+
+        expect(result.data).toHaveLength(3);
+        expect(result.total).toBe(3);
+        expect(result.page).toBeUndefined();
+      });
+
+      it('pages over items inside the radius only', async () => {
+        const near = { ...mockItemEntity, id: 'near' } as ItemEntity;
+        const far = {
+          ...mockItemEntity,
+          id: 'far',
+          location: mockLocation(9.4034, -0.8424), // Tamale
+        } as ItemEntity;
+        useItems([far, near]);
+
+        const result = await service.findAll({
+          lat: 5.6037,
+          lng: -0.187,
+          page: 1,
+          limit: 1,
+        });
+
+        expect(result.data.map((item) => item.id)).toEqual(['near']);
+        expect(result.total).toBe(1);
+      });
+    });
+
     it('returns items with user object and items_count from subquery', async () => {
       mockQueryBuilder = buildQueryBuilder(
         [mockItemEntity],

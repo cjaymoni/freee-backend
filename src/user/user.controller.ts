@@ -35,6 +35,7 @@ import { UserEntity } from './entities/user.entity';
 import { CreateUserResponseDto } from './dto/create-user-response.dto';
 import { FindUserDto } from './dto/find-user.dto';
 import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
+import { UpdatePhoneNumberDto } from './dto/update-phone-number.dto';
 import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -263,6 +264,49 @@ export class UserController {
     @Body() fcmTokenDto: UpdateFcmTokenDto,
   ) {
     return this.userService.update(userId, fcmTokenDto);
+  }
+
+  @Post('phone-number')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update phone number from a verified Firebase ID token',
+    description:
+      'Call after changing the phone number in Firebase, with a refreshed ' +
+      'Firebase ID token. The number is taken from the verified token, not ' +
+      'from the request, and is saved as verified in one step. The token ' +
+      "must belong to the signed-in user's Firebase account. On any error the " +
+      'existing phone number is left unchanged.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Phone number updated',
+    type: UserResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'The Firebase account has no verified phone number',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Firebase ID token is invalid or expired',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'The token belongs to a different Firebase account',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'The phone number is linked to another account',
+    type: ErrorResponseDto,
+  })
+  async updatePhoneNumber(
+    @GetUser('userId') userId: string,
+    @Body() dto: UpdatePhoneNumberDto,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    return this.userService.updatePhoneFromFirebase(userId, dto.idToken);
   }
 
   @Patch(':id')

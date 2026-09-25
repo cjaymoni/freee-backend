@@ -143,6 +143,9 @@ export class ItemRequestService {
     dto.updated_at = entity.updated_at;
 
     if (entity.item) {
+      // Sorted here rather than in SQL: ordering by a joined column under
+      // skip/take makes TypeORM's pagination count one request per image.
+      entity.item.images?.sort((a, b) => a.display_order - b.display_order);
       dto.item = ItemResponseDto.fromEntity(entity.item);
     }
 
@@ -525,6 +528,15 @@ export class ItemRequestService {
         .createQueryBuilder('request')
         .leftJoinAndSelect('request.item', 'item')
         .leftJoinAndSelect('item.category', 'category')
+        // The Profile collection card shows the item's photo and who posted
+        // it, so both come back on the nested item.
+        .leftJoinAndSelect(
+          'item.images',
+          'images',
+          'images.is_deleted = :imagesDeleted',
+          { imagesDeleted: false },
+        )
+        .leftJoinAndSelect('item.user', 'poster')
         .leftJoinAndSelect('request.requester', 'requester')
         .leftJoinAndSelect('request.owner', 'owner')
         .where('request.requester_id = :userId', { userId })

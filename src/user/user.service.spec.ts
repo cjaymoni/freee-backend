@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UserService } from './user.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UserEntity } from './entities/user.entity';
+import { UserResponseDto } from './dto/user-response.dto';
+import { FirebaseService } from '../firebase/firebase.service';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { DataSource } from 'typeorm';
@@ -43,6 +45,7 @@ describe('UserService', () => {
             createQueryRunner: jest.fn(),
           },
         },
+        { provide: FirebaseService, useValue: {} },
       ],
     }).compile();
 
@@ -74,6 +77,7 @@ describe('UserService.update verification flags', () => {
         { provide: CloudinaryService, useValue: {} },
         { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
         { provide: DataSource, useValue: {} },
+        { provide: FirebaseService, useValue: {} },
       ],
     }).compile();
     service = module.get<UserService>(UserService);
@@ -122,6 +126,7 @@ describe('UserService.remove', () => {
         { provide: CloudinaryService, useValue: {} },
         { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
         { provide: DataSource, useValue: {} },
+        { provide: FirebaseService, useValue: {} },
       ],
     }).compile();
     const service = module.get<UserService>(UserService);
@@ -153,5 +158,124 @@ describe('UserService.remove', () => {
       is_deleted: false,
     });
     expect(byEntity(ItemEntity)?.[2]).toMatchObject({ is_deleted: true });
+  });
+});
+
+describe('UserService.updatePhoneFromFirebase', () => {
+  let service: UserService;
+  let update: jest.SpyInstance;
+  const firebase = { verifyIdToken: jest.fn() };
+  const repo = { findOne: jest.fn() };
+  const user = {
+    id: 'u1',
+    firebase_uid: 'fb-1',
+    phone_number: '+233200000001',
+    is_phone_verified: true,
+    is_deleted: false,
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(UserEntity), useValue: repo },
+        { provide: CloudinaryService, useValue: {} },
+        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
+        { provide: DataSource, useValue: {} },
+        { provide: FirebaseService, useValue: firebase },
+      ],
+    }).compile();
+
+    service = module.get(UserService);
+    update = jest.spyOn(service, 'update').mockImplementation((_id, dto) =>
+      Promise.resolve({
+        message: 'User updated successfully',
+        data: { ...user, ...dto } as UserResponseDto,
+        state: true,
+        statusCode: 200,
+      }),
+    );
+  });
+
+  afterEach(() => jest.resetAllMocks());
+
+  const statusOf = (promise: Promise<unknown>) =>
+    promise.then(
+      () => undefined,
+      (error: { getStatus: () => number }) => error.getStatus(),
+    );
+
+  it('saves the phone from the verified token as verified', async () => {
+    firebase.verifyIdToken.mockResolvedValue({
+      uid: 'fb-1',
+      phone_number: '+233200000002',
+    });
+    repo.findOne.mockResolvedValueOnce({ ...user }).mockResolvedValueOnce(null);
+
+    const result = await service.updatePhoneFromFirebase('u1', 'token');
+
+    expect(update).toHaveBeenCalledWith('u1', {
+      phone_number: '+233200000002',
+      is_phone_verified: true,
+    });
+    expect(result.data.phone_number).toBe('+233200000002');
+  });
+
+  it('rejects an invalid token without touching the profile', async () => {
+    firebase.verifyIdToken.mockRejectedValue(new Error('expired'));
+
+    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+      401,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token from a different Firebase account', async () => {
+    firebase.verifyIdToken.mockResolvedValue({
+      uid: 'fb-other',
+      phone_number: '+233200000002',
+    });
+    repo.findOne.mockResolvedValue({ ...user });
+
+    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+      403,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a user with no linked Firebase account', async () => {
+    firebase.verifyIdToken.mockResolvedValue({
+      uid: 'fb-1',
+      phone_number: '+233200000002',
+    });
+    repo.findOne.mockResolvedValue({ ...user, firebase_uid: null });
+
+    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+      403,
+    );
+  });
+
+  it('rejects a token without a phone number', async () => {
+    firebase.verifyIdToken.mockResolvedValue({ uid: 'fb-1' });
+
+    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+      400,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a number already linked to another account', async () => {
+    firebase.verifyIdToken.mockResolvedValue({
+      uid: 'fb-1',
+      phone_number: '+233200000002',
+    });
+    repo.findOne
+      .mockResolvedValueOnce({ ...user })
+      .mockResolvedValueOnce({ id: 'u2', phone_number: '+233200000002' });
+
+    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+      409,
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 });

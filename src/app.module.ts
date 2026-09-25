@@ -18,6 +18,7 @@ import { HealthModule } from './health/health.module';
 import { CommonModule } from './common/common.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { ItemModule } from './item/item.module';
+import { SearchModule } from './search/search.module';
 import { CategoryModule } from './category/category.module';
 import { AuditModule } from './audit/audit.module';
 import { AuditInterceptor } from './audit/interceptors/audit.interceptor';
@@ -101,6 +102,7 @@ import { envValidationSchema } from './config/env.validation';
     AuthModule,
     UserModule,
     ItemModule,
+    SearchModule,
     CategoryModule,
     AuditModule,
     SavedItemModule,

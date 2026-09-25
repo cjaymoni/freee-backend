@@ -12,6 +12,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewModule } from '../item-view/item-view.module';
+import { SearchModule } from '../search/search.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ItemViewModule } from '../item-view/item-view.module';
     ]),
     CloudinaryModule,
     ItemViewModule,
+    SearchModule,
   ],
   controllers: [ItemController, ItemImageController],
   providers: [ItemService, ItemImageService],

@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ItemEntity, ItemStatus, PickupType } from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
 import { LocationEntity } from '../user/entities/location.entity';
@@ -14,9 +14,12 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { UploadImageResponseDto } from '../cloudinary/dto/upload-image-response.dto';
 import { DistanceService } from '../common/distance.service';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { ItemViewService } from '../item-view/item-view.service';
+import { SearchService } from '../search/search.service';
+import { escapeLike, foldSql, foldText } from '../common/text-fold';
 import type { Express } from 'express';
 
 @Injectable()
@@ -33,6 +36,8 @@ export class ItemService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly distanceService: DistanceService,
     private readonly itemViewService: ItemViewService,
+    private readonly dataSource: DataSource,
+    private readonly searchService: SearchService,
   ) {}
 
   private async getSavedItemIds(userId?: string): Promise<Set<string>> {
@@ -123,32 +128,18 @@ export class ItemService {
   }
 
   /**
-   * Upload files to Cloudinary and persist them as images of an item. A file
-   * that fails to upload is skipped rather than failing the whole request, and
-   * is named in `failed` so the caller can tell the client what did not save.
+   * Upload files to Cloudinary. A file that fails to upload is skipped rather
+   * than failing the whole request, and is named in `failed` so the caller can
+   * tell the client what did not save. Nothing is written to the database
+   * here, so a later failure only leaves Cloudinary assets to clean up.
    */
-  private async uploadImages(
-    itemId: string,
+  private async uploadFiles(
     files: Express.Multer.File[],
-    startOrder: number,
-  ): Promise<{ images: ItemImageEntity[]; failed: string[] }> {
+  ): Promise<{ uploaded: UploadImageResponseDto[]; failed: string[] }> {
     const results = await Promise.all(
       files.map((file, i) =>
         this.cloudinaryService
           .uploadImage(file, { folder: 'items' })
-          .then((uploadResult) =>
-            this.imageRepository.create({
-              item_id: itemId,
-              cloudinary_public_id: uploadResult.publicId,
-              cloudinary_url: uploadResult.secureUrl,
-              cloudinary_secure_url: uploadResult.secureUrl,
-              cloudinary_format: uploadResult.format,
-              width: uploadResult.width,
-              height: uploadResult.height,
-              size_bytes: uploadResult.bytes,
-              is_primary: false,
-            }),
-          )
           .catch((error) => {
             console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
             return file.originalname || `image ${i + 1}`;
@@ -156,95 +147,154 @@ export class ItemService {
       ),
     );
 
-    const imageEntities: ItemImageEntity[] = [];
+    const uploaded: UploadImageResponseDto[] = [];
     const failed: string[] = [];
     for (const result of results) {
       if (typeof result === 'string') {
         failed.push(result);
       } else {
-        // Numbered over the uploads that survived, so a failure in the middle
-        // does not leave a hole in the item's display order.
-        result.display_order = startOrder + imageEntities.length;
-        imageEntities.push(result);
+        uploaded.push(result);
       }
     }
-
-    if (imageEntities.length === 0) return { images: [], failed };
-
-    return { images: await this.imageRepository.save(imageEntities), failed };
+    return { uploaded, failed };
   }
 
   /**
-   * Remove the requested images and append any newly uploaded ones, then
-   * return the item's resulting image list in display order, along with the
-   * names of any uploads that did not make it. Called on every update so the
-   * response always carries the current images, even when the request changed
-   * none of them.
+   * Delete assets uploaded for a request that was then rolled back. Best
+   * effort: a delete that fails is only logged, so the cleanup never hides the
+   * error that caused it.
    */
-  private async applyImageChanges(
-    itemId: string,
+  private async discardUploads(
+    uploaded: UploadImageResponseDto[],
+  ): Promise<void> {
+    await Promise.all(
+      uploaded.map((upload) =>
+        this.cloudinaryService.deleteImage(upload.publicId).catch((error) => {
+          console.error(
+            `Failed to clean up Cloudinary asset ${upload.publicId}:`,
+            error,
+          );
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Save an item together with its image changes as one unit, and return it
+   * with its resulting images in display order, along with the names of any
+   * uploads that did not make it. Called on every update so the response
+   * always carries the current images, even when the request changed none of
+   * them.
+   *
+   * Replacement files are uploaded before anything is written, then the item,
+   * the removals and the new images are committed in a single transaction. So
+   * an edit that would be left with no images once its uploads fail is
+   * rejected with the existing images untouched, and a database failure after
+   * upload rolls everything back and deletes the orphaned Cloudinary assets.
+   */
+  private async saveWithImages(
+    item: ItemEntity,
     removeImageIds?: string[],
     files?: Express.Multer.File[],
-  ): Promise<{ images: ItemImageEntity[]; failed: string[] }> {
-    const existing = await this.imageRepository.find({
-      where: { item_id: itemId, is_deleted: false },
-      order: { display_order: 'ASC', created_at: 'ASC' },
-    });
+  ): Promise<{ item: ItemEntity; failed: string[] }> {
+    const existing = item.id
+      ? await this.imageRepository.find({
+          where: { item_id: item.id, is_deleted: false },
+          order: { display_order: 'ASC', created_at: 'ASC' },
+        })
+      : [];
 
-    let remaining = existing;
-    let failed: string[] = [];
-    const uploadCount = files?.length ?? 0;
-
-    const idsToRemove = [...new Set(removeImageIds ?? [])];
-    if (idsToRemove.length > 0) {
-      const byId = new Map(existing.map((image) => [image.id, image]));
-      const toRemove = idsToRemove.map((id) => {
-        const image = byId.get(id);
-        if (!image) {
-          throw new NotFoundException(
-            `Image with ID ${id} not found on item ${itemId}`,
-          );
-        }
-        return image;
-      });
-
-      // Mirrors the rule enforced when deleting a single image: an item that
-      // has images must keep at least one, unless this request replaces them.
-      if (toRemove.length === existing.length && uploadCount === 0) {
-        throw new BadRequestException(
-          'Cannot remove every image. Items must have at least one image.',
+    const byId = new Map(existing.map((image) => [image.id, image]));
+    const toRemove = [...new Set(removeImageIds ?? [])].map((id) => {
+      const image = byId.get(id);
+      if (!image) {
+        throw new NotFoundException(
+          `Image with ID ${id} not found on item ${item.id}`,
         );
       }
+      return image;
+    });
 
-      const deletedAt = new Date();
-      for (const image of toRemove) {
-        image.is_deleted = true;
-        image.deleted_at = deletedAt;
-      }
-      await this.imageRepository.save(toRemove);
-
-      const removed = new Set(toRemove.map((image) => image.id));
-      remaining = existing.filter((image) => !removed.has(image.id));
-    }
-
-    if (uploadCount > 0) {
-      const nextOrder = remaining.reduce(
-        (max, image) => Math.max(max, image.display_order + 1),
-        0,
+    // Mirrors the rule enforced when deleting a single image: an item that
+    // has images must keep at least one, unless this request replaces them.
+    const removesAll =
+      existing.length > 0 && toRemove.length === existing.length;
+    const uploadCount = files?.length ?? 0;
+    if (removesAll && uploadCount === 0) {
+      throw new BadRequestException(
+        'Cannot remove every image. Items must have at least one image.',
       );
-      const uploaded = await this.uploadImages(itemId, files!, nextOrder);
-      remaining = [...remaining, ...uploaded.images];
-      failed = uploaded.failed;
     }
 
-    // Removing the primary image, or adding the first ever image, leaves the
-    // item without one.
-    if (remaining.length > 0 && !remaining.some((image) => image.is_primary)) {
-      remaining[0].is_primary = true;
-      await this.imageRepository.save(remaining[0]);
+    const { uploaded, failed } =
+      uploadCount > 0
+        ? await this.uploadFiles(files!)
+        : { uploaded: [], failed: [] };
+
+    if (removesAll && uploaded.length === 0) {
+      throw new BadRequestException(
+        'None of the replacement images could be uploaded, so the existing images were kept. Please try again.',
+      );
     }
 
-    return { images: remaining, failed };
+    try {
+      const saved = await this.dataSource.transaction(async (manager) => {
+        const saved = await manager.getRepository(ItemEntity).save(item);
+        const imageRepository = manager.getRepository(ItemImageEntity);
+
+        const deletedAt = new Date();
+        for (const image of toRemove) {
+          image.is_deleted = true;
+          image.deleted_at = deletedAt;
+        }
+
+        const removed = new Set(toRemove);
+        const added = uploaded.map((upload) =>
+          imageRepository.create({
+            item_id: saved.id,
+            cloudinary_public_id: upload.publicId,
+            cloudinary_url: upload.secureUrl,
+            cloudinary_secure_url: upload.secureUrl,
+            cloudinary_format: upload.format,
+            width: upload.width,
+            height: upload.height,
+            size_bytes: upload.bytes,
+            is_primary: false,
+          }),
+        );
+        const images = [
+          ...existing.filter((image) => !removed.has(image)),
+          ...added,
+        ];
+
+        // Renumbered so removals and failed uploads leave no gaps, with
+        // exactly one primary: the first surviving one, or else the first.
+        const primary = images.find((image) => image.is_primary) ?? images[0];
+        const changed = [...toRemove];
+        images.forEach((image, index) => {
+          const isPrimary = image === primary;
+          if (
+            added.includes(image) ||
+            image.display_order !== index ||
+            image.is_primary !== isPrimary
+          ) {
+            image.display_order = index;
+            image.is_primary = isPrimary;
+            changed.push(image);
+          }
+        });
+
+        if (changed.length > 0) await imageRepository.save(changed);
+
+        saved.images = images;
+        return saved;
+      });
+
+      return { item: saved, failed };
+    } catch (error) {
+      await this.discardUploads(uploaded);
+      throw error;
+    }
   }
 
   /**
@@ -297,14 +347,11 @@ export class ItemService {
 
     this.clearScheduleUnlessSpecificDate(item, createDto.pickup_type);
 
-    const saved = await this.itemRepository.save(item);
-
-    const { images, failed } = await this.applyImageChanges(
-      saved.id,
+    const { item: saved, failed } = await this.saveWithImages(
+      item,
       undefined,
       files,
     );
-    saved.images = images;
 
     return {
       ...this.describeFailedUploads(
@@ -331,6 +378,11 @@ export class ItemService {
     lng?: number;
     radius?: number;
     viewer_id?: string;
+    query?: string;
+    page?: number;
+    limit?: number;
+    /** Identifies the searcher for popular terms: a user ID, or an IP. */
+    searcher_key?: string;
   }): Promise<ServiceResponseDto<ItemResponseDto[]>> {
     const query = this.itemRepository
       .createQueryBuilder('item')
@@ -377,6 +429,20 @@ export class ItemService {
       query.andWhere('item.is_free = :is_free', { is_free: filters.is_free });
     }
 
+    const search = filters?.query?.trim();
+    if (search) {
+      query.andWhere(
+        `(${foldSql('item.title')} LIKE :search OR ${foldSql("COALESCE(item.description, '')")} LIKE :search)`,
+        { search: `%${escapeLike(foldText(search))}%` },
+      );
+
+      // Only the first page counts, so paging through results is not
+      // mistaken for searching again.
+      if ((filters?.page ?? 1) === 1 && filters?.searcher_key) {
+        void this.searchService.record(search, filters.searcher_key);
+      }
+    }
+
     const { entities, raw } = await query
       .orderBy('item.created_at', 'DESC')
       .getRawAndEntities();
@@ -399,9 +465,23 @@ export class ItemService {
       }
     });
 
+    // Paged after the distance filter, which runs here rather than in SQL, so
+    // total and every page only ever count items inside the radius.
+    const paginate =
+      filters?.page !== undefined || filters?.limit !== undefined;
+    const page = filters?.page ?? 1;
+    const limit = filters?.limit ?? 20;
+    const pageItems = paginate
+      ? filtered.slice((page - 1) * limit, page * limit)
+      : filtered;
+
     return {
       message: 'Items retrieved successfully',
-      data: filtered.map((item) => ItemResponseDto.fromEntity(item, savedIds.has(item.id))),
+      data: pageItems.map((item) =>
+        ItemResponseDto.fromEntity(item, savedIds.has(item.id)),
+      ),
+      total: filtered.length,
+      ...(paginate ? { page, limit } : {}),
       state: true,
       statusCode: 200,
     };
@@ -526,16 +606,14 @@ export class ItemService {
       );
     }
 
-    // Applied before the item is saved so a bad image ID rejects the whole
-    // edit instead of leaving the other fields already persisted.
-    const { images, failed } = await this.applyImageChanges(
-      itemId,
+    // Saved with the image changes, so a bad image ID or a failed
+    // replacement rejects the whole edit instead of leaving the other fields
+    // already persisted.
+    const { item: updated, failed } = await this.saveWithImages(
+      item,
       remove_image_ids,
       files,
     );
-
-    const updated = await this.itemRepository.save(item);
-    updated.images = images;
     return {
       ...this.describeFailedUploads(
         'Item updated successfully',

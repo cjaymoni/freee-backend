@@ -1,9 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
@@ -28,6 +31,7 @@ import * as bcrypt from 'bcrypt';
 import { FindUserDto } from './dto/find-user.dto';
 import { AppError } from 'src/common/app-error';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import { FirebaseService } from '../firebase/firebase.service';
 
 type UploadFile = {
   buffer: Buffer;
@@ -50,6 +54,7 @@ export class UserService {
     private readonly cloudinaryService: CloudinaryService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly dataSource: DataSource,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   private readonly logger = new Logger(UserService.name);
@@ -542,6 +547,84 @@ export class UserService {
       }
       throw new AppError(error);
     }
+  }
+
+  /**
+   * Set a user's phone number from a verified Firebase ID token.
+   *
+   * The number is read from the token, never from the client, so the stored
+   * phone is always one Firebase has verified. The token must belong to the
+   * same Firebase account as the user; the number and its verified flag are
+   * written in one statement, so a failure leaves the old phone untouched.
+   */
+  async updatePhoneFromFirebase(
+    id: string,
+    idToken: string,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    let decoded: Awaited<ReturnType<FirebaseService['verifyIdToken']>>;
+    try {
+      decoded = await this.firebaseService.verifyIdToken(idToken);
+    } catch (error) {
+      this.logger.warn(
+        `Firebase token verification failed for user ${id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new AppError(
+        new UnauthorizedException(
+          'The Firebase ID token is invalid or expired. Refresh it and try again.',
+        ),
+      );
+    }
+
+    const phoneNumber = decoded.phone_number;
+    if (!phoneNumber) {
+      throw new AppError(
+        new BadRequestException(
+          'The Firebase account has no verified phone number. Verify the number in Firebase first.',
+        ),
+      );
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { id, is_deleted: false },
+    });
+    if (!user) {
+      throw new AppError(new NotFoundException(`User with ID ${id} not found`));
+    }
+    if (!user.firebase_uid || user.firebase_uid !== decoded.uid) {
+      throw new AppError(
+        new ForbiddenException(
+          'The Firebase ID token belongs to a different account.',
+        ),
+      );
+    }
+
+    if (user.phone_number === phoneNumber && user.is_phone_verified) {
+      const responseDto = new UserResponseDto();
+      Object.assign(responseDto, user);
+      return {
+        message: 'Phone number is already up to date',
+        data: responseDto,
+        state: true,
+        statusCode: 200,
+      };
+    }
+
+    const owner = await this.userRepository.findOne({
+      where: { phone_number: phoneNumber },
+    });
+    if (owner && owner.id !== id) {
+      throw new AppError(
+        new ConflictException(
+          'This phone number is already linked to another account.',
+        ),
+      );
+    }
+
+    const result = await this.update(id, {
+      phone_number: phoneNumber,
+      is_phone_verified: true,
+    });
+    return { ...result, message: 'Phone number updated successfully' };
   }
 
   async remove(id: string, deletedById?: string, manager?: EntityManager) {

@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -733,7 +735,14 @@ export class ChatService {
           error.stack,
         );
       }
-      throw new AppError(error);
+      // A query failure's message names SQL aliases and columns, so only
+      // deliberate HTTP errors reach the client as they are.
+      if (error instanceof HttpException) throw new AppError(error);
+      throw new AppError(
+        new InternalServerErrorException(
+          'Could not load conversations. Please try again.',
+        ),
+      );
     }
   }
 
