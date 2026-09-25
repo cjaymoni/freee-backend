@@ -202,8 +202,8 @@ describe('ModerationService targets that do not exist', () => {
 });
 
 describe('ModerationService.resolveUserReport', () => {
-  const setup = (role: string) => {
-    const update = jest.fn().mockResolvedValue({});
+  const setup = (role: string, account_status = 'active') => {
+    const update = jest.fn().mockResolvedValue(true);
     const save = jest.fn((r: unknown) => Promise.resolve(r));
     const service = build({
       reportedUser: {
@@ -211,11 +211,12 @@ describe('ModerationService.resolveUserReport', () => {
           id: 'rep-1',
           reporterId: 'reporter',
           reportedUserId: 'target',
-          reportedUser: { id: 'target', role },
+          reason: 'Harassment',
+          reportedUser: { id: 'target', role, account_status },
         }),
         save,
       },
-      userService: { update },
+      userService: { setAccountState: update },
     });
     return { service, update, save };
   };
@@ -251,7 +252,30 @@ describe('ModerationService.resolveUserReport', () => {
       'mod-1',
     );
 
-    expect(update).toHaveBeenCalledWith('target', { is_active: false });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'target' }),
+      'active',
+      {
+        is_active: false,
+        account_status: 'suspended',
+        status_reason: 'Reported: Harassment',
+        suspended_until: null,
+        status_changed_by: 'mod-1',
+      },
+    );
+  });
+
+  it('leaves a banned account banned', async () => {
+    const { service, update, save } = setup('USER', 'banned');
+
+    await service.resolveUserReport(
+      'rep-1',
+      { status: 'resolved', actionTaken: ActionTaken.USER_SUSPENDED } as never,
+      'mod-1',
+    );
+
+    expect(update).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalled();
   });
 
   it('refuses reviewing a report you filed', async () => {

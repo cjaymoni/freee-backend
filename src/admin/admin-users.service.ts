@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import type { Request } from 'express';
-import { Brackets, DataSource, LessThanOrEqual } from 'typeorm';
+import { Brackets, DataSource } from 'typeorm';
 import {
   AccountStatus,
   UserEntity,
@@ -29,6 +29,7 @@ import { UserActivityLogEntity } from '../audit/entities/user-activity-log.entit
 import { AuditLogEntity } from '../audit/entities/audit-log.entity';
 import { AuditEntityType } from '../audit/audit.constants';
 import { FirebaseService } from '../firebase/firebase.service';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { AppError } from '../common/app-error';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { escapeLike } from '../common/text-fold';
@@ -45,6 +46,14 @@ export const USER_SUSPENDED = 'suspended';
 export const USER_BANNED = 'banned';
 export const USER_REINSTATED = 'reinstated';
 
+/** Another staff action changed the account between our read and write. */
+const changedMeanwhile = () =>
+  new AppError(
+    new ConflictException(
+      'This account changed while you were acting on it; reload and try again',
+    ),
+  );
+
 /** Reports still waiting on staff. */
 const OPEN_REPORT = [ReportStatus.PENDING, ReportStatus.IN_REVIEW];
 
@@ -57,6 +66,7 @@ export class AdminUsersService {
     private readonly userService: UserService,
     private readonly adminAudit: AdminAuditService,
     private readonly firebase: FirebaseService,
+    private readonly chatRealtime: ChatRealtimeService,
   ) {}
 
   async list(
@@ -341,7 +351,8 @@ export class AdminUsersService {
 
   /**
    * Blocks the account everywhere but the complaint endpoints, so the user
-   * can still appeal. Their sessions stay for the same reason.
+   * can still appeal. Their sessions stay for the same reason; open chat
+   * sockets are dropped, since chat isn't one of those endpoints.
    */
   async suspend(
     actor: StaffActor,
@@ -365,13 +376,19 @@ export class AdminUsersService {
       );
     }
 
-    await this.userService.setAccountState(user, {
-      is_active: false,
-      account_status: AccountStatus.SUSPENDED,
-      status_reason: reason,
-      suspended_until: suspendedUntil,
-      status_changed_by: actor.userId,
-    });
+    const written = await this.userService.setAccountState(
+      user,
+      user.account_status,
+      {
+        is_active: false,
+        account_status: AccountStatus.SUSPENDED,
+        status_reason: reason,
+        suspended_until: suspendedUntil,
+        status_changed_by: actor.userId,
+      },
+    );
+    if (!written) throw changedMeanwhile();
+    this.chatRealtime.disconnectUser(userId);
     await this.recordStatusChange(
       actor,
       user,
@@ -400,8 +417,9 @@ export class AdminUsersService {
     }
 
     await this.dataSource.transaction(async (manager) => {
-      await this.userService.setAccountState(
+      const written = await this.userService.setAccountState(
         user,
+        user.account_status,
         {
           is_active: false,
           account_status: AccountStatus.BANNED,
@@ -411,12 +429,16 @@ export class AdminUsersService {
         },
         manager,
       );
+      // Throwing rolls the session revocation back with it.
+      if (!written) throw changedMeanwhile();
       await manager.update(
         UserSessionEntity,
         { user: { id: userId }, is_active: true },
         { is_active: false },
       );
     });
+    await this.userService.clearUserCache(user);
+    this.chatRealtime.disconnectUser(userId);
     // Outside the transaction: a Firebase outage must not undo the ban, and
     // the guard refuses banned accounts whatever token they hold.
     if (user.firebase_uid) {
@@ -441,9 +463,11 @@ export class AdminUsersService {
     request?: Request,
   ) {
     const user = await this.findManageableUser(actor, userId);
-    if (user.account_status === AccountStatus.ACTIVE && user.is_active) {
+    // An active account that can't sign in is waiting on email
+    // verification, which reinstating must not skip.
+    if (user.account_status === AccountStatus.ACTIVE) {
       throw new AppError(
-        new ConflictException('This account is already active'),
+        new ConflictException('This account is not suspended or banned'),
       );
     }
     if (
@@ -453,13 +477,18 @@ export class AdminUsersService {
       throw new AppError(new ForbiddenException('Only admins can lift a ban'));
     }
 
-    await this.userService.setAccountState(user, {
-      is_active: true,
-      account_status: AccountStatus.ACTIVE,
-      status_reason: null,
-      suspended_until: null,
-      status_changed_by: actor.userId,
-    });
+    const written = await this.userService.setAccountState(
+      user,
+      user.account_status,
+      {
+        is_active: true,
+        account_status: AccountStatus.ACTIVE,
+        status_reason: null,
+        suspended_until: null,
+        status_changed_by: actor.userId,
+      },
+    );
+    if (!written) throw changedMeanwhile();
     await this.recordStatusChange(
       actor,
       user,
@@ -470,35 +499,52 @@ export class AdminUsersService {
     return this.detail(userId);
   }
 
-  /** Suspensions with an end date lift themselves. */
+  /**
+   * Suspensions with an end date lift themselves. One conditional UPDATE, so
+   * an account banned or re-suspended meanwhile is left alone, and each
+   * instance running this job lifts (and audits) a given suspension once.
+   */
   @Cron(CronExpression.EVERY_10_MINUTES)
   async liftExpiredSuspensions(): Promise<number> {
-    const expired = await this.dataSource.getRepository(UserEntity).find({
-      where: {
-        account_status: AccountStatus.SUSPENDED,
-        suspended_until: LessThanOrEqual(new Date()),
-        is_deleted: false,
-      },
-    });
-    for (const user of expired) {
-      await this.userService.setAccountState(user, {
+    const result = await this.dataSource
+      .createQueryBuilder()
+      .update(UserEntity)
+      .set({
         is_active: true,
         account_status: AccountStatus.ACTIVE,
         status_reason: null,
         suspended_until: null,
         status_changed_by: null,
+        status_changed_at: new Date(),
+      })
+      .where('account_status = :suspended', {
+        suspended: AccountStatus.SUSPENDED,
+      })
+      .andWhere('suspended_until <= :now', { now: new Date() })
+      .andWhere('is_deleted = false')
+      .returning(['id', 'email', 'firebase_uid', 'suspended_until'])
+      .execute();
+
+    const lifted = (result.raw ?? []) as Pick<
+      UserEntity,
+      'id' | 'email' | 'firebase_uid' | 'suspended_until'
+    >[];
+    for (const user of lifted) {
+      await this.userService.clearUserCache(user);
+      await this.adminAudit.record({
+        actor: null,
+        entityType: AuditEntityType.USERS,
+        entityId: user.id,
+        action: USER_REINSTATED,
+        oldValues: { account_status: AccountStatus.SUSPENDED },
+        newValues: { account_status: AccountStatus.ACTIVE, is_active: true },
+        reason: 'Suspension ended',
       });
-      await this.recordStatusChange(
-        null,
-        user,
-        USER_REINSTATED,
-        'Suspension ended',
-      );
     }
-    if (expired.length) {
-      this.logger.log(`Lifted ${expired.length} expired suspension(s)`);
+    if (lifted.length) {
+      this.logger.log(`Lifted ${lifted.length} expired suspension(s)`);
     }
-    return expired.length;
+    return lifted.length;
   }
 
   async changeRole(
@@ -525,6 +571,15 @@ export class AdminUsersService {
     if (user.role === role) {
       throw new AppError(
         new BadRequestException(`User already has the ${role} role`),
+      );
+    }
+    // Staff can't be suspended or banned, so a blocked account made staff
+    // could never be reinstated.
+    if (isStaff(role) && user.account_status !== AccountStatus.ACTIVE) {
+      throw new AppError(
+        new ConflictException(
+          'Reinstate this account before giving it a staff role',
+        ),
       );
     }
 

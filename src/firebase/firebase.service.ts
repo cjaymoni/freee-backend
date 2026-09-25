@@ -93,11 +93,18 @@ export class FirebaseService implements OnModuleInit {
     return current as string;
   }
 
-  async verifyIdToken(idToken: string): Promise<admin.auth.DecodedIdToken> {
+  /**
+   * @param checkRevoked also refuse tokens issued before the user's tokens
+   * were revoked (e.g. by a ban); costs one extra call to Firebase.
+   */
+  async verifyIdToken(
+    idToken: string,
+    checkRevoked = false,
+  ): Promise<admin.auth.DecodedIdToken> {
     if (!this.firebaseApp) {
       throw new Error('Firebase Admin SDK is not initialized');
     }
-    return admin.auth().verifyIdToken(idToken);
+    return admin.auth().verifyIdToken(idToken, checkRevoked);
   }
 
   /**

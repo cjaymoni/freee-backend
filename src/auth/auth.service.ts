@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ForbiddenException,
   ConflictException,
   NotFoundException,
   Logger,
@@ -25,7 +26,7 @@ import { CreateUserDto } from '../user/dto/create-user.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { UserEntity } from '../user/entities/user.entity';
+import { AccountStatus, UserEntity } from '../user/entities/user.entity';
 import { FirebaseService } from '../firebase/firebase.service';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { FirebaseAuthDto } from './dto/firebase-auth.dto';
@@ -287,7 +288,9 @@ export class AuthService {
     let decodedToken: admin.auth.DecodedIdToken;
 
     try {
-      decodedToken = await this.firebaseService.verifyIdToken(idToken);
+      // Checks revocation too, so a banned user's still-valid ID token can't
+      // mint a new session.
+      decodedToken = await this.firebaseService.verifyIdToken(idToken, true);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -412,6 +415,11 @@ export class AuthService {
       }
       if (needsStatusUpdate) {
         await userRepo.save(user);
+      }
+
+      // Suspended users may still sign in, to appeal; banned users may not.
+      if (user.account_status === AccountStatus.BANNED) {
+        throw new ForbiddenException('This account has been banned.');
       }
 
       const sessionToken = randomBytes(32).toString('hex');

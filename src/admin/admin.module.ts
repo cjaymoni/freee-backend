@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { UserModule } from '../user/user.module';
+import { ChatModule } from '../chat/chat.module';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminItemsController } from './admin-items.controller';
 import { AdminItemsService } from './admin-items.service';
@@ -12,7 +13,7 @@ import { AdminUsersService } from './admin-users.service';
  * Services read through the DataSource, so no forFeature list is needed.
  */
 @Module({
-  imports: [UserModule],
+  imports: [UserModule, ChatModule],
   controllers: [AdminUsersController, AdminItemsController],
   providers: [AdminAuditService, AdminUsersService, AdminItemsService],
 })

@@ -1,3 +1,5 @@
+import { Not } from 'typeorm';
+import { ModerationStatus } from '../item/entities/item.entity';
 import { Repository } from 'typeorm';
 import { SavedItemService } from './saved-item.service';
 import { SavedItemEntity } from './entities/saved-item.entity';
@@ -49,7 +51,12 @@ describe('SavedItemService.getUserSavedItems', () => {
     const where = (
       savedRepo.findAndCount.mock.calls[0] as [{ where: object }]
     )[0].where;
-    expect(where).toMatchObject({ item: { is_deleted: false } });
+    expect(where).toMatchObject({
+      item: {
+        is_deleted: false,
+        moderation_status: Not(ModerationStatus.HIDDEN),
+      },
+    });
     const item = result.data[0].item!;
     expect(item.is_saved).toBe(true);
     expect(item.images!.map((image) => image.id)).toEqual(['img-1']);

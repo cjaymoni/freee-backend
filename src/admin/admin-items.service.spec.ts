@@ -97,3 +97,74 @@ describe('AdminItemsService moderation', () => {
     });
   });
 });
+
+describe('AdminItemsService.list filters', () => {
+  const setup = () => {
+    const calls: [string, unknown?][] = [];
+    const qb: Record<string, unknown> = {};
+    for (const m of ['leftJoinAndSelect', 'orderBy', 'skip', 'take']) {
+      qb[m] = () => qb;
+    }
+    qb.andWhere = (sql: unknown, params?: unknown) => {
+      calls.push([typeof sql === 'string' ? sql : 'brackets', params]);
+      return qb;
+    };
+    qb.getManyAndCount = () => Promise.resolve([[], 0]);
+    const service = new AdminItemsService(
+      {
+        getRepository: () => ({ createQueryBuilder: () => qb }),
+      } as unknown as DataSource,
+      {} as AdminAuditService,
+    );
+    return { service, calls };
+  };
+
+  it('leaves removed listings out unless asked', async () => {
+    const { service, calls } = setup();
+    await service.list({});
+    expect(calls).toContainEqual(['item.is_deleted = false', undefined]);
+
+    const withRemoved = setup();
+    await withRemoved.service.list({ include_deleted: true });
+    expect(withRemoved.calls.map(([sql]) => sql)).not.toContain(
+      'item.is_deleted = false',
+    );
+  });
+
+  it('matches a top-level category and its subcategories', async () => {
+    const { service, calls } = setup();
+    await service.list({ category_id: 'cat-1' });
+    expect(calls).toContainEqual([
+      '(category.id = :categoryId OR category.parent_category_id = :categoryId)',
+      { categoryId: 'cat-1' },
+    ]);
+  });
+
+  it.each([
+    [
+      true,
+      'EXISTS (SELECT 1 FROM item_requests ir WHERE ir.item_id = item.id)',
+    ],
+    [
+      false,
+      'NOT EXISTS (SELECT 1 FROM item_requests ir WHERE ir.item_id = item.id)',
+    ],
+  ])('has_requests=%s filters on requests', async (has_requests, sql) => {
+    const { service, calls } = setup();
+    await service.list({ has_requests });
+    expect(calls.map(([s]) => s)).toContain(sql);
+  });
+
+  it('filters on moderation status and sharer', async () => {
+    const { service, calls } = setup();
+    await service.list({
+      moderation_status: ModerationStatus.HIDDEN,
+      user_id: 'u-1',
+    });
+    expect(calls).toContainEqual([
+      'item.moderation_status = :moderation',
+      { moderation: ModerationStatus.HIDDEN },
+    ]);
+    expect(calls).toContainEqual(['item.user_id = :userId', { userId: 'u-1' }]);
+  });
+});

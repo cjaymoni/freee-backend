@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
-import { UserRole, isStaff } from '../user/entities/user.entity';
+import { AccountStatus, UserRole, isStaff } from '../user/entities/user.entity';
 import { ReportedItem } from './entities/reported-item.entity';
 import { ReportedUser } from './entities/reported-user.entity';
 import { BlockedUser } from './entities/blocked-user.entity';
@@ -236,9 +236,18 @@ export class ModerationService {
           'Staff accounts cannot be suspended from a report',
         );
       }
-      await this.userService.update(report.reportedUserId, {
-        is_active: false,
-      });
+      // A banned account stays banned; anything else becomes suspended, with
+      // the report as the recorded reason.
+      const target = report.reportedUser;
+      if (target && target.account_status !== AccountStatus.BANNED) {
+        await this.userService.setAccountState(target, target.account_status, {
+          is_active: false,
+          account_status: AccountStatus.SUSPENDED,
+          status_reason: `Reported: ${report.reason}`,
+          suspended_until: null,
+          status_changed_by: reviewerId,
+        });
+      }
     }
 
     return this.reportedUserRepo.save(report);

@@ -353,7 +353,7 @@ export class UserController {
       'Non-admins may only update their own record. `role`, `is_active`, the ' +
       'verification flags and `firebase_uid` are admin-only: when a user sends ' +
       'them they are ignored and listed in `warnings`. Admins cannot set `role` ' +
-      'here (400); use PATCH /admin/users/:id/role. Changing `email` or ' +
+      'or `is_active` here (400); use the /admin/users endpoints. Changing `email` or ' +
       '`phone_number` clears the matching verification flag.',
   })
   @ApiResponse({
@@ -433,10 +433,13 @@ export class UserController {
         ),
       );
     }
-    if (id === requesterId && updateUserDto.is_active === false) {
-      // Stops an admin from locking themselves (possibly the last admin) out.
+    // Suspending and reinstating record a reason and who did it, and lifting
+    // a ban is admin only; the admin endpoints check all of that.
+    if (updateUserDto.is_active !== undefined) {
       throw new AppError(
-        new ForbiddenException('Admins cannot deactivate themselves'),
+        new BadRequestException(
+          'Suspend or reinstate with POST /admin/users/:id/suspend or /reinstate',
+        ),
       );
     }
 

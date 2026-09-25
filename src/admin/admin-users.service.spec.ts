@@ -7,6 +7,7 @@ import {
 import { UserService } from '../user/user.service';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { FirebaseService } from '../firebase/firebase.service';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { AdminAuditService } from './admin-audit.service';
 import {
   AdminUsersService,
@@ -31,14 +32,20 @@ const member = (overrides: Partial<UserEntity> = {}) =>
     ...overrides,
   }) as UserEntity;
 
-const setup = (user: UserEntity | null, expired: UserEntity[] = []) => {
+const setup = (user: UserEntity | null, lifted: object[] = []) => {
   const manager = { update: jest.fn().mockResolvedValue({}) };
-  const userRepo = {
-    findOne: jest.fn().mockResolvedValue(user),
-    find: jest.fn().mockResolvedValue(expired),
+  const userRepo = { findOne: jest.fn().mockResolvedValue(user) };
+  const liftQuery = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    returning: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({ raw: lifted }),
   };
   const dataSource = {
     getRepository: () => userRepo,
+    createQueryBuilder: () => liftQuery,
     transaction: jest.fn((fn: (m: typeof manager) => unknown) => fn(manager)),
   };
   const userService = {
@@ -48,19 +55,31 @@ const setup = (user: UserEntity | null, expired: UserEntity[] = []) => {
       message: 'User updated successfully',
       statusCode: 200,
     }),
-    setAccountState: jest.fn().mockResolvedValue(undefined),
+    setAccountState: jest.fn().mockResolvedValue(true),
+    clearUserCache: jest.fn().mockResolvedValue(undefined),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const firebase = { revokeRefreshTokens: jest.fn().mockResolvedValue(true) };
+  const chat = { disconnectUser: jest.fn() };
   const service = new AdminUsersService(
     dataSource as unknown as DataSource,
     userService as unknown as UserService,
     audit as unknown as AdminAuditService,
     firebase as unknown as FirebaseService,
+    chat as unknown as ChatRealtimeService,
   );
   // detail() runs a dozen counts; the actions only need to reach it.
   jest.spyOn(service, 'detail').mockResolvedValue({ data: {} } as never);
-  return { service, manager, userService, audit, firebase, userRepo };
+  return {
+    service,
+    manager,
+    userService,
+    audit,
+    firebase,
+    chat,
+    userRepo,
+    liftQuery,
+  };
 };
 
 const ends = { user: { id: 'u-1' }, is_active: true };
@@ -116,6 +135,20 @@ describe('AdminUsersService.changeRole', () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
+  it.each([AccountStatus.SUSPENDED, AccountStatus.BANNED])(
+    'refuses making a %s account staff',
+    async (account_status) => {
+      const { service, userService } = setup(
+        member({ is_active: false, account_status }),
+      );
+
+      await expect(
+        service.changeRole(admin, 'u-1', UserRole.MODERATOR),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(userService.update).not.toHaveBeenCalled();
+    },
+  );
+
   it('400s when the role is unchanged', async () => {
     const { service, audit } = setup(member({ role: UserRole.MODERATOR }));
 
@@ -130,13 +163,14 @@ describe('AdminUsersService.suspend', () => {
   const later = () => new Date(Date.now() + 86_400_000).toISOString();
 
   it('deactivates the account, keeps its sessions and audits the reason', async () => {
-    const { service, userService, manager, audit } = setup(member());
+    const { service, userService, manager, audit, chat } = setup(member());
     const until = later();
 
     await service.suspend(moderator, 'u-1', 'No-shows', until);
 
     expect(userService.setAccountState).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'u-1' }),
+      AccountStatus.ACTIVE,
       {
         is_active: false,
         account_status: AccountStatus.SUSPENDED,
@@ -145,8 +179,10 @@ describe('AdminUsersService.suspend', () => {
         status_changed_by: moderator.userId,
       },
     );
-    // Suspended users keep their sessions so they can still appeal.
+    // Suspended users keep their sessions so they can still appeal, but
+    // chat isn't an appeal route, so open sockets go.
     expect(manager.update).not.toHaveBeenCalled();
+    expect(chat.disconnectUser).toHaveBeenCalledWith('u-1');
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         actor: moderator,
@@ -154,6 +190,17 @@ describe('AdminUsersService.suspend', () => {
         reason: 'No-shows',
       }),
     );
+  });
+
+  it('409s without auditing when the account changed meanwhile', async () => {
+    const { service, userService, audit, chat } = setup(member());
+    userService.setAccountState.mockResolvedValue(false);
+
+    await expect(
+      service.suspend(moderator, 'u-1', 'No-shows'),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(chat.disconnectUser).not.toHaveBeenCalled();
   });
 
   it('refuses an end date in the past', async () => {
@@ -197,13 +244,15 @@ describe('AdminUsersService.suspend', () => {
 });
 
 describe('AdminUsersService.ban', () => {
-  it('bans, ends sessions and revokes Firebase tokens', async () => {
-    const { service, userService, manager, firebase, audit } = setup(member());
+  it('bans, ends sessions, drops sockets and revokes Firebase tokens', async () => {
+    const { service, userService, manager, firebase, audit, chat } =
+      setup(member());
 
     await service.ban(admin, 'u-1', 'Fraud');
 
     expect(userService.setAccountState).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'u-1' }),
+      AccountStatus.ACTIVE,
       expect.objectContaining({
         is_active: false,
         account_status: AccountStatus.BANNED,
@@ -215,10 +264,32 @@ describe('AdminUsersService.ban', () => {
     expect(manager.update).toHaveBeenCalledWith(UserSessionEntity, ends, {
       is_active: false,
     });
+    // After commit, so a read in between can't cache the old state.
+    expect(userService.clearUserCache).toHaveBeenCalled();
+    expect(chat.disconnectUser).toHaveBeenCalledWith('u-1');
     expect(firebase.revokeRefreshTokens).toHaveBeenCalledWith('fb-1');
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: USER_BANNED, reason: 'Fraud' }),
     );
+  });
+
+  it('keeps sessions when the account changed meanwhile', async () => {
+    const { service, userService, manager, firebase } = setup(
+      member({ is_active: false, account_status: AccountStatus.SUSPENDED }),
+    );
+    userService.setAccountState.mockResolvedValue(false);
+
+    await expect(service.ban(admin, 'u-1', 'Fraud')).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(userService.setAccountState).toHaveBeenCalledWith(
+      expect.anything(),
+      AccountStatus.SUSPENDED,
+      expect.anything(),
+      manager,
+    );
+    expect(manager.update).not.toHaveBeenCalled();
+    expect(firebase.revokeRefreshTokens).not.toHaveBeenCalled();
   });
 
   it('still bans when Firebase revocation fails', async () => {
@@ -254,6 +325,7 @@ describe('AdminUsersService.reinstate', () => {
 
     expect(userService.setAccountState).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'u-1' }),
+      AccountStatus.SUSPENDED,
       {
         is_active: true,
         account_status: AccountStatus.ACTIVE,
@@ -279,36 +351,97 @@ describe('AdminUsersService.reinstate', () => {
     expect(asAdmin.userService.setAccountState).toHaveBeenCalled();
   });
 
-  it('refuses an account that is already active', async () => {
-    const { service } = setup(member());
+  it.each([true, false])(
+    'refuses an active account (is_active=%s, i.e. awaiting verification)',
+    async (is_active) => {
+      const { service, userService } = setup(member({ is_active }));
 
-    await expect(service.reinstate(admin, 'u-1')).rejects.toMatchObject({
+      await expect(service.reinstate(admin, 'u-1')).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(userService.setAccountState).not.toHaveBeenCalled();
+    },
+  );
+
+  it('409s when the account changed meanwhile', async () => {
+    const { service, userService, audit } = setup(suspended());
+    userService.setAccountState.mockResolvedValue(false);
+
+    await expect(service.reinstate(moderator, 'u-1')).rejects.toMatchObject({
       status: 409,
     });
+    expect(audit.record).not.toHaveBeenCalled();
   });
 });
 
 describe('AdminUsersService.liftExpiredSuspensions', () => {
-  it('reinstates suspensions past their end date, audited as the system', async () => {
-    const expired = member({
-      is_active: false,
-      account_status: AccountStatus.SUSPENDED,
-      suspended_until: new Date('2020-01-01'),
-    });
-    const { service, userService, audit } = setup(null, [expired]);
+  it('lifts expired suspensions in one conditional update, audited as the system', async () => {
+    const lifted = { id: 'u-1', email: 'u1@example.com', firebase_uid: 'fb-1' };
+    const { service, userService, audit, liftQuery } = setup(null, [lifted]);
 
     await expect(service.liftExpiredSuspensions()).resolves.toBe(1);
 
-    expect(userService.setAccountState).toHaveBeenCalledWith(
-      expired,
+    // Only rows still suspended and past their end date: a ban or new
+    // suspension in the meantime no longer matches.
+    expect(liftQuery.where).toHaveBeenCalledWith(
+      'account_status = :suspended',
+      { suspended: AccountStatus.SUSPENDED },
+    );
+    expect(liftQuery.andWhere).toHaveBeenCalledWith(
+      'suspended_until <= :now',
+      expect.objectContaining({ now: expect.any(Date) }),
+    );
+    expect(liftQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({
         is_active: true,
         account_status: AccountStatus.ACTIVE,
-        status_changed_by: null,
+        suspended_until: null,
       }),
     );
+    expect(userService.clearUserCache).toHaveBeenCalledWith(lifted);
     expect(audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ actor: null, action: USER_REINSTATED }),
+      expect.objectContaining({
+        actor: null,
+        entityId: 'u-1',
+        action: USER_REINSTATED,
+      }),
     );
+  });
+
+  it('audits nothing when nothing expired', async () => {
+    const { service, audit } = setup(null, []);
+
+    await expect(service.liftExpiredSuspensions()).resolves.toBe(0);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminUsersService.list filters', () => {
+  it('escapes the search and applies status and role', async () => {
+    const calls: [unknown, unknown?][] = [];
+    const qb: Record<string, unknown> = {};
+    for (const m of ['where', 'orderBy', 'skip', 'take']) qb[m] = () => qb;
+    qb.andWhere = (sql: unknown, params?: unknown) => {
+      calls.push([typeof sql === 'string' ? sql : 'brackets', params]);
+      return qb;
+    };
+    qb.getManyAndCount = () => Promise.resolve([[], 0]);
+    const { service } = setup(null);
+    Object.assign(service, {
+      dataSource: { getRepository: () => ({ createQueryBuilder: () => qb }) },
+    });
+
+    await service.list({
+      search: ' 50%_off ',
+      account_status: AccountStatus.BANNED,
+      role: UserRole.USER,
+    });
+
+    expect(calls).toContainEqual(['brackets', { search: '%50\\%\\_off%' }]);
+    expect(calls).toContainEqual([
+      'u.account_status = :status',
+      { status: AccountStatus.BANNED },
+    ]);
+    expect(calls).toContainEqual(['u.role = :role', { role: UserRole.USER }]);
   });
 });

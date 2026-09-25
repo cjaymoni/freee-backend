@@ -15,9 +15,15 @@ export class AddAccountAndListingModeration1794000000000 implements MigrationInt
         ADD "status_changed_by" uuid,
         ADD "status_changed_at" TIMESTAMP`,
     );
-    // Accounts deactivated before this existed were suspended from a report.
+    // is_active=false meant one of two things before this: suspended from a
+    // report, or a password sign-up that hasn't verified its email yet. The
+    // second stays 'active' (it becomes usable on verification), so only
+    // accounts that had verified something, or signed in through Firebase,
+    // are taken to be suspended.
     await queryRunner.query(
-      `UPDATE "users" SET "account_status" = 'suspended' WHERE "is_active" = false AND "is_deleted" = false`,
+      `UPDATE "users" SET "account_status" = 'suspended'
+        WHERE "is_active" = false AND "is_deleted" = false
+          AND ("is_email_verified" = true OR "is_phone_verified" = true OR "firebase_uid" IS NOT NULL)`,
     );
     await queryRunner.query(
       `CREATE INDEX "idx_users_account_status" ON "users" ("account_status", "suspended_until")`,
