@@ -1,8 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import type { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 
-/** Ceiling documented for mobile clients in docs/ANDROID_INTEGRATION.md. */
-export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+/**
+ * Cloudinary rejects images above 10 MB on the current plan, so larger files
+ * are refused here with a 413 instead of failing at upload time. Documented
+ * for mobile clients in docs/ANDROID_INTEGRATION.md.
+ */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** Files accepted in a single create or update request. */
 export const MAX_IMAGES_PER_REQUEST = 10;

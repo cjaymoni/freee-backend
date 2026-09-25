@@ -23,6 +23,7 @@ import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity
 import { UserEntity } from './entities/user.entity';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
+import { ItemImageEntity } from '../item/entities/item-image.entity';
 import { UserPreferenceEntity } from './entities/user-preference.entity';
 import { CategoryEntity } from '../category/entities/category.entity';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -153,6 +154,8 @@ export class UserService {
       await queryRunner.startTransaction();
     }
     const entityManager = manager || queryRunner!.manager;
+    // Uploaded during this call: discarded if the call fails.
+    let uploadedAvatarId: string | undefined;
 
     try {
       const source = options.source ?? 'unknown';
@@ -230,6 +233,7 @@ export class UserService {
           const uploadResult = await this.cloudinaryService.uploadImage(file, {
             folder: 'users',
           });
+          uploadedAvatarId = uploadResult.publicId;
           patchData = {
             ...patchData,
             cloudinary_avatar_public_id: uploadResult.publicId,
@@ -272,6 +276,16 @@ export class UserService {
 
         if (queryRunner) {
           await queryRunner.commitTransaction();
+          // The new avatar replaced the old one; drop the old file once that
+          // is committed. With a caller's manager the commit isn't ours yet.
+          const replacedId = existingUser.cloudinary_avatar_public_id;
+          if (
+            uploadedAvatarId &&
+            replacedId &&
+            replacedId !== uploadedAvatarId
+          ) {
+            await this.cloudinaryService.deleteImagesQuietly([replacedId]);
+          }
         }
 
         const responseDto = new UserResponseDto();
@@ -300,6 +314,7 @@ export class UserService {
         const uploadResult = await this.cloudinaryService.uploadImage(file, {
           folder: 'users',
         });
+        uploadedAvatarId = uploadResult.publicId;
         avatarData = {
           cloudinary_avatar_public_id: uploadResult.publicId,
           cloudinary_avatar_url: uploadResult.secureUrl,
@@ -367,6 +382,10 @@ export class UserService {
     } catch (error) {
       if (queryRunner) {
         await queryRunner.rollbackTransaction();
+      }
+      // Nothing references this upload now that the write failed.
+      if (uploadedAvatarId) {
+        await this.cloudinaryService.deleteImagesQuietly([uploadedAvatarId]);
       }
       throw error;
     } finally {
@@ -632,59 +651,90 @@ export class UserService {
       const run = <T>(work: (em: EntityManager) => Promise<T>) =>
         manager ? work(manager) : this.dataSource.transaction(work);
 
-      const { user, deletedUser } = await run(async (entityManager) => {
-        const user = await entityManager.findOne(UserEntity, {
-          where: { id, is_deleted: false },
-        });
-        if (!user) {
-          throw new NotFoundException(`User with ID ${id} not found`);
-        }
+      const { user, deletedUser, imageIds } = await run(
+        async (entityManager) => {
+          const user = await entityManager.findOne(UserEntity, {
+            where: { id, is_deleted: false },
+          });
+          if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+          }
 
-        // UserEntity tracks deletion with its own columns (there is no
-        // @DeleteDateColumn, so repository.softDelete would throw).
-        //
-        // email, phone_number and firebase_uid are unique and are how Firebase
-        // sign-in finds an account, so they are released: signing in again
-        // with the same Google account or phone creates a fresh account
-        // instead of landing in this deleted one, and nobody is locked out of
-        // re-registering. Deactivating blocks password login.
-        await entityManager.update(UserEntity, id, {
-          is_deleted: true,
-          deleted_at: new Date(),
-          is_active: false,
-          email: null,
-          phone_number: null as unknown as string,
-          firebase_uid: null,
-          fcm_token: null as unknown as string,
-          ...(deletedById && { deleted_by: { id: deletedById } }),
-        });
-
-        // End live sessions so existing access and refresh tokens stop working.
-        await entityManager.update(
-          UserSessionEntity,
-          { user: { id }, is_active: true },
-          { is_active: false },
-        );
-
-        // Take down the user's listings so nobody requests items from a
-        // deleted account.
-        await entityManager.update(
-          ItemEntity,
-          { user_id: id, is_deleted: false },
-          {
+          // UserEntity tracks deletion with its own columns (there is no
+          // @DeleteDateColumn, so repository.softDelete would throw).
+          //
+          // email, phone_number and firebase_uid are unique and are how Firebase
+          // sign-in finds an account, so they are released: signing in again
+          // with the same Google account or phone creates a fresh account
+          // instead of landing in this deleted one, and nobody is locked out of
+          // re-registering. Deactivating blocks password login.
+          await entityManager.update(UserEntity, id, {
             is_deleted: true,
             deleted_at: new Date(),
-            deleted_by: deletedById ?? id,
-            deletion_reason: 'Owner account deleted',
-            status: ItemStatus.UNAVAILABLE,
-          },
-        );
+            is_active: false,
+            email: null,
+            phone_number: null as unknown as string,
+            firebase_uid: null,
+            fcm_token: null as unknown as string,
+            cloudinary_avatar_public_id: null as unknown as string,
+            cloudinary_avatar_url: null as unknown as string,
+            ...(deletedById && { deleted_by: { id: deletedById } }),
+          });
 
-        const deletedUser = await entityManager.findOne(UserEntity, {
-          where: { id },
-        });
-        return { user, deletedUser };
-      });
+          // End live sessions so existing access and refresh tokens stop working.
+          await entityManager.update(
+            UserSessionEntity,
+            { user: { id }, is_active: true },
+            { is_active: false },
+          );
+
+          // Take down the user's listings, and their images, so nobody requests
+          // items from a deleted account.
+          const images = await entityManager
+            .createQueryBuilder(ItemImageEntity, 'image')
+            .innerJoin('image.item', 'item')
+            .where('item.user_id = :id AND item.is_deleted = false', { id })
+            .andWhere('image.is_deleted = false')
+            .getMany();
+          if (images.length) {
+            await entityManager.update(
+              ItemImageEntity,
+              images.map((image) => image.id),
+              { is_deleted: true, deleted_at: new Date() },
+            );
+          }
+          await entityManager.update(
+            ItemEntity,
+            { user_id: id, is_deleted: false },
+            {
+              is_deleted: true,
+              deleted_at: new Date(),
+              deleted_by: deletedById ?? id,
+              deletion_reason: 'Owner account deleted',
+              status: ItemStatus.UNAVAILABLE,
+            },
+          );
+
+          const deletedUser = await entityManager.findOne(UserEntity, {
+            where: { id },
+          });
+          return {
+            user,
+            deletedUser,
+            imageIds: images.map((image) => image.cloudinary_public_id),
+          };
+        },
+      );
+
+      // After the commit, so a rollback never strands rows pointing at deleted
+      // assets. With a caller-supplied manager the commit is the caller's, so
+      // the files are left for it to handle.
+      if (!manager) {
+        await this.cloudinaryService.deleteImagesQuietly([
+          ...imageIds,
+          user.cloudinary_avatar_public_id,
+        ]);
+      }
 
       // Invalidate cache
       await this.cacheManager.del(`user:id:${id}`);

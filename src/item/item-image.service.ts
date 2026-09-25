@@ -5,7 +5,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { Not, Repository } from 'typeorm';
 import { ItemImageEntity } from './entities/item-image.entity';
 import { ItemEntity } from './entities/item.entity';
 import { CreateItemImageDto } from './dto/create-item-image.dto';
@@ -19,6 +20,7 @@ export class ItemImageService {
     private readonly imageRepository: Repository<ItemImageEntity>,
     @InjectRepository(ItemEntity)
     private readonly itemRepository: Repository<ItemEntity>,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -222,18 +224,23 @@ export class ItemImageService {
 
     // If this was the primary image, set another image as primary
     if (image.is_primary) {
+      // Exclude the image being deleted: it isn't saved as deleted yet, so
+      // without this the lookup can return it and nothing gets promoted.
       const nextImage = await this.imageRepository.findOne({
-        where: { item_id: image.item_id, is_deleted: false },
+        where: { item_id: image.item_id, is_deleted: false, id: Not(image.id) },
         order: { display_order: 'ASC', created_at: 'ASC' },
       });
 
-      if (nextImage && nextImage.id !== image.id) {
+      if (nextImage) {
         nextImage.is_primary = true;
         await this.imageRepository.save(nextImage);
       }
     }
 
     const deleted = await this.imageRepository.save(image);
+    await this.cloudinaryService.deleteImagesQuietly([
+      image.cloudinary_public_id,
+    ]);
     return {
       message: 'Image deleted successfully',
       data: ItemImageResponseDto.fromEntity(deleted),

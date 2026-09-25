@@ -141,7 +141,10 @@ export class ItemService {
         this.cloudinaryService
           .uploadImage(file, { folder: 'items' })
           .catch((error) => {
-            console.error(`Failed to upload file at index ${i} to Cloudinary:`, error);
+            console.error(
+              `Failed to upload file at index ${i} to Cloudinary:`,
+              error,
+            );
             return file.originalname || `image ${i + 1}`;
           }),
       ),
@@ -290,6 +293,11 @@ export class ItemService {
         return saved;
       });
 
+      // Only after the commit, so a rollback never strands rows pointing at
+      // deleted assets.
+      await this.cloudinaryService.deleteImagesQuietly(
+        toRemove.map((image) => image.cloudinary_public_id),
+      );
       return { item: saved, failed };
     } catch (error) {
       await this.discardUploads(uploaded);
@@ -450,18 +458,27 @@ export class ItemService {
     const { lat, lng, radius = 10 } = filters ?? {};
     const savedIds = await this.getSavedItemIds(filters?.viewer_id);
 
-    const filtered = (lat !== undefined && lng !== undefined)
-      ? entities.filter((e) =>
-          e.location?.latitude && e.location?.longitude
-            ? this.distanceService.isWithinRadius(lat, lng, e.location.latitude, e.location.longitude, radius)
-            : true,
-        )
-      : entities;
+    const filtered =
+      lat !== undefined && lng !== undefined
+        ? entities.filter((e) =>
+            e.location?.latitude && e.location?.longitude
+              ? this.distanceService.isWithinRadius(
+                  lat,
+                  lng,
+                  e.location.latitude,
+                  e.location.longitude,
+                  radius,
+                )
+              : true,
+          )
+        : entities;
 
     filtered.forEach((entity, i) => {
       const rawIndex = entities.indexOf(entity);
       if (entity.user) {
-        (entity.user as any).items_count = Number(raw[rawIndex]?.user_items_count ?? 0);
+        (entity.user as any).items_count = Number(
+          raw[rawIndex]?.user_items_count ?? 0,
+        );
       }
     });
 
@@ -647,19 +664,57 @@ export class ItemService {
       throw new ForbiddenException('You can only delete your own items');
     }
 
-    item.is_deleted = true;
-    item.deleted_at = new Date();
-    item.deleted_by = userId;
-    item.deletion_reason = reason || 'Deleted by owner';
-    item.status = ItemStatus.UNAVAILABLE;
-
-    const deleted = await this.itemRepository.save(item);
+    const deleted = await this.softDeleteWithImages(
+      item,
+      userId,
+      reason || 'Deleted by owner',
+    );
     return {
       message: 'Item deleted successfully',
       data: ItemResponseDto.fromEntity(deleted),
       state: true,
       statusCode: 200,
     };
+  }
+
+  /**
+   * Soft-delete an item and its images in one transaction, then remove the
+   * image files from Cloudinary once the change has committed.
+   */
+  private async softDeleteWithImages(
+    item: ItemEntity,
+    deletedBy: string,
+    reason: string,
+  ): Promise<ItemEntity> {
+    const deletedAt = new Date();
+    item.is_deleted = true;
+    item.deleted_at = deletedAt;
+    item.deleted_by = deletedBy;
+    item.deletion_reason = reason;
+    item.status = ItemStatus.UNAVAILABLE;
+
+    const { deleted, images } = await this.dataSource.transaction(
+      async (manager) => {
+        const images = await manager
+          .getRepository(ItemImageEntity)
+          .find({ where: { item_id: item.id, is_deleted: false } });
+        if (images.length) {
+          await manager
+            .getRepository(ItemImageEntity)
+            .update(
+              { item_id: item.id, is_deleted: false },
+              { is_deleted: true, deleted_at: deletedAt },
+            );
+        }
+        const deleted = await manager.getRepository(ItemEntity).save(item);
+        return { deleted, images };
+      },
+    );
+
+    await this.cloudinaryService.deleteImagesQuietly(
+      images.map((image) => image.cloudinary_public_id),
+    );
+    return deleted;
   }
 
   /**
@@ -678,13 +733,11 @@ export class ItemService {
       throw new NotFoundException(`Item with ID ${itemId} not found`);
     }
 
-    item.is_deleted = true;
-    item.deleted_at = new Date();
-    item.deleted_by = adminId;
-    item.deletion_reason = reason || 'Removed by moderation';
-    item.status = ItemStatus.UNAVAILABLE;
-
-    const deleted = await this.itemRepository.save(item);
+    const deleted = await this.softDeleteWithImages(
+      item,
+      adminId,
+      reason || 'Removed by moderation',
+    );
     return {
       message: 'Item removed successfully',
       data: ItemResponseDto.fromEntity(deleted),

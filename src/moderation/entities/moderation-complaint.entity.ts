@@ -16,7 +16,7 @@ export class ModerationComplaint {
   @JoinColumn({ name: 'user_id' })
   user: UserEntity;
 
-  @Column({ type: 'varchar', length: 20 })
+  @Column({ name: 'complaint_type', type: 'varchar', length: 20 })
   complaintType: string;
 
   @Column({ name: 'reference_id', type: 'uuid', nullable: true })

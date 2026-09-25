@@ -15,8 +15,8 @@ export const MAX_MESSAGE_LENGTH = 4000;
 export const MESSAGE_PREVIEW_LENGTH = 200;
 
 /**
- * Chat attachments are capped well below the 50MB item-image ceiling: they are
- * sent one at a time from a phone, usually over mobile data.
+ * Chat attachments share the 10 MB ceiling Cloudinary enforces on the current
+ * plan (see MAX_IMAGE_BYTES).
  */
 export const MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024;
 

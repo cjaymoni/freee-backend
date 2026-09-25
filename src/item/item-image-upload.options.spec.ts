@@ -19,7 +19,7 @@ describe('itemImageUploadOptions', () => {
   it('caps file size and file count', () => {
     expect(itemImageUploadOptions.limits?.fileSize).toBe(MAX_IMAGE_BYTES);
     expect(itemImageUploadOptions.limits?.files).toBe(MAX_IMAGES_PER_REQUEST);
-    expect(MAX_IMAGE_BYTES).toBe(50 * 1024 * 1024);
+    expect(MAX_IMAGE_BYTES).toBe(10 * 1024 * 1024);
   });
 
   it.each(['image/jpeg', 'image/png', 'image/webp', 'image/heic'])(

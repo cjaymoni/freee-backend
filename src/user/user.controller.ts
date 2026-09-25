@@ -13,6 +13,7 @@ import {
   UseInterceptors,
   UploadedFile,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
@@ -44,6 +45,7 @@ import { UserRole } from './entities/user.entity';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { AppError } from '../common/app-error';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { avatarUploadOptions } from './avatar-upload.options';
 
 /**
  * Fields only an admin may set via PATCH /user/:id. When a user sends them for
@@ -127,7 +129,7 @@ export class UserController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', avatarUploadOptions))
   async create(
     @Body() createUserDto: CreateUserDto,
     @UploadedFile() file?: Express.Multer.File,
@@ -240,16 +242,29 @@ export class UserController {
     type: ErrorResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', avatarUploadOptions))
   async uploadAvatar(
     @GetUser('userId') userId: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    if (!file) {
+      throw new BadRequestException('An image file is required in "file"');
+    }
+    const previous = await this.userService.findOneEntity(userId);
     const upload = await this.cloudinaryService.uploadAvatar(file, userId);
-    return this.userService.update(userId, {
+    const result = await this.userService.update(userId, {
       cloudinary_avatar_public_id: upload.publicId,
       cloudinary_avatar_url: upload.secureUrl,
     });
+
+    // uploadAvatar overwrites avatars/user_<id> in place, but an avatar set
+    // during onboarding (POST /user) lives under a different id and would
+    // otherwise be orphaned.
+    const previousId = previous?.cloudinary_avatar_public_id;
+    if (previousId && previousId !== upload.publicId) {
+      await this.cloudinaryService.deleteImagesQuietly([previousId]);
+    }
+    return result;
   }
 
   @Patch('fcm-token')
