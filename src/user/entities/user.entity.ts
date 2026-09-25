@@ -9,11 +9,13 @@ import {
   JoinColumn,
   OneToMany,
   OneToOne,
+  AfterLoad,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { UserSessionEntity } from '../../auth/entities/user-session.entity';
 import { LocationEntity } from './location.entity';
 import { UserPreferenceEntity } from './user-preference.entity';
+import { defaultAvatarUrl } from '../default-avatar';
 
 export enum UserRole {
   USER = 'USER',
@@ -145,4 +147,14 @@ export class UserEntity {
 
   @OneToOne(() => UserPreferenceEntity, (preference) => preference.user)
   preference: UserPreferenceEntity;
+
+  // Users without an uploaded or supplied avatar (including rows created
+  // before the DiceBear default existed) still get one. Only a selected-but-null
+  // column is filled, so partial selects that skip the avatar are untouched.
+  @AfterLoad()
+  fillDefaultAvatar() {
+    if (this.cloudinary_avatar_url === null && this.id) {
+      this.cloudinary_avatar_url = defaultAvatarUrl(this.id);
+    }
+  }
 }

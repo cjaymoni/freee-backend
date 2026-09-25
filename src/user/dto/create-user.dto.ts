@@ -18,6 +18,7 @@ export class CreateUserDto extends PickType(BaseUserDto, [
 
   'date_of_birth',
   'password',
+  'cloudinary_avatar_url',
 ]) {
   @IsOptional()
   firebase_uid?: string;

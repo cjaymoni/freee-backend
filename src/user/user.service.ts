@@ -21,6 +21,7 @@ import {
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { UserEntity } from './entities/user.entity';
+import { defaultAvatarUrl } from './default-avatar';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
 import { ItemImageEntity } from '../item/entities/item-image.entity';
@@ -239,6 +240,16 @@ export class UserService {
             cloudinary_avatar_public_id: uploadResult.publicId,
             cloudinary_avatar_url: uploadResult.secureUrl,
           };
+        } else if (createUserDto.cloudinary_avatar_url) {
+          patchData = {
+            ...patchData,
+            cloudinary_avatar_url: createUserDto.cloudinary_avatar_url,
+          };
+        } else if (!existingUser.cloudinary_avatar_url) {
+          patchData = {
+            ...patchData,
+            cloudinary_avatar_url: defaultAvatarUrl(existingUser.id),
+          };
         }
 
         await entityManager.update(UserEntity, existingUser.id, patchData);
@@ -319,11 +330,13 @@ export class UserService {
           cloudinary_avatar_public_id: uploadResult.publicId,
           cloudinary_avatar_url: uploadResult.secureUrl,
         };
+      } else if (createUserDto.cloudinary_avatar_url) {
+        avatarData = {
+          cloudinary_avatar_url: createUserDto.cloudinary_avatar_url,
+        };
       } else {
         // Auto-generate a DiceBear avatar; seed will be replaced with the real user id after save
-        avatarData = {
-          cloudinary_avatar_url: `https://api.dicebear.com/9.x/adventurer/svg?seed=temp`,
-        };
+        avatarData = { cloudinary_avatar_url: defaultAvatarUrl('temp') };
       }
 
       const userData = { ...createUserDto } as Record<string, any>;
@@ -345,11 +358,11 @@ export class UserService {
       const result = await entityManager.save(UserEntity, user);
 
       // Replace temp seed with the real user id for a stable, unique avatar
-      if (!file) {
+      if (!file && !createUserDto.cloudinary_avatar_url) {
+        result.cloudinary_avatar_url = defaultAvatarUrl(result.id);
         await entityManager.update(UserEntity, result.id, {
-          cloudinary_avatar_url: `https://api.dicebear.com/9.x/adventurer/svg?seed=${result.id}`,
+          cloudinary_avatar_url: result.cloudinary_avatar_url,
         });
-        result.cloudinary_avatar_url = `https://api.dicebear.com/9.x/adventurer/svg?seed=${result.id}`;
       }
 
       // Create user preference with selected categories
@@ -504,6 +517,14 @@ export class UserService {
       if (password) {
         const saltRounds = 12;
         updateData.password_hash = await bcrypt.hash(password, saltRounds);
+      }
+
+      // Clearing the avatar falls back to the DiceBear default, not to nothing.
+      if (
+        'cloudinary_avatar_url' in updateUserDto &&
+        !updateUserDto.cloudinary_avatar_url
+      ) {
+        updateData.cloudinary_avatar_url = defaultAvatarUrl(id);
       }
 
       // A new address hasn't been verified yet, unless the caller (an admin)

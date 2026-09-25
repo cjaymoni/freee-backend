@@ -48,7 +48,7 @@ export class FirebaseAuthController {
             email: 'user@example.com',
             role: 'USER',
             is_onboarded: false,
-            avatar: 'https://api.dicebear.com/9.x/adventurer/svg?seed=123e4567',
+            avatar: 'https://api.dicebear.com/9.x/thumbs/svg?seed=123e4567',
           },
         },
       },
