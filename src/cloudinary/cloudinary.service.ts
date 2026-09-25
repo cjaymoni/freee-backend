@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import {
   v2 as cloudinary,
   UploadApiResponse,
@@ -17,6 +21,8 @@ type CloudinaryUploadFile = {
 
 @Injectable()
 export class CloudinaryService {
+  private readonly logger = new Logger(CloudinaryService.name);
+
   /**
    * Upload an image from a buffer (e.g., from multipart form data)
    * @param file - Express.Multer.File object
@@ -155,6 +161,33 @@ export class CloudinaryService {
         `Failed to delete asset from Cloudinary: ${errorMessage}`,
       );
     }
+  }
+
+  /**
+   * Delete assets whose records were already removed from the database.
+   * Best effort: a failure is logged, never thrown, so a Cloudinary outage
+   * can't fail a delete that has already been committed. Call it only after
+   * the database change commits, so a rollback never leaves rows pointing at
+   * deleted assets. The CDN copy is invalidated too, so removed images stop
+   * being served.
+   */
+  async deleteImagesQuietly(
+    publicIds: (string | null | undefined)[],
+  ): Promise<void> {
+    const ids = [...new Set(publicIds.filter((id): id is string => !!id))];
+    await Promise.all(
+      ids.map((publicId) =>
+        this.deleteImage(publicId, { invalidate: true }).catch(
+          (error: unknown) => {
+            this.logger.error(
+              `Failed to delete Cloudinary asset ${publicId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          },
+        ),
+      ),
+    );
   }
 
   /**

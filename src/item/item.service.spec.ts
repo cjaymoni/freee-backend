@@ -33,7 +33,8 @@ const mockUser: UserEntity & { items_count?: number } = {
   items_count: 3,
 } as any;
 
-const mockLocation = (lat: number, lng: number) => ({ latitude: lat, longitude: lng } as any);
+const mockLocation = (lat: number, lng: number) =>
+  ({ latitude: lat, longitude: lng }) as any;
 
 const mockItemEntity: ItemEntity = {
   id: 'item-1',
@@ -48,7 +49,7 @@ const mockItemEntity: ItemEntity = {
   quantity: 2,
   view_count: 0,
   location_id: 'loc-1',
-  location: mockLocation(5.6037, -0.1870),  // Accra
+  location: mockLocation(5.6037, -0.187), // Accra
   pickup_date: null,
   pickup_time: null,
   pickup_type: null,
@@ -107,14 +108,19 @@ describe('ItemResponseDto.fromEntity', () => {
     expect(dto.user).toBeDefined();
     expect(dto.user!.id).toBe('user-1');
     expect(dto.user!.name).toBe('John Doe');
-    expect(dto.user!.profile_image).toBe('https://res.cloudinary.com/example/avatar.jpg');
+    expect(dto.user!.profile_image).toBe(
+      'https://res.cloudinary.com/example/avatar.jpg',
+    );
     expect(dto.user!.joined_date).toEqual(new Date('2024-01-01T00:00:00.000Z'));
     expect(dto.user!.phone_number).toBe('+233243225121');
     expect(dto.user!.items_count).toBe(3);
   });
 
   it('returns empty name when first_name and last_name are absent', () => {
-    const entity = { ...mockItemEntity, user: { ...mockUser, first_name: null, last_name: null } } as any;
+    const entity = {
+      ...mockItemEntity,
+      user: { ...mockUser, first_name: null, last_name: null },
+    } as any;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.name).toBe('');
   });
@@ -132,7 +138,10 @@ describe('ItemResponseDto.fromEntity', () => {
   });
 
   it('defaults items_count to 0 when not set on user', () => {
-    const entity = { ...mockItemEntity, user: { ...mockUser, items_count: undefined } } as any;
+    const entity = {
+      ...mockItemEntity,
+      user: { ...mockUser, items_count: undefined },
+    } as any;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.items_count).toBe(0);
   });
@@ -238,6 +247,7 @@ describe('ItemService', () => {
           }),
     ),
     deleteImage: jest.fn().mockResolvedValue({ result: 'ok' }),
+    deleteImagesQuietly: jest.fn().mockResolvedValue(undefined),
   };
 
   // Runs the work against the same mocked repositories, so tests see what the
@@ -268,7 +278,10 @@ describe('ItemService', () => {
           provide: getRepositoryToken(ItemImageEntity),
           useValue: mockImageRepo,
         },
-        { provide: getRepositoryToken(SavedItemEntity), useValue: { find: jest.fn().mockResolvedValue([]) } },
+        {
+          provide: getRepositoryToken(SavedItemEntity),
+          useValue: { find: jest.fn().mockResolvedValue([]) },
+        },
         {
           provide: getRepositoryToken(LocationEntity),
           useValue: mockLocationRepo,
@@ -309,11 +322,16 @@ describe('ItemService', () => {
       mockQueryBuilder = buildQueryBuilder([], []);
       mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
 
-      await expect(service.findOne('non-existent')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('non-existent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('records a deduplicated view for the requesting viewer', async () => {
-      mockQueryBuilder = buildQueryBuilder([mockItemEntity], [{ user_items_count: '1' }]);
+      mockQueryBuilder = buildQueryBuilder(
+        [mockItemEntity],
+        [{ user_items_count: '1' }],
+      );
       mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
 
       await service.findOne('item-1', 'user-2', '10.0.0.1');
@@ -681,6 +699,9 @@ describe('ItemService', () => {
       expect(drop.deleted_at).toBeInstanceOf(Date);
       expect(result.data.images).toHaveLength(1);
       expect(result.data.images![0].id).toBe('img-1');
+      expect(mockCloudinary.deleteImagesQuietly).toHaveBeenCalledWith([
+        'public-img-2',
+      ]);
     });
 
     it('promotes a remaining image to primary when the primary is removed', async () => {
@@ -1069,7 +1090,10 @@ describe('ItemService', () => {
 
     it('does not set user when user relation is not loaded', async () => {
       const entityWithoutUser = { ...mockItemEntity, user: undefined } as any;
-      mockQueryBuilder = buildQueryBuilder([entityWithoutUser], [{ user_items_count: '0' }]);
+      mockQueryBuilder = buildQueryBuilder(
+        [entityWithoutUser],
+        [{ user_items_count: '0' }],
+      );
       mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
 
       const result = await service.findAll();
@@ -1080,14 +1104,30 @@ describe('ItemService', () => {
     describe('proximity filtering', () => {
       // Item in Accra (5.6037, -0.1870)
       // Item in Kumasi (6.6885, -1.6244) — ~250km from Accra
-      const accraItem = { ...mockItemEntity, id: 'item-accra', location: mockLocation(5.6037, -0.1870) } as any;
-      const kumasiItem = { ...mockItemEntity, id: 'item-kumasi', location: mockLocation(6.6885, -1.6244) } as any;
-      const noLocationItem = { ...mockItemEntity, id: 'item-noloc', location: null } as any;
+      const accraItem = {
+        ...mockItemEntity,
+        id: 'item-accra',
+        location: mockLocation(5.6037, -0.187),
+      } as any;
+      const kumasiItem = {
+        ...mockItemEntity,
+        id: 'item-kumasi',
+        location: mockLocation(6.6885, -1.6244),
+      } as any;
+      const noLocationItem = {
+        ...mockItemEntity,
+        id: 'item-noloc',
+        location: null,
+      } as any;
 
       beforeEach(() => {
         mockQueryBuilder = buildQueryBuilder(
           [accraItem, kumasiItem, noLocationItem],
-          [{ user_items_count: '1' }, { user_items_count: '2' }, { user_items_count: '0' }],
+          [
+            { user_items_count: '1' },
+            { user_items_count: '2' },
+            { user_items_count: '0' },
+          ],
         );
         mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
       });
@@ -1099,28 +1139,36 @@ describe('ItemService', () => {
 
       it('filters to nearby items within default 10km radius', async () => {
         // Searching from Accra — only accraItem should be within 10km
-        const result = await service.findAll({ lat: 5.6037, lng: -0.1870 });
+        const result = await service.findAll({ lat: 5.6037, lng: -0.187 });
         const ids = result.data.map((d) => d.id);
         expect(ids).toContain('item-accra');
         expect(ids).not.toContain('item-kumasi');
       });
 
       it('includes items without a location regardless of radius', async () => {
-        const result = await service.findAll({ lat: 5.6037, lng: -0.1870 });
+        const result = await service.findAll({ lat: 5.6037, lng: -0.187 });
         const ids = result.data.map((d) => d.id);
         expect(ids).toContain('item-noloc');
       });
 
       it('includes distant items when radius is large enough', async () => {
         // 300km radius from Accra should include Kumasi (~250km away)
-        const result = await service.findAll({ lat: 5.6037, lng: -0.1870, radius: 300 });
+        const result = await service.findAll({
+          lat: 5.6037,
+          lng: -0.187,
+          radius: 300,
+        });
         const ids = result.data.map((d) => d.id);
         expect(ids).toContain('item-accra');
         expect(ids).toContain('item-kumasi');
       });
 
       it('excludes distant items when radius is small', async () => {
-        const result = await service.findAll({ lat: 5.6037, lng: -0.1870, radius: 5 });
+        const result = await service.findAll({
+          lat: 5.6037,
+          lng: -0.187,
+          radius: 5,
+        });
         const ids = result.data.map((d) => d.id);
         expect(ids).not.toContain('item-kumasi');
       });

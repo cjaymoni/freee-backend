@@ -9,6 +9,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { DataSource } from 'typeorm';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { ItemEntity } from '../item/entities/item.entity';
+import { ItemImageEntity } from '../item/entities/item-image.entity';
 
 describe('UserService', () => {
   let service: UserService;
@@ -118,28 +119,48 @@ describe('UserService.update verification flags', () => {
 });
 
 describe('UserService.remove', () => {
-  it('releases identifiers, ends sessions and takes down listings', async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        UserService,
-        { provide: getRepositoryToken(UserEntity), useValue: {} },
-        { provide: CloudinaryService, useValue: {} },
-        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
-        { provide: DataSource, useValue: {} },
-        { provide: FirebaseService, useValue: {} },
-      ],
-    }).compile();
-    const service = module.get<UserService>(UserService);
+  it('releases identifiers, ends sessions, takes down listings and their images', async () => {
+    const images = [
+      { id: 'img-1', cloudinary_public_id: 'items/one' },
+      { id: 'img-2', cloudinary_public_id: 'items/two' },
+    ];
     const manager = {
       findOne: jest.fn().mockResolvedValue({
         id: 'u1',
         email: 'a@example.com',
         firebase_uid: 'fb-1',
+        cloudinary_avatar_public_id: 'avatars/user_u1',
       }),
       update: jest.fn().mockResolvedValue(undefined),
+      createQueryBuilder: jest.fn(() => ({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(images),
+      })),
     };
+    const cloudinary = {
+      deleteImagesQuietly: jest.fn().mockResolvedValue(undefined),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(UserEntity), useValue: {} },
+        { provide: CloudinaryService, useValue: cloudinary },
+        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: (work: (m: typeof manager) => unknown) =>
+              work(manager),
+          },
+        },
+        { provide: FirebaseService, useValue: {} },
+      ],
+    }).compile();
+    const service = module.get<UserService>(UserService);
 
-    await service.remove('u1', 'u1', manager as never);
+    await service.remove('u1', 'u1');
 
     const calls = manager.update.mock.calls as unknown[][];
     const byEntity = (entity: unknown) =>
@@ -151,6 +172,8 @@ describe('UserService.remove', () => {
       email: null,
       phone_number: null,
       firebase_uid: null,
+      cloudinary_avatar_public_id: null,
+      cloudinary_avatar_url: null,
     });
     expect(byEntity(UserSessionEntity)?.[2]).toEqual({ is_active: false });
     expect(byEntity(ItemEntity)?.[1]).toEqual({
@@ -158,6 +181,13 @@ describe('UserService.remove', () => {
       is_deleted: false,
     });
     expect(byEntity(ItemEntity)?.[2]).toMatchObject({ is_deleted: true });
+    expect(byEntity(ItemImageEntity)?.[1]).toEqual(['img-1', 'img-2']);
+    expect(byEntity(ItemImageEntity)?.[2]).toMatchObject({ is_deleted: true });
+    expect(cloudinary.deleteImagesQuietly).toHaveBeenCalledWith([
+      'items/one',
+      'items/two',
+      'avatars/user_u1',
+    ]);
   });
 });
 

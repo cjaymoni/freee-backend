@@ -339,11 +339,13 @@ first. The two must travel together, and cannot be combined with a
 coordinates again on a later edit moves the item rather than accumulating
 rows, and never touches a location the user saved to their profile.
 
-**Uploads go up to 50 MB per file, as multipart.** Item images use
-`multipart/form-data`, at most 10 files per request. Anything larger is
-rejected with **413**, and anything that is not a JPEG, PNG, WebP, GIF, HEIC or
-HEIF is rejected with **400** before it leaves the phone's request. Compress on
-device anyway — this is a mobile-first audience and the ceiling is not a target.
+**Uploads go up to 10 MB per file, as multipart.** Item images, avatars and
+chat images all share this limit (it is the Cloudinary plan's ceiling). Item
+images use `multipart/form-data`, at most 10 files per request. A request with
+any file over 10 MB is rejected whole with **413**, so resize before sending.
+Anything that is not a JPEG, PNG, WebP, GIF, HEIC or HEIF is rejected with
+**400** before it leaves the phone's request. Compress on device anyway — this
+is a mobile-first audience and the ceiling is not a target.
 
 **A successful response can still carry failed uploads.** If Cloudinary drops
 one of the photos, the item is still created or updated with the ones that
@@ -417,7 +419,7 @@ rather not hand-write the interface.
 | TLS | Valid, via Cloudflare |
 | Access token TTL | 15 minutes |
 | Refresh token TTL | 7 days, rotating |
-| Max upload | 50 MB |
+| Max upload | 10 MB per image |
 
 The certificate chains to a public root, so no network security config or
 certificate pinning setup is needed to get started.
