@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
+import { AccountStatus } from '../../user/entities/user.entity';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -46,6 +47,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: payload.role,
       sessionToken: session_token,
       is_active: user?.is_active ?? true,
+      account_status: user?.account_status ?? AccountStatus.ACTIVE,
     };
   }
 }

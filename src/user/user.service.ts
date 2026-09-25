@@ -21,7 +21,7 @@ import {
   QueryFailedError,
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
-import { UserEntity } from './entities/user.entity';
+import { AccountStatus, UserEntity } from './entities/user.entity';
 import { defaultAvatarUrl } from './default-avatar';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
@@ -637,6 +637,21 @@ export class UserService {
         updateData.is_phone_verified = false;
       }
 
+      // is_active is still set directly by older admin tooling; keep the
+      // account status in step so the back office reads it correctly.
+      if (
+        updateUserDto.is_active !== undefined &&
+        updateUserDto.is_active !== user.is_active
+      ) {
+        Object.assign(
+          updateData,
+          updateUserDto.is_active
+            ? { account_status: AccountStatus.ACTIVE, suspended_until: null }
+            : { account_status: AccountStatus.SUSPENDED },
+          { status_changed_at: new Date() },
+        );
+      }
+
       // Check for onboarding completion
       if (
         updateUserDto.first_name &&
@@ -767,6 +782,34 @@ export class UserService {
       is_phone_verified: true,
     });
     return { ...result, message: 'Phone number updated successfully' };
+  }
+
+  /**
+   * Suspend, ban or reinstate: writes the account state fields together and
+   * drops the cached copies of the user. Callers check permissions.
+   */
+  async setAccountState(
+    user: Pick<UserEntity, 'id' | 'email' | 'firebase_uid'>,
+    state: Pick<
+      UserEntity,
+      | 'is_active'
+      | 'account_status'
+      | 'status_reason'
+      | 'suspended_until'
+      | 'status_changed_by'
+    >,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const entityManager = manager || this.userRepository.manager;
+    await entityManager.update(UserEntity, user.id, {
+      ...state,
+      status_changed_at: new Date(),
+    });
+    await this.cacheManager.del(`user:id:${user.id}`);
+    if (user.email) await this.cacheManager.del(`user:email:${user.email}`);
+    if (user.firebase_uid) {
+      await this.cacheManager.del(`user:firebase_uid:${user.firebase_uid}`);
+    }
   }
 
   async remove(id: string, deletedById?: string, manager?: EntityManager) {

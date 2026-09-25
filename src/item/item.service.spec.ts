@@ -9,6 +9,7 @@ import {
   ItemEntity,
   ItemCondition,
   ItemStatus,
+  ModerationStatus,
   PickupType,
 } from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
@@ -1155,6 +1156,75 @@ describe('ItemService', () => {
         false,
       ]);
       expect(images.map((image) => image.display_order)).toEqual([0, 1, 2]);
+    });
+  });
+
+  describe('hidden listings', () => {
+    const hidden = {
+      ...mockItemEntity,
+      moderation_status: ModerationStatus.HIDDEN,
+      moderation_reason: 'Counterfeit goods',
+    } as ItemEntity;
+
+    const useItems = (entities: ItemEntity[]) => {
+      mockQueryBuilder = buildQueryBuilder(
+        entities,
+        entities.map(() => ({ user_items_count: '1' })),
+      );
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+    };
+
+    const hiddenFilter = () =>
+      mockQueryBuilder.andWhere.mock.calls.some(
+        ([sql]) => sql === 'item.moderation_status != :hidden',
+      );
+
+    it('leaves hidden listings out of the public list', async () => {
+      useItems([]);
+      await service.findAll({ viewer_id: 'someone' });
+      expect(hiddenFilter()).toBe(true);
+    });
+
+    it("leaves them out of another user's list", async () => {
+      useItems([]);
+      await service.findAll({ user_id: 'user-1', viewer_id: 'someone' });
+      expect(hiddenFilter()).toBe(true);
+    });
+
+    it("keeps them in the owner's own list, marked hidden with the reason", async () => {
+      useItems([hidden]);
+      const result = await service.findAll({
+        user_id: 'user-1',
+        viewer_id: 'user-1',
+      });
+      expect(hiddenFilter()).toBe(false);
+      expect(result.data[0]).toMatchObject({
+        is_hidden: true,
+        hidden_reason: 'Counterfeit goods',
+      });
+    });
+
+    it('answers 404 to anyone but the owner, without counting a view', async () => {
+      useItems([hidden]);
+      await expect(service.findOne('item-1', 'someone')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(mockItemViewService.recordUniqueView).not.toHaveBeenCalled();
+    });
+
+    it('shows the owner their hidden listing', async () => {
+      useItems([hidden]);
+      const result = await service.findOne('item-1', 'user-1');
+      expect(result.data.is_hidden).toBe(true);
+    });
+
+    it('does not expose the reason on a visible listing', async () => {
+      useItems([{ ...hidden, moderation_status: ModerationStatus.FLAGGED }]);
+      const result = await service.findOne('item-1', 'someone');
+      expect(result.data).toMatchObject({
+        is_hidden: false,
+        hidden_reason: null,
+      });
     });
   });
 

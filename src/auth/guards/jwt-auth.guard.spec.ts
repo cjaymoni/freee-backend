@@ -20,11 +20,17 @@ describe('JwtAuthGuard suspension check', () => {
     'canActivate',
   );
 
-  const ctx = (handler: keyof Routes, is_active: boolean) =>
+  const ctx = (
+    handler: keyof Routes,
+    is_active: boolean,
+    account_status = is_active ? 'active' : 'suspended',
+  ) =>
     ({
       getHandler: () => Routes.prototype[handler],
       getClass: () => Routes,
-      switchToHttp: () => ({ getRequest: () => ({ user: { is_active } }) }),
+      switchToHttp: () => ({
+        getRequest: () => ({ user: { is_active, account_status } }),
+      }),
     }) as unknown as ExecutionContext;
 
   beforeEach(() => passportCanActivate.mockResolvedValue(true));
@@ -44,6 +50,15 @@ describe('JwtAuthGuard suspension check', () => {
       true,
     );
   });
+
+  it.each(['normal', 'complaint'] as const)(
+    'refuses a banned user on a %s route',
+    async (route) => {
+      await expect(
+        guard.canActivate(ctx(route, false, 'banned')),
+      ).rejects.toThrow('This account has been banned.');
+    },
+  );
 
   it('does not run the suspension check when the token is rejected', async () => {
     passportCanActivate.mockResolvedValue(false);

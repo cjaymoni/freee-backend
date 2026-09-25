@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Not, Repository } from 'typeorm';
-import { ItemEntity, ItemStatus, PickupType } from './entities/item.entity';
+import {
+  ItemEntity,
+  ItemStatus,
+  ModerationStatus,
+  PickupType,
+} from './entities/item.entity';
 import { ItemImageEntity } from './entities/item-image.entity';
 import { CategoryEntity } from '../category/entities/category.entity';
 import { LocationEntity } from '../user/entities/location.entity';
@@ -490,6 +495,14 @@ export class ItemService {
       )
       .where('item.is_deleted = :is_deleted', { is_deleted: false });
 
+    // Hidden listings are out of the app, except in their owner's own list.
+    const ownList = !!filters?.user_id && filters.user_id === filters.viewer_id;
+    if (!ownList) {
+      query.andWhere('item.moderation_status != :hidden', {
+        hidden: ModerationStatus.HIDDEN,
+      });
+    }
+
     if (filters?.user_id) {
       query.andWhere('item.user_id = :user_id', { user_id: filters.user_id });
     }
@@ -632,6 +645,13 @@ export class ItemService {
     }
 
     const entity = item.entities[0];
+    // Same answer as a missing item, so a hidden listing can't be probed.
+    if (
+      entity.moderation_status === ModerationStatus.HIDDEN &&
+      entity.user_id !== viewerId
+    ) {
+      throw new NotFoundException(`Item with ID ${id} not found`);
+    }
     const raw = item.raw[0];
     if (entity.user) {
       (entity.user as any).items_count = Number(raw?.user_items_count ?? 0);

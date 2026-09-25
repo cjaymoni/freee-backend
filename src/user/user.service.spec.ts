@@ -66,6 +66,7 @@ describe('UserService.update verification flags', () => {
     is_email_verified: true,
     is_phone_verified: true,
     is_onboarded: true,
+    is_active: true,
   };
   let service: UserService;
   let manager: { findOne: jest.Mock; update: jest.Mock };
@@ -133,6 +134,19 @@ describe('UserService.update verification flags', () => {
     await expect(run({ phone_number: '+233209999999' })).rejects.toThrow(
       'Phone number already exists',
     );
+  });
+
+  it('marks an account suspended when is_active is turned off', async () => {
+    await run({ is_active: false });
+    expect(written()).toMatchObject({
+      is_active: false,
+      account_status: 'suspended',
+    });
+  });
+
+  it('leaves the account status alone when is_active does not change', async () => {
+    await run({ is_active: true, first_name: 'Ama' });
+    expect(written()).not.toHaveProperty('account_status');
   });
 
   it('respects an explicit flag from an admin', async () => {

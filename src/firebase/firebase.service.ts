@@ -100,6 +100,24 @@ export class FirebaseService implements OnModuleInit {
     return admin.auth().verifyIdToken(idToken);
   }
 
+  /**
+   * Signs a Firebase user out everywhere. Returns false when Firebase isn't
+   * configured or the call fails; the caller decides whether that matters.
+   */
+  async revokeRefreshTokens(uid: string): Promise<boolean> {
+    if (!this.firebaseApp) {
+      this.logger.warn('Firebase NOT initialized. Skipping token revocation');
+      return false;
+    }
+    try {
+      await admin.auth().revokeRefreshTokens(uid);
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to revoke Firebase refresh tokens', error);
+      return false;
+    }
+  }
+
   async sendNotification(
     token: string,
     payload: { title: string; body: string; data?: Record<string, string> },

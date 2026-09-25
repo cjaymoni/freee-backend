@@ -5,10 +5,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { SavedItemEntity } from './entities/saved-item.entity';
 import { CreateSavedItemDto } from './dto/create-saved-item.dto';
-import { ItemEntity } from '../item/entities/item.entity';
+import { ItemEntity, ModerationStatus } from '../item/entities/item.entity';
 import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
@@ -80,7 +80,6 @@ export class SavedItemService {
     try {
       const { item_id } = createSavedItemDto;
 
-
       // Check if item exists
       const item = await this.itemRepository.findOne({
         where: { id: item_id, is_deleted: false },
@@ -132,7 +131,6 @@ export class SavedItemService {
 
       const result = await this.savedItemRepository.save(savedItem);
 
-
       return {
         message: 'Item saved successfully',
         data: this.toResponseDto(result),
@@ -152,8 +150,6 @@ export class SavedItemService {
     itemId: string,
   ): Promise<ServiceResponseDto<SavedItemResponseDto>> {
     try {
-
-
       const savedItem = await this.savedItemRepository.findOne({
         where: {
           user_id: userId,
@@ -169,8 +165,6 @@ export class SavedItemService {
       savedItem.is_deleted = true;
       savedItem.deleted_at = new Date();
       const result = await this.savedItemRepository.save(savedItem);
-
-
 
       return {
         message: 'Item unsaved successfully',
@@ -192,17 +186,25 @@ export class SavedItemService {
     limit: number = 20,
   ): Promise<ServiceResponseDto<SavedItemResponseDto[]>> {
     try {
-
       const skip = (page - 1) * limit;
 
       const [items, total] = await this.savedItemRepository.findAndCount({
         where: {
           user_id: userId,
           is_deleted: false,
-          // A listing its owner or a moderator removed is no longer there.
-          item: { is_deleted: false },
+          // A listing its owner or a moderator removed or hid is no longer there.
+          item: {
+            is_deleted: false,
+            moderation_status: Not(ModerationStatus.HIDDEN),
+          },
         },
-        relations: ['item', 'item.category', 'item.location', 'item.user', 'item.images'],
+        relations: [
+          'item',
+          'item.category',
+          'item.location',
+          'item.user',
+          'item.images',
+        ],
         order: {
           created_at: 'DESC',
         },
