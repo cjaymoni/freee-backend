@@ -1,4 +1,5 @@
 import { NestFactory, Reflector } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
@@ -7,10 +8,15 @@ import helmet from 'helmet';
 import * as express from 'express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['log', 'debug', 'warn', 'error'],
     bodyParser: true,
   });
+
+  // nginx on this host proxies every request, so without this each client's
+  // IP reads as 127.0.0.1 and anonymous views and searches all count as one.
+  // Only the local proxy is trusted, so clients cannot spoof X-Forwarded-For.
+  app.set('trust proxy', 'loopback');
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));

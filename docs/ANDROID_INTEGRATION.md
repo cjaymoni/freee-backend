@@ -5,33 +5,30 @@ how auth works, and the handful of places this API will surprise you.
 
 | | |
 | --- | --- |
-| **Base URL** | `https://perspectiv.live/free-backend` |
-| **Interactive docs** | `https://perspectiv.live/free-backend/api` |
-| **OpenAPI JSON** | `https://perspectiv.live/free-backend/api-json` |
+| **Base URL** | `https://api.freeee.app` |
+| **Interactive docs** | `https://api.freeee.app/api` |
+| **OpenAPI JSON** | `https://api.freeee.app/api-json` |
+| **Chat (socket.io)** | `https://api.freeee.app/chat` |
 
 ---
 
-## 1. The prefix is not optional
+## 1. Base URL
 
-Nginx routes `/free-backend/` to the API and everything else to a Next.js
-frontend. Hit the host without the prefix and you get the frontend's HTML 404
-page, not a JSON error — which looks like a broken endpoint but is really a
-routing miss.
-
-| Request | Result |
-| --- | --- |
-| `/free-backend/items` | **200** — JSON from the API |
-| `/items` | **404** — HTML from the Next.js app |
-
-Nginx strips the prefix before forwarding, so paths inside your Retrofit
-interface stay unprefixed. Put `/free-backend/` in the base URL once and forget
-it.
+The API has its own domain and is served from its root, so there is no path
+prefix. Paths in your Retrofit interface map directly onto the routes in
+Swagger.
 
 ```kotlin
 Retrofit.Builder()
-    .baseUrl("https://perspectiv.live/free-backend/")  // trailing slash matters
+    .baseUrl("https://api.freeee.app/")  // trailing slash matters
     .build()
 ```
+
+The old address, `https://perspectiv.live/free-backend/`, still reaches the
+same backend so that existing builds keep working, but it will be removed.
+Move to `api.freeee.app` in the next release. On the old address the prefix is
+required: without it you get the Next.js frontend's HTML 404 page instead of a
+JSON error.
 
 ---
 
@@ -404,8 +401,8 @@ defaulting to 1 and 20.
 | `POST` | `/moderation/users/block` | Block a user. Reporting lives under the same prefix. |
 | `GET` | `/health` | Unauthenticated. Useful as a connectivity probe. |
 
-There are 100 routes in total. The live Swagger UI at `/free-backend/api` is
-authoritative — generate your client from `/free-backend/api-json` if you would
+There are 100 routes in total. The live Swagger UI at `/api` is
+authoritative — generate your client from `/api-json` if you would
 rather not hand-write the interface.
 
 ---
@@ -414,8 +411,8 @@ rather not hand-write the interface.
 
 | | |
 | --- | --- |
-| Host | `perspectiv.live` |
-| Path prefix | `/free-backend` |
+| Host | `api.freeee.app` |
+| Path prefix | None |
 | TLS | Valid, via Cloudflare |
 | Access token TTL | 15 minutes |
 | Refresh token TTL | 7 days, rotating |
@@ -430,4 +427,4 @@ and it is rebuilt from time to time.
 ---
 
 *Generated from the live OpenAPI document and the backend source. Where this
-page and `/free-backend/api` disagree, Swagger is current.*
+page and `/api` disagree, Swagger is current.*
