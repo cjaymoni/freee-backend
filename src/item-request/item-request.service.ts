@@ -22,7 +22,11 @@ import {
 import { CreateItemRequestDto } from './dto/create-item-request.dto';
 import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
-import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
+import {
+  ItemEntity,
+  ItemStatus,
+  ModerationStatus,
+} from '../item/entities/item.entity';
 import { UserEntity } from '../user/entities/user.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
@@ -173,7 +177,8 @@ export class ItemRequestService {
       profile_image: user.cloudinary_avatar_url ?? null,
       joined_date: user.member_since,
       phone_number: user.phone_number ?? null,
-      items_count: (user as unknown as { items_count?: number }).items_count ?? 0,
+      items_count:
+        (user as unknown as { items_count?: number }).items_count ?? 0,
     };
   }
 
@@ -203,7 +208,11 @@ export class ItemRequestService {
         // duplicate-request check below cannot be raced.
         const item = await this.lockItem(manager, item_id);
 
-        if (item.is_deleted || item.status !== ItemStatus.AVAILABLE) {
+        if (
+          item.is_deleted ||
+          item.status !== ItemStatus.AVAILABLE ||
+          item.moderation_status === ModerationStatus.HIDDEN
+        ) {
           throw new BadRequestException('Item is not available for request');
         }
 
@@ -343,6 +352,12 @@ export class ItemRequestService {
         // already has a confirmed request (or has been picked up / withdrawn).
         // Without this check two pending requests could both be confirmed and
         // both holders could then confirm pickup.
+        // A hidden listing is under review; nothing moves until it's restored.
+        if (item.moderation_status === ModerationStatus.HIDDEN) {
+          throw new ConflictException(
+            'This listing has been hidden by moderators and cannot be confirmed',
+          );
+        }
         if (item.is_deleted || item.status !== ItemStatus.AVAILABLE) {
           throw new ConflictException(
             'This item is no longer available to confirm; it already has a confirmed request or is not available',
@@ -451,7 +466,9 @@ export class ItemRequestService {
       await this.chatService.createSystemMessage({
         actorId: userId,
         otherUserId:
-          userId === result.requester_id ? result.owner_id : result.requester_id,
+          userId === result.requester_id
+            ? result.owner_id
+            : result.requester_id,
         event: SystemEvent.REQUEST_CANCELLED,
         itemId: result.item_id,
         requestId: result.id,
@@ -567,8 +584,6 @@ export class ItemRequestService {
     statusFilter?: RequestStatus,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto[]>> {
     try {
-
-
       const skip = (page - 1) * limit;
 
       const queryBuilder = this.itemRequestRepository
@@ -626,8 +641,6 @@ export class ItemRequestService {
     statusFilter?: RequestStatus,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto[]>> {
     try {
-
-
       const skip = (page - 1) * limit;
 
       const queryBuilder = this.itemRequestRepository
@@ -686,9 +699,7 @@ export class ItemRequestService {
       // The response carries the pickup confirmation code and both parties'
       // details, so it is restricted to the two people involved.
       if (request.requester_id !== userId && request.owner_id !== userId) {
-        throw new ForbiddenException(
-          'You can only view your own requests',
-        );
+        throw new ForbiddenException('You can only view your own requests');
       }
 
       return {

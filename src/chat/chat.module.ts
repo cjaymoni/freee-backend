@@ -41,7 +41,8 @@ import { AuthModule } from '../auth/auth.module';
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway, ChatRealtimeService],
-  // Exported so the item-request flow can drop system messages into a thread.
-  exports: [ChatService],
+  // ChatService so the item-request flow can drop system messages into a
+  // thread; ChatRealtimeService so the back office can drop a user's sockets.
+  exports: [ChatService, ChatRealtimeService],
 })
 export class ChatModule {}

@@ -1,6 +1,9 @@
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from './decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
+import { readdirSync } from 'fs';
+import { join } from 'path';
+import { AdminItemsController } from '../admin/admin-items.controller';
 import { AdminUsersController } from '../admin/admin-users.controller';
 import { AppController } from '../app.controller';
 import { AuditController } from '../audit/audit.controller';
@@ -30,6 +33,20 @@ const STAFF = [ADMIN, MODERATOR];
  * their own controller specs.
  */
 const MATRIX: Record<string, UserRole[]> = {
+  'AdminItemsController.list': STAFF,
+  'AdminItemsController.detail': STAFF,
+  'AdminItemsController.hide': STAFF,
+  'AdminItemsController.flag': STAFF,
+  'AdminItemsController.restore': STAFF,
+  'AdminUsersController.list': STAFF,
+  'AdminUsersController.detail': STAFF,
+  'AdminUsersController.requests': STAFF,
+  'AdminUsersController.reports': STAFF,
+  'AdminUsersController.activity': STAFF,
+  'AdminUsersController.suspend': STAFF,
+  // Lifting a ban is admin only too; the service checks that.
+  'AdminUsersController.reinstate': STAFF,
+  'AdminUsersController.ban': [ADMIN],
   'AdminUsersController.changeRole': [ADMIN],
   'AuditController.findAll': [ADMIN],
   'AuditController.getEntityHistory': [ADMIN],
@@ -48,6 +65,7 @@ const MATRIX: Record<string, UserRole[]> = {
 };
 
 const CONTROLLERS = [
+  AdminItemsController,
   AdminUsersController,
   AppController,
   AuditController,
@@ -95,5 +113,13 @@ describe('Role-restricted endpoints', () => {
 
   it('restricts no other handler', () => {
     expect(Object.keys(actual).sort()).toEqual(Object.keys(MATRIX).sort());
+  });
+
+  // A controller missing from CONTROLLERS would go unchecked in both tests.
+  it('covers every controller', () => {
+    const files = readdirSync(join(__dirname, '..'), {
+      recursive: true,
+    }).filter((f) => String(f).endsWith('.controller.ts'));
+    expect(CONTROLLERS).toHaveLength(files.length);
   });
 });

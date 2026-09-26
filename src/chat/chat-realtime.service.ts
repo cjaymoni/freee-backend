@@ -36,6 +36,17 @@ export class ChatRealtimeService {
     this.server = server;
   }
 
+  /**
+   * Drops every socket the user has open on this instance. Sockets are only
+   * checked when they connect, so this is how a suspension or ban reaches a
+   * user who already has the app open.
+   */
+  disconnectUser(userId: string): void {
+    this.server
+      ?.in(ChatRealtimeService.roomForUser(userId))
+      .disconnectSockets(true);
+  }
+
   /** The room every one of a user's devices joins, so events fan out to all. */
   static roomForUser(userId: string): string {
     return `user:${userId}`;

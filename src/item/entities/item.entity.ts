@@ -27,6 +27,15 @@ export enum ItemStatus {
   UNAVAILABLE = 'unavailable',
 }
 
+/** Back office moderation, separate from the listing's own lifecycle `status`. */
+export enum ModerationStatus {
+  VISIBLE = 'visible',
+  /** Out of the app; the owner still sees it and can appeal. */
+  HIDDEN = 'hidden',
+  /** Still visible, marked for staff to look at. */
+  FLAGGED = 'flagged',
+}
+
 export enum PickupType {
   ANYTIME = 'anytime',
   CONTACT_ME = 'contact_me',
@@ -53,6 +62,7 @@ export enum PickupType {
   'featured_until',
 ])
 @Index('idx_items_soft_delete', ['is_deleted', 'deleted_at'])
+@Index('idx_items_moderation_status', ['moderation_status', 'is_deleted'])
 export class ItemEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -156,6 +166,22 @@ export class ItemEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   deletion_reason: string;
+
+  @Column({
+    type: 'enum',
+    enum: ModerationStatus,
+    default: ModerationStatus.VISIBLE,
+  })
+  moderation_status: ModerationStatus;
+
+  @Column({ type: 'text', nullable: true })
+  moderation_reason: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  moderated_by: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  moderated_at: Date | null;
 
   @CreateDateColumn()
   created_at: Date;

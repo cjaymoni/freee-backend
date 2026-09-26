@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ItemEntity, ItemCondition, ItemStatus, PickupType } from '../entities/item.entity';
+import {
+  ItemEntity,
+  ItemCondition,
+  ItemStatus,
+  ModerationStatus,
+  PickupType,
+} from '../entities/item.entity';
 import { UserLocationResponseDto } from '../../user/dto/user-location-response.dto';
 import { CategoryResponseDto } from '../../category/dto/category-response.dto';
 import { ItemImageResponseDto } from './item-image-response.dto';
@@ -24,7 +30,11 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => CategoryResponseDto })
   category?: CategoryResponseDto;
 
-  @ApiProperty({ enum: ItemCondition, enumName: 'ItemCondition', description: 'Item condition. Allowed values: new, good, old.' })
+  @ApiProperty({
+    enum: ItemCondition,
+    enumName: 'ItemCondition',
+    description: 'Item condition. Allowed values: new, good, old.',
+  })
   condition: ItemCondition;
 
   @ApiProperty({ enum: ItemStatus, enumName: 'ItemStatus' })
@@ -86,11 +96,27 @@ export class ItemResponseDto {
   @ApiPropertyOptional({ type: () => ItemUserDto })
   user?: ItemUserDto;
 
-  @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000', nullable: true })
+  @ApiPropertyOptional({
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    nullable: true,
+  })
   picked_by_id?: string | null;
 
   @ApiProperty({ example: false })
   is_saved: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Hidden by moderators: out of the app. Only the owner sees hidden listings.',
+  })
+  is_hidden: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Why moderators hid the listing; set only when is_hidden.',
+  })
+  hidden_reason?: string | null;
 
   static fromEntity(entity: ItemEntity, isSaved = false): ItemResponseDto {
     const dto = new ItemResponseDto();
@@ -120,6 +146,8 @@ export class ItemResponseDto {
     dto.updated_at = entity.updated_at;
     dto.is_saved = isSaved;
     dto.picked_by_id = entity.picked_by_id ?? null;
+    dto.is_hidden = entity.moderation_status === ModerationStatus.HIDDEN;
+    dto.hidden_reason = dto.is_hidden ? entity.moderation_reason : null;
 
     // Include location details if loaded
     if (entity.location) {

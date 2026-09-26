@@ -66,6 +66,7 @@ describe('UserService.update verification flags', () => {
     is_email_verified: true,
     is_phone_verified: true,
     is_onboarded: true,
+    is_active: true,
   };
   let service: UserService;
   let manager: { findOne: jest.Mock; update: jest.Mock };
@@ -133,6 +134,29 @@ describe('UserService.update verification flags', () => {
     await expect(run({ phone_number: '+233209999999' })).rejects.toThrow(
       'Phone number already exists',
     );
+  });
+
+  it.each(['suspended', 'banned'])(
+    'never reactivates a %s account (email verification sets is_active)',
+    async (account_status) => {
+      manager.findOne.mockResolvedValue({
+        ...existing,
+        is_active: false,
+        account_status,
+      });
+      await run({ is_active: true, is_email_verified: true });
+      expect(written()).toEqual({ is_email_verified: true });
+    },
+  );
+
+  it('activates a verified sign-up whose account is not blocked', async () => {
+    manager.findOne.mockResolvedValue({
+      ...existing,
+      is_active: false,
+      account_status: 'active',
+    });
+    await run({ is_active: true, is_email_verified: true });
+    expect(written()).toMatchObject({ is_active: true });
   });
 
   it('respects an explicit flag from an admin', async () => {
@@ -440,5 +464,75 @@ describe('UserService.create from POST /user (actingUserId)', () => {
       is_email_verified: false,
       is_onboarded: false,
     });
+  });
+});
+
+describe('UserService.setAccountState', () => {
+  const cache = { del: jest.fn() };
+  const execute = jest.fn();
+  const where = jest.fn();
+  const qb = {
+    update: () => qb,
+    set: () => qb,
+    where: (...args: unknown[]) => {
+      where(...args);
+      return qb;
+    },
+    execute,
+  };
+  const manager = { createQueryBuilder: () => qb };
+  const service = Object.create(UserService.prototype) as UserService;
+  Object.assign(service, {
+    cacheManager: cache,
+    userRepository: { manager },
+  });
+  const user = { id: 'u1', email: 'a@b.c', firebase_uid: 'fb1' };
+  const state = {
+    is_active: false,
+    account_status: 'suspended',
+    status_reason: 'x',
+    suspended_until: null,
+    status_changed_by: 'mod',
+  } as never;
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('writes only while the account is in the status the caller read', async () => {
+    execute.mockResolvedValue({ affected: 1 });
+
+    await expect(
+      service.setAccountState(user as never, 'active' as never, state),
+    ).resolves.toBe(true);
+
+    expect(where).toHaveBeenCalledWith(
+      'id = :id AND account_status = :from',
+      { id: 'u1', from: 'active' },
+    );
+    expect(cache.del.mock.calls.map(([key]) => key as string)).toEqual([
+      'user:id:u1',
+      'user:email:a@b.c',
+      'user:firebase_uid:fb1',
+    ]);
+  });
+
+  it('reports a lost race and leaves the cache alone', async () => {
+    execute.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      service.setAccountState(user as never, 'active' as never, state),
+    ).resolves.toBe(false);
+    expect(cache.del).not.toHaveBeenCalled();
+  });
+
+  it('leaves clearing the cache to the caller inside a transaction', async () => {
+    execute.mockResolvedValue({ affected: 1 });
+
+    await service.setAccountState(
+      user as never,
+      'active' as never,
+      state,
+      manager as never,
+    );
+    expect(cache.del).not.toHaveBeenCalled();
   });
 });

@@ -21,7 +21,7 @@ import {
   QueryFailedError,
 } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
-import { UserEntity } from './entities/user.entity';
+import { AccountStatus, UserEntity } from './entities/user.entity';
 import { defaultAvatarUrl } from './default-avatar';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { ItemEntity, ItemStatus } from '../item/entities/item.entity';
@@ -637,6 +637,16 @@ export class UserService {
         updateData.is_phone_verified = false;
       }
 
+      // is_active doubles as "email verified" for password sign-ups, so
+      // verifying an email sets it. That must never lift a suspension or a
+      // ban: only setAccountState does, where it is checked and audited.
+      if (
+        updateUserDto.is_active === true &&
+        user.account_status !== AccountStatus.ACTIVE
+      ) {
+        delete (updateData as { is_active?: boolean }).is_active;
+      }
+
       // Check for onboarding completion
       if (
         updateUserDto.first_name &&
@@ -767,6 +777,51 @@ export class UserService {
       is_phone_verified: true,
     });
     return { ...result, message: 'Phone number updated successfully' };
+  }
+
+  /**
+   * Suspend, ban or reinstate: writes the account state fields together, but
+   * only while the account is still in the `from` status the caller read, so
+   * two staff acting at once can't overwrite each other. Callers check
+   * permissions.
+   *
+   * @returns false when the account had already moved on; nothing was written.
+   */
+  async setAccountState(
+    user: Pick<UserEntity, 'id' | 'email' | 'firebase_uid'>,
+    from: AccountStatus,
+    state: Pick<
+      UserEntity,
+      | 'is_active'
+      | 'account_status'
+      | 'status_reason'
+      | 'suspended_until'
+      | 'status_changed_by'
+    >,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const entityManager = manager || this.userRepository.manager;
+    const result = await entityManager
+      .createQueryBuilder()
+      .update(UserEntity)
+      .set({ ...state, status_changed_at: new Date() })
+      .where('id = :id AND account_status = :from', { id: user.id, from })
+      .execute();
+    if (!result.affected) return false;
+    // Inside a transaction the caller clears the cache after commit instead,
+    // or a read in between would cache the old state again.
+    if (!manager) await this.clearUserCache(user);
+    return true;
+  }
+
+  async clearUserCache(
+    user: Pick<UserEntity, 'id' | 'email' | 'firebase_uid'>,
+  ): Promise<void> {
+    await this.cacheManager.del(`user:id:${user.id}`);
+    if (user.email) await this.cacheManager.del(`user:email:${user.email}`);
+    if (user.firebase_uid) {
+      await this.cacheManager.del(`user:firebase_uid:${user.firebase_uid}`);
+    }
   }
 
   async remove(id: string, deletedById?: string, manager?: EntityManager) {

@@ -6,7 +6,7 @@ import {
   ItemRequestEntity,
   RequestStatus,
 } from './entities/item-request.entity';
-import { ItemEntity } from '../item/entities/item.entity';
+import { ItemEntity, ModerationStatus } from '../item/entities/item.entity';
 import { ChatService } from '../chat/chat.service';
 
 const buildQueryBuilder = (data: unknown[], total: number) => ({
@@ -209,6 +209,67 @@ describe('ItemRequestService', () => {
       ).rejects.toThrow('You can no longer exchange messages with this user');
       expect(manager.save).not.toHaveBeenCalled();
       expect(chatService.createSystemMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('on a hidden item', () => {
+    const useItem = (manager: object) => {
+      (service as unknown as { dataSource: object }).dataSource = {
+        transaction: (work: (m: object) => unknown) => work(manager),
+      };
+      (service as unknown as { chatService: object }).chatService = {
+        createSystemMessage: jest.fn(),
+      };
+    };
+    const hiddenItem = {
+      id: 'item-1',
+      user_id: 'owner',
+      is_deleted: false,
+      status: 'available',
+      moderation_status: ModerationStatus.HIDDEN,
+    };
+
+    it('refuses a new request', async () => {
+      const manager = {
+        findOne: jest.fn().mockResolvedValue({ ...hiddenItem }),
+        exists: jest.fn().mockResolvedValue(false),
+        save: jest.fn(),
+      };
+      useItem(manager);
+
+      await expect(
+        service.createRequest('a', { item_id: 'item-1' }),
+      ).rejects.toThrow('Item is not available for request');
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses confirming a pending request', async () => {
+      const manager = {
+        findOne: jest.fn((entity: unknown) =>
+          Promise.resolve(
+            entity === ItemEntity
+              ? { ...hiddenItem }
+              : {
+                  id: 'req-1',
+                  item_id: 'item-1',
+                  requester_id: 'a',
+                  owner_id: 'owner',
+                  status: RequestStatus.PENDING,
+                },
+          ),
+        ),
+        update: jest.fn(),
+        save: jest.fn(),
+        query: jest.fn(),
+      };
+      useItem(manager);
+
+      await expect(
+        service.confirmRequest('owner', 'req-1', {}),
+      ).rejects.toThrow(
+        'This listing has been hidden by moderators and cannot be confirmed',
+      );
+      expect(manager.save).not.toHaveBeenCalled();
     });
   });
 

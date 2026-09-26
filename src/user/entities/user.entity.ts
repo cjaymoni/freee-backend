@@ -23,6 +23,16 @@ export enum UserRole {
   ADMIN = 'ADMIN',
 }
 
+/**
+ * Why an account is or isn't usable. `is_active` stays the flag every guard
+ * checks; this says whether an inactive account is suspended or banned.
+ */
+export enum AccountStatus {
+  ACTIVE = 'active',
+  SUSPENDED = 'suspended',
+  BANNED = 'banned',
+}
+
 /** Roles that can sign in to the back office. */
 export const STAFF_ROLES = [UserRole.ADMIN, UserRole.MODERATOR];
 
@@ -34,6 +44,7 @@ export function isStaff(role: string | undefined): boolean {
 @Index(['created_at'])
 @Index('idx_users_active', ['is_active', 'is_deleted', 'last_active'])
 @Index('idx_users_soft_delete', ['is_deleted', 'deleted_at'])
+@Index('idx_users_account_status', ['account_status', 'suspended_until'])
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -112,6 +123,26 @@ export class UserEntity {
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
+
+  @Column({
+    type: 'enum',
+    enum: AccountStatus,
+    default: AccountStatus.ACTIVE,
+  })
+  account_status: AccountStatus;
+
+  @Column({ type: 'text', nullable: true })
+  status_reason: string | null;
+
+  /** A suspension lifts itself after this; null means until reinstated. */
+  @Column({ type: 'timestamp', nullable: true })
+  suspended_until: Date | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  status_changed_by: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  status_changed_at: Date | null;
 
   @Column({ type: 'boolean', default: true })
   notification_enabled: boolean;

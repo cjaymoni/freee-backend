@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType, AuditMetadataKey } from '../audit/audit.constants';
+import { UserRole } from '../user/entities/user.entity';
 
 export interface StaffActor {
   userId: string;
-  role: string;
+  role: UserRole;
 }
 
 /**
@@ -18,7 +19,8 @@ export class AdminAuditService {
   constructor(private readonly auditService: AuditService) {}
 
   async record(params: {
-    actor: StaffActor;
+    /** null for changes the system makes on its own, e.g. a suspension ending. */
+    actor: StaffActor | null;
     entityType: AuditEntityType;
     entityId: string;
     action: string;
@@ -28,7 +30,7 @@ export class AdminAuditService {
     request?: Request;
   }): Promise<void> {
     await this.auditService.log({
-      userId: params.actor.userId,
+      userId: params.actor?.userId,
       entityType: params.entityType,
       entityId: params.entityId,
       action: params.action,
@@ -40,7 +42,7 @@ export class AdminAuditService {
       requestMethod: params.request?.method,
       metadata: {
         backoffice: true,
-        [AuditMetadataKey.USER_ROLE]: params.actor.role,
+        [AuditMetadataKey.USER_ROLE]: params.actor?.role ?? 'system',
         ...(params.reason && { [AuditMetadataKey.REASON]: params.reason }),
       },
     });

@@ -6,12 +6,14 @@ import {
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { ALLOW_SUSPENDED_KEY } from '../decorators/allow-suspended.decorator';
+import { AccountStatus } from '../../user/entities/user.entity';
 
 /**
  * Authenticates the bearer token and then refuses suspended / deactivated
  * accounts (is_active=false) unless the route or controller is marked
- * @AllowSuspended(). Doing this here rather than in a separate guard means
- * every JWT-protected route enforces suspension without opting in.
+ * @AllowSuspended(). Banned accounts are refused everywhere, complaint routes
+ * included. Doing this here rather than in a separate guard means every
+ * JWT-protected route enforces suspension without opting in.
  */
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -23,15 +25,19 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     const authenticated = (await super.canActivate(context)) as boolean;
     if (!authenticated) return false;
 
+    const user = context.switchToHttp().getRequest<{
+      user?: { is_active?: boolean; account_status?: AccountStatus };
+    }>().user;
+    if (user?.account_status === AccountStatus.BANNED) {
+      throw new ForbiddenException('This account has been banned.');
+    }
+
     const allowSuspended = this.reflector.getAllAndOverride<boolean>(
       ALLOW_SUSPENDED_KEY,
       [context.getHandler(), context.getClass()],
     );
     if (allowSuspended) return true;
 
-    const user = context
-      .switchToHttp()
-      .getRequest<{ user?: { is_active?: boolean } }>().user;
     if (user?.is_active === false) {
       throw new ForbiddenException(
         'Your account has been suspended. You can only access complaint endpoints.',

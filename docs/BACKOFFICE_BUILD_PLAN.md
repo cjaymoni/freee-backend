@@ -8,13 +8,18 @@ Updated as each piece lands. ✅ done · 🚧 in progress · ⬜ not started.
 
 | Phase | Item | Status | Notes |
 | --- | --- | --- | --- |
-| 0 | `MODERATOR` role + migration | ✅ | `1791000000000-AddModeratorRole`; `STAFF_ROLES` / `isStaff()` in `user.entity.ts`. Not yet run against a database |
+| 0 | `MODERATOR` role + migration | ✅ | `1791000000000-AddModeratorRole`, merged to `main` in PR #3 and so kept as merged (it may already have run in production); `STAFF_ROLES` / `isStaff()` in `user.entity.ts` |
 | 0 | Moderators on existing staff endpoints | ✅ | User list/detail, all-locations, report and complaint queues + resolve. Staff accounts can't be suspended from a report; `item_removed` is admin only; nobody reviews a report they filed. `src/auth/roles-matrix.spec.ts` pins every `@Roles` handler |
 | 0 | `AdminModule` + `AdminAuditService` | ✅ | `src/admin/`; every admin write records actor, role, old/new values, reason |
 | 0 | `PATCH /admin/users/:id/role` | ✅ | Admin only; ends the user's sessions; can't change your own role. The only way to change a role: `PATCH /user/:id` now rejects `role` |
 | 0 | Back office: moderator login, role in session, admin-only actions hidden | ✅ | `bo_staff` cookie → `useStaff()` / `useIsAdmin()`, renewed with each token refresh; if missing, looked up via `/auth/me`, else shown as moderator. Admin only: role changes, deactivate, feature/remove listings, category edits, Settings, Notifications |
 | 0 | Back office: V1 sidebar + placeholders | ✅ | Items → `/listings`, moderation queues → `/reports/*`, complaints → `/support`, audit → `/settings/audit`; old URLs redirect. Requests, Give-aways, Locations, Notifications are placeholders |
-| 1 | Users + Listings enforcement | ⬜ | |
+| 1 | Account status + listing moderation columns | ✅ | `1794000000000-AddAccountAndListingModeration`: `users.account_status` (active/suspended/banned), `status_reason`, `suspended_until`, `status_changed_by/at`; `items.moderation_status` (visible/hidden/flagged), `moderation_reason`, `moderated_by/at`. Existing deactivated users become `suspended` only if they had verified an email or phone or used Firebase; unverified password sign-ups stay `active` (shown as pending verification). Not yet run against a database |
+| 1 | Suspend / ban / reinstate | ✅ | `POST /admin/users/:id/{suspend,ban,reinstate}`. Suspend (staff) keeps sessions so the user can appeal; optional `until`, lifted by a 10-minute cron. Ban (admin) ends sessions, revokes Firebase tokens, and `JwtAuthGuard` refuses banned accounts everywhere. Only admins lift a ban. Staff accounts can't be suspended or banned, or made staff while blocked. Every status write is conditional on the status it read (409 if another action got there first). Suspend and ban drop open chat sockets. Firebase sign-in refuses banned accounts and checks token revocation. `PATCH /user/:id` no longer takes `is_active`, and email verification can't lift a suspension or ban |
+| 1 | Admin user list + detail | ✅ | `GET /admin/users` (search, status, role, joined range), `/:id` (counts), `/:id/{requests,reports,activity}`. Curated response shape: no tokens |
+| 1 | Hide / flag / restore listings | ✅ | `POST /admin/items/:id/{hide,flag,restore}` (staff). Hidden listings leave `GET /items`, `GET /items/:id` (404) and saved items; the owner still sees them with `is_hidden` + `hidden_reason`. New requests and confirmations on hidden listings are refused |
+| 1 | Admin listing list + detail | ✅ | `GET /admin/items` (search, sharer, category incl. subcategories, status, moderation, city/area, has-requests, include removed), `/:id` with requests in order, selected one marked, and reports |
+| 1 | Back office: Users + Listings | ✅ | Users list with search/filters → user page (header, counts, Listings / Requests / Reports / Activity tabs, suspend/ban/reinstate/role). Listings list with filters → listing page (sharer, photos, ordered requests, reports, hide/flag/restore, feature/remove for admins). Report rows link to both |
 | 2 | Reports and moderation | ⬜ | |
 | 3 | Requests and Give-aways | ⬜ | |
 | 4 | Dashboard and Locations | ⬜ | |
@@ -187,6 +192,8 @@ Everything else depends on this.
 Phases 1 and 3 can run in parallel after Phase 0. A partial dashboard (users, listings, reports) can ship after Phase 1 and be finished after Phase 3.
 
 ## Open questions
+
+Phase 1 assumed answers to 2, 3 and 5 (a suspension may end on its own; a banned user's account stays, so the same email or phone can't sign up again; hidden listings stay visible to their owner and keep their requests; moderators suspend, only admins ban). Confirm or correct them.
 
 1. **Give-away stages.** Do we want two-sided pickup confirmation, with the sharer and the requester each confirming separately? That needs app changes and new columns. If not, the stages collapse to Active → Awaiting pickup → Completed / Cancelled. This plan assumes they collapse.
 2. **Suspension vs ban.** Should a suspension always have an end date and lift itself when it passes? Can a banned user sign up again with the same phone number or email?
