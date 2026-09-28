@@ -17,7 +17,6 @@ import { ItemResponseDto } from './dto/item-response.dto';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { DistanceService } from '../common/distance.service';
 import { UserEntity } from '../user/entities/user.entity';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
@@ -93,13 +92,43 @@ const mockImage = (
 const mockFile = (name: string): Express.Multer.File =>
   ({ originalname: name, buffer: Buffer.from('x') }) as Express.Multer.File;
 
-const buildQueryBuilder = (entities: ItemEntity[], raw: object[]) => ({
+// Serves findOne (getRawAndEntities), findAll (getManyAndCount) and the
+// per-sharer count query, which reads its rows from the same raw list.
+const buildQueryBuilder = (
+  entities: ItemEntity[],
+  raw: { item_user_id?: string; user_items_count?: string }[],
+) => ({
   leftJoinAndSelect: jest.fn().mockReturnThis(),
+  select: jest.fn().mockReturnThis(),
   addSelect: jest.fn().mockReturnThis(),
   where: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
+  groupBy: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
+  addOrderBy: jest.fn().mockReturnThis(),
+  skip: jest.fn().mockReturnThis(),
+  take: jest.fn().mockReturnThis(),
   getRawAndEntities: jest.fn().mockResolvedValue({ entities, raw }),
+  // Renders its WHERE so assertions can read the distance subqueries.
+  subQuery: jest.fn(() => {
+    let where = '';
+    const sub = {
+      select: () => sub,
+      from: () => sub,
+      where: (sql: string) => ((where = sql), sub),
+      getQuery: () => `(SELECT l.id FROM locations l WHERE ${where})`,
+    };
+    return sub;
+  }),
+  getManyAndCount: jest.fn().mockResolvedValue([entities, entities.length]),
+  getRawMany: jest.fn().mockResolvedValue(
+    raw
+      .filter((row) => row.item_user_id)
+      .map((row) => ({
+        user_id: row.item_user_id,
+        count: row.user_items_count,
+      })),
+  ),
 });
 
 describe('ItemResponseDto.fromEntity', () => {
@@ -293,7 +322,6 @@ describe('ItemService', () => {
           useValue: mockLocationRepo,
         },
         { provide: CloudinaryService, useValue: mockCloudinary },
-        DistanceService,
         { provide: ItemViewService, useValue: mockItemViewService },
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
@@ -1301,16 +1329,31 @@ describe('ItemService', () => {
         ).toBe(false);
       });
 
-      it('returns the requested page with total, page and limit', async () => {
-        useItems(items(5));
+      it('pages in SQL and returns the total count, page and limit', async () => {
+        useItems(items(2));
+        mockQueryBuilder.getManyAndCount.mockResolvedValue([items(2), 5]);
 
         const result = await service.findAll({ page: 2, limit: 2 });
 
-        expect(result.data.map((item) => item.id)).toEqual([
-          'item-3',
-          'item-4',
-        ]);
+        expect(mockQueryBuilder.skip).toHaveBeenCalledWith(2);
+        expect(mockQueryBuilder.take).toHaveBeenCalledWith(2);
+        expect(result.data).toHaveLength(2);
         expect(result).toMatchObject({ total: 5, page: 2, limit: 2 });
+      });
+
+      it('breaks created_at ties by id so pages stay stable', async () => {
+        useItems([]);
+
+        await service.findAll({ page: 1 });
+
+        expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
+          'item.created_at',
+          'DESC',
+        );
+        expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
+          'item.id',
+          'DESC',
+        );
       });
 
       it('returns every item when no page or limit is sent', async () => {
@@ -1318,33 +1361,15 @@ describe('ItemService', () => {
 
         const result = await service.findAll();
 
+        expect(mockQueryBuilder.skip).not.toHaveBeenCalled();
+        expect(mockQueryBuilder.take).not.toHaveBeenCalled();
         expect(result.data).toHaveLength(3);
         expect(result.total).toBe(3);
         expect(result.page).toBeUndefined();
       });
-
-      it('pages over items inside the radius only', async () => {
-        const near = { ...mockItemEntity, id: 'near' } as ItemEntity;
-        const far = {
-          ...mockItemEntity,
-          id: 'far',
-          location: mockLocation(9.4034, -0.8424), // Tamale
-        } as ItemEntity;
-        useItems([far, near]);
-
-        const result = await service.findAll({
-          lat: 5.6037,
-          lng: -0.187,
-          page: 1,
-          limit: 1,
-        });
-
-        expect(result.data.map((item) => item.id)).toEqual(['near']);
-        expect(result.total).toBe(1);
-      });
     });
 
-    it('returns items with user object and items_count from subquery', async () => {
+    it("returns items with user object and their sharer's items_count", async () => {
       mockQueryBuilder = buildQueryBuilder(
         [mockItemEntity],
         [{ item_user_id: 'user-1', user_items_count: '5' }],
@@ -1359,25 +1384,23 @@ describe('ItemService', () => {
       expect(result.data[0].user!.items_count).toBe(5);
     });
 
-    it("gives each item its own poster's items_count when items have several images", async () => {
+    it("gives each item its own sharer's items_count, counting each sharer once", async () => {
       const byA = {
         ...mockItemEntity,
         id: 'item-a',
         user_id: 'user-a',
         user: { ...mockItemEntity.user, id: 'user-a' },
       } as ItemEntity;
+      const alsoByA = { ...byA, id: 'item-a2' } as ItemEntity;
       const byB = {
         ...mockItemEntity,
         id: 'item-b',
         user_id: 'user-b',
         user: { ...mockItemEntity.user, id: 'user-b' },
       } as ItemEntity;
-      // The images join yields one raw row per image: item-a has three.
       mockQueryBuilder = buildQueryBuilder(
-        [byA, byB],
+        [byA, alsoByA, byB],
         [
-          { item_user_id: 'user-a', user_items_count: '30' },
-          { item_user_id: 'user-a', user_items_count: '30' },
           { item_user_id: 'user-a', user_items_count: '30' },
           { item_user_id: 'user-b', user_items_count: '1' },
         ],
@@ -1387,8 +1410,24 @@ describe('ItemService', () => {
       const result = await service.findAll();
 
       expect(result.data.map((item) => item.user!.items_count)).toEqual([
-        30, 1,
+        30, 30, 1,
       ]);
+      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
+        'item.user_id IN (:...userIds)',
+        { userIds: ['user-a', 'user-b'] },
+      );
+    });
+
+    it('matches a top-level category and its subcategories', async () => {
+      mockQueryBuilder = buildQueryBuilder([], []);
+      mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+
+      await service.findAll({ category_id: 'cat-1' });
+
+      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+        '(item.category_id = :category_id OR category.parent_category_id = :category_id)',
+        { category_id: 'cat-1' },
+      );
     });
 
     it("returns each item's images in display order", async () => {
@@ -1439,75 +1478,60 @@ describe('ItemService', () => {
     });
 
     describe('proximity filtering', () => {
-      // Item in Accra (5.6037, -0.1870)
-      // Item in Kumasi (6.6885, -1.6244) — ~250km from Accra
-      const accraItem = {
-        ...mockItemEntity,
-        id: 'item-accra',
-        location: mockLocation(5.6037, -0.187),
-      } as any;
-      const kumasiItem = {
-        ...mockItemEntity,
-        id: 'item-kumasi',
-        location: mockLocation(6.6885, -1.6244),
-      } as any;
-      const noLocationItem = {
-        ...mockItemEntity,
-        id: 'item-noloc',
-        location: null,
-      } as any;
+      const radiusFilter = () =>
+        (
+          mockQueryBuilder.andWhere.mock.calls as [
+            string,
+            Record<string, unknown>?,
+          ][]
+        ).find(([sql]) => sql.includes(':radius'));
 
       beforeEach(() => {
-        mockQueryBuilder = buildQueryBuilder(
-          [accraItem, kumasiItem, noLocationItem],
-          [
-            { user_items_count: '1' },
-            { user_items_count: '2' },
-            { user_items_count: '0' },
-          ],
-        );
+        mockQueryBuilder = buildQueryBuilder([], []);
         mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
       });
 
-      it('returns all items when no lat/lng provided', async () => {
-        const result = await service.findAll();
-        expect(result.data).toHaveLength(3);
+      it('does not filter by distance when no lat/lng provided', async () => {
+        await service.findAll();
+        expect(radiusFilter()).toBeUndefined();
       });
 
-      it('filters to nearby items within default 10km radius', async () => {
-        // Searching from Accra — only accraItem should be within 10km
-        const result = await service.findAll({ lat: 5.6037, lng: -0.187 });
-        const ids = result.data.map((d) => d.id);
-        expect(ids).toContain('item-accra');
-        expect(ids).not.toContain('item-kumasi');
+      it('filters in SQL within a default 10km radius', async () => {
+        await service.findAll({ lat: 5.6037, lng: -0.187 });
+        const [sql, params] = radiusFilter()!;
+        expect(sql).toContain('asin(');
+        expect(params).toMatchObject({ lat: 5.6037, lng: -0.187, radius: 10 });
+        // 10 km is 0.0899° of latitude; at 5.6°N that is 0.0903° of longitude.
+        const box = params as Record<string, number>;
+        expect(box.min_lat).toBeCloseTo(5.6037 - 0.08993, 4);
+        expect(box.max_lat).toBeCloseTo(5.6037 + 0.08993, 4);
+        expect(box.min_lng).toBeCloseTo(-0.187 - 0.09037, 4);
+        expect(box.max_lng).toBeCloseTo(-0.187 + 0.09037, 4);
       });
 
-      it('includes items without a location regardless of radius', async () => {
-        const result = await service.findAll({ lat: 5.6037, lng: -0.187 });
-        const ids = result.data.map((d) => d.id);
-        expect(ids).toContain('item-noloc');
+      it('uses the requested radius', async () => {
+        await service.findAll({ lat: 5.6037, lng: -0.187, radius: 300 });
+        expect(radiusFilter()![1]).toMatchObject({ radius: 300 });
       });
 
-      it('includes distant items when radius is large enough', async () => {
-        // 300km radius from Accra should include Kumasi (~250km away)
-        const result = await service.findAll({
-          lat: 5.6037,
-          lng: -0.187,
-          radius: 300,
-        });
-        const ids = result.data.map((d) => d.id);
-        expect(ids).toContain('item-accra');
-        expect(ids).toContain('item-kumasi');
+      it('searches from 0,0 rather than ignoring it', async () => {
+        await service.findAll({ lat: 0, lng: 0 });
+        expect(radiusFilter()![1]).toMatchObject({ lat: 0, lng: 0 });
       });
 
-      it('excludes distant items when radius is small', async () => {
-        const result = await service.findAll({
-          lat: 5.6037,
-          lng: -0.187,
-          radius: 5,
-        });
-        const ids = result.data.map((d) => d.id);
-        expect(ids).not.toContain('item-kumasi');
+      it('boxes only latitude where the longitude range would wrap', async () => {
+        await service.findAll({ lat: -17.75, lng: 179.99, radius: 50 });
+        const box = radiusFilter()![1] as Record<string, number>;
+        expect(box.min_lat).toBeDefined();
+        expect(box.min_lng).toBeUndefined();
+        expect(radiusFilter()![0]).not.toContain('l.longitude BETWEEN');
+      });
+
+      it('keeps items without coordinates', async () => {
+        await service.findAll({ lat: 5.6037, lng: -0.187 });
+        const [sql] = radiusFilter()!;
+        expect(sql).toContain('item.location_id IS NULL');
+        expect(sql).toContain('l.latitude IS NULL OR l.longitude IS NULL');
       });
     });
   });

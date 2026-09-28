@@ -420,7 +420,13 @@ describe('AdminUsersService.list filters', () => {
   it('escapes the search and applies status and role', async () => {
     const calls: [unknown, unknown?][] = [];
     const qb: Record<string, unknown> = {};
-    for (const m of ['where', 'orderBy', 'skip', 'take']) qb[m] = () => qb;
+    for (const m of ['where', 'skip', 'take']) qb[m] = () => qb;
+    for (const m of ['orderBy', 'addOrderBy']) {
+      qb[m] = (column: string, direction: string) => {
+        calls.push([`${m} ${column} ${direction}`]);
+        return qb;
+      };
+    }
     qb.andWhere = (sql: unknown, params?: unknown) => {
       calls.push([typeof sql === 'string' ? sql : 'brackets', params]);
       return qb;
@@ -435,8 +441,11 @@ describe('AdminUsersService.list filters', () => {
       search: ' 50%_off ',
       account_status: AccountStatus.BANNED,
       role: UserRole.USER,
+      order: 'ASC',
     });
 
+    expect(calls).toContainEqual(['orderBy u.created_at ASC']);
+    expect(calls).toContainEqual(['addOrderBy u.id ASC']);
     expect(calls).toContainEqual(['brackets', { search: '%50\\%\\_off%' }]);
     expect(calls).toContainEqual([
       'u.account_status = :status',

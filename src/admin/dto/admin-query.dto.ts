@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -11,15 +11,15 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PaginationDto } from '../../common/pagination.dto';
+import { toBoolean } from '../../common/to-boolean';
 import { AccountStatus, UserRole } from '../../user/entities/user.entity';
 import { ItemStatus, ModerationStatus } from '../../item/entities/item.entity';
 import { RequestStatus } from '../../item-request/entities/item-request.entity';
 
-/** Query strings arrive as text, so map "true"/"false" onto booleans. */
-const toBoolean = ({ value }: { value: unknown }) =>
-  value === 'true' ? true : value === 'false' ? false : value;
+/** Admin lists always sort by creation date; only the direction is chosen. */
+class AdminPaginationDto extends OmitType(PaginationDto, ['sortBy'] as const) {}
 
-export class AdminUserQueryDto extends PaginationDto {
+export class AdminUserQueryDto extends AdminPaginationDto {
   @ApiPropertyOptional({ description: 'Name, email or phone number' })
   @IsOptional()
   @IsString()
@@ -47,7 +47,7 @@ export class AdminUserQueryDto extends PaginationDto {
   created_to?: string;
 }
 
-export class AdminItemQueryDto extends PaginationDto {
+export class AdminItemQueryDto extends AdminPaginationDto {
   @ApiPropertyOptional({ description: 'Title or description' })
   @IsOptional()
   @IsString()
@@ -101,7 +101,7 @@ export class AdminItemQueryDto extends PaginationDto {
   include_deleted?: boolean;
 }
 
-export class AdminUserRequestsQueryDto extends PaginationDto {
+export class AdminUserRequestsQueryDto extends AdminPaginationDto {
   @ApiPropertyOptional({
     enum: ['made', 'received'],
     description: 'Requests the user made, or received on their listings',

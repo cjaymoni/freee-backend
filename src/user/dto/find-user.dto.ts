@@ -1,24 +1,31 @@
 import {
   ApiPropertyOptional,
   IntersectionType,
-  OmitType,
+  PickType,
 } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional } from 'class-validator';
 import { PaginationDto } from 'src/common/pagination.dto';
+import { toBoolean } from 'src/common/to-boolean';
 import { BaseUserDto } from './base-user.dto';
 
-/** Query strings arrive as text, so map "true"/"false" onto booleans. */
-const toBoolean = ({ value }: { value: unknown }) =>
-  value === 'true' ? true : value === 'false' ? false : value;
-
+/**
+ * Exact-match filters for the staff user list. Only profile fields are
+ * listed: secrets (password, fcm_token) and bookkeeping columns must not be
+ * queryable, and every field that is not a string needs converting from the
+ * query string or it can never validate.
+ */
 export class FindUserDto extends IntersectionType(
   PaginationDto,
-  OmitType(BaseUserDto, [
-    'is_active',
-    'is_email_verified',
-    'is_phone_verified',
-    'notification_enabled',
+  PickType(BaseUserDto, [
+    'id',
+    'phone_number',
+    'email',
+    'first_name',
+    'last_name',
+    'role',
+    'gender',
+    'date_of_birth',
   ] as const),
 ) {
   @ApiPropertyOptional()
@@ -44,4 +51,16 @@ export class FindUserDto extends IntersectionType(
   @Transform(toBoolean)
   @IsBoolean()
   notification_enabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  is_onboarded?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  requires_password_change?: boolean;
 }

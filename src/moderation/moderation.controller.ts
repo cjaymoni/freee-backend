@@ -8,15 +8,24 @@ import {
   Param,
   Query,
   UseGuards,
+  ParseEnumPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ModerationService } from './moderation.service';
 import { CreateReportedItemDto } from './dto/create-reported-item.dto';
 import { CreateReportedUserDto } from './dto/create-reported-user.dto';
 import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
-import { ResolveReportDto } from './dto/resolve-report.dto';
+import { ReportStatus, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
-import { ResolveComplaintDto } from './dto/resolve-complaint.dto';
+import {
+  ComplaintStatus,
+  ResolveComplaintDto,
+} from './dto/resolve-complaint.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ActiveUserGuard } from '../auth/guards/active-user.guard';
 import { AllowSuspended } from '../auth/decorators/allow-suspended.decorator';
@@ -107,10 +116,12 @@ export class ModerationController {
     summary: 'Get item reports',
     description: 'Staff get all reports; other users get the ones they filed.',
   })
+  @ApiQuery({ name: 'status', required: false, enum: ReportStatus })
   getItemReports(
     @GetUser('id') userId: string,
     @GetUser('role') role: UserRole,
-    @Query('status') status?: string,
+    @Query('status', new ParseEnumPipe(ReportStatus, { optional: true }))
+    status?: ReportStatus,
   ) {
     return this.moderationService.getItemReports(
       status,
@@ -123,10 +134,12 @@ export class ModerationController {
     summary: 'Get user reports',
     description: 'Staff get all reports; other users get the ones they filed.',
   })
+  @ApiQuery({ name: 'status', required: false, enum: ReportStatus })
   getUserReports(
     @GetUser('id') userId: string,
     @GetUser('role') role: UserRole,
-    @Query('status') status?: string,
+    @Query('status', new ParseEnumPipe(ReportStatus, { optional: true }))
+    status?: ReportStatus,
   ) {
     return this.moderationService.getUserReports(
       status,
@@ -149,10 +162,12 @@ export class ModerationController {
     summary: 'Get complaints',
     description: 'Staff get all complaints; other users get their own.',
   })
+  @ApiQuery({ name: 'status', required: false, enum: ComplaintStatus })
   getComplaints(
     @GetUser('id') userId: string,
     @GetUser('role') role: UserRole,
-    @Query('status') status?: string,
+    @Query('status', new ParseEnumPipe(ComplaintStatus, { optional: true }))
+    status?: ComplaintStatus,
   ) {
     return this.moderationService.getComplaints(
       status,

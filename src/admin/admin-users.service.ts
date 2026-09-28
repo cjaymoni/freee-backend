@@ -106,7 +106,8 @@ export class AdminUsersService {
     }
 
     const [users, total] = await qb
-      .orderBy('u.created_at', 'DESC')
+      .orderBy('u.created_at', query.order ?? 'DESC')
+      .addOrderBy('u.id', query.order ?? 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
@@ -208,7 +209,8 @@ export class AdminUsersService {
       qb.andWhere('r.status = :status', { status: query.status });
 
     const [rows, total] = await qb
-      .orderBy('r.created_at', 'DESC')
+      .orderBy('r.created_at', query.order ?? 'DESC')
+      .addOrderBy('r.id', query.order ?? 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();

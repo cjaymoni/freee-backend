@@ -13,6 +13,15 @@ import { UserEntity } from './user.entity';
 @Entity('locations')
 @Index(['user_id'])
 @Index(['latitude', 'longitude'])
+// Nearby item searches keep listings without coordinates; this finds those
+// locations without scanning the table. Created by the
+// AddLocationsMissingCoordinatesIndex migration under the same name. Keep
+// the predicate identical to the migration's: TypeORM compares an index's
+// name, columns and uniqueness, never its WHERE, so migration:generate would
+// not notice an edit here.
+@Index('IDX_locations_missing_coordinates', ['id'], {
+  where: 'latitude IS NULL OR longitude IS NULL',
+})
 @Index(['country_code'])
 @Index(['is_deleted', 'user_id'])
 export class LocationEntity {

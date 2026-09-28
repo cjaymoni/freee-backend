@@ -1,7 +1,7 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { ApiExceptionFilter } from './api-exception.filter';
+import { configureGlobals } from '../../app-setup';
 import { ItemController } from '../../item/item.controller';
 import { ItemService } from '../../item/item.service';
 import { UserActivityService } from '../../audit/user-activity.service';
@@ -32,14 +32,7 @@ describe('public GETs with malformed input', () => {
       ],
     }).compile();
     app = module.createNestApplication({ logger: false });
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-    app.useGlobalFilters(new ApiExceptionFilter());
+    configureGlobals(app);
     await app.init();
   });
 
@@ -56,6 +49,13 @@ describe('public GETs with malformed input', () => {
     ['/item-views/stats/abc'],
     ['/item-views/stats/11111111-1111-4111-8111-111111111111?days=abc'],
     ['/item-views/stats/11111111-1111-4111-8111-111111111111?days=0'],
+    ['/items?query=chair%00'],
+    ['/items?query=a&query=%00'],
+    ['/categories/slug/x%00'],
+    ['/items?is_free=1'],
+    ['/items?lat=abc&lng=1'],
+    ['/items?lat=1'],
+    ['/items?lat=1&lng=1&radius=0'],
   ])('%s answers 400 without querying', async (path) => {
     const res = await get(path);
 

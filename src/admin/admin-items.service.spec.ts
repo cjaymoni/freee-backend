@@ -102,8 +102,14 @@ describe('AdminItemsService.list filters', () => {
   const setup = () => {
     const calls: [string, unknown?][] = [];
     const qb: Record<string, unknown> = {};
-    for (const m of ['leftJoinAndSelect', 'orderBy', 'skip', 'take']) {
+    for (const m of ['leftJoinAndSelect', 'skip', 'take']) {
       qb[m] = () => qb;
+    }
+    for (const m of ['orderBy', 'addOrderBy']) {
+      qb[m] = (column: string, direction: string) => {
+        calls.push([`${m} ${column} ${direction}`]);
+        return qb;
+      };
     }
     qb.andWhere = (sql: unknown, params?: unknown) => {
       calls.push([typeof sql === 'string' ? sql : 'brackets', params]);
@@ -118,6 +124,18 @@ describe('AdminItemsService.list filters', () => {
     );
     return { service, calls };
   };
+
+  it('sorts newest first by default, oldest first when asked', async () => {
+    const newest = setup();
+    await newest.service.list({});
+    expect(newest.calls).toContainEqual(['orderBy item.created_at DESC']);
+    expect(newest.calls).toContainEqual(['addOrderBy item.id DESC']);
+
+    const oldest = setup();
+    await oldest.service.list({ order: 'ASC' });
+    expect(oldest.calls).toContainEqual(['orderBy item.created_at ASC']);
+    expect(oldest.calls).toContainEqual(['addOrderBy item.id ASC']);
+  });
 
   it('leaves removed listings out unless asked', async () => {
     const { service, calls } = setup();
