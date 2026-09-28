@@ -2,10 +2,9 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { ClassSerializerInterceptor } from '@nestjs/common';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
-import { ApiExceptionFilter } from './common/filters/api-exception.filter';
-import { RejectNullBytesPipe } from './common/pipes/reject-null-bytes.pipe';
+import { configureGlobals } from './app-setup';
 import helmet from 'helmet';
 import * as express from 'express';
 
@@ -33,19 +32,8 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Enable validation globally. NUL is refused first: Postgres rejects it in
-  // text, so it would otherwise surface as a 500.
-  app.useGlobalPipes(
-    new RejectNullBytesPipe(),
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
-
-  // Every HTTP error in the documented ApiError shape.
-  app.useGlobalFilters(new ApiExceptionFilter());
+  // Validation and the ApiError shape, shared with the HTTP tests.
+  configureGlobals(app);
 
   // Enable class-transformer serialization globally
   app.useGlobalInterceptors(

@@ -1,7 +1,7 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { ApiExceptionFilter } from './api-exception.filter';
+import { configureGlobals } from '../../app-setup';
 import { ItemController } from '../../item/item.controller';
 import { ItemService } from '../../item/item.service';
 import { UserActivityService } from '../../audit/user-activity.service';
@@ -10,7 +10,6 @@ import { CategoryService } from '../../category/category.service';
 import { ItemViewController } from '../../item-view/item-view.controller';
 import { ItemViewService } from '../../item-view/item-view.service';
 import { AppError } from '../app-error';
-import { RejectNullBytesPipe } from '../pipes/reject-null-bytes.pipe';
 
 /**
  * Malformed ids and enums on public GETs are rejected before they reach
@@ -33,15 +32,7 @@ describe('public GETs with malformed input', () => {
       ],
     }).compile();
     app = module.createNestApplication({ logger: false });
-    app.useGlobalPipes(
-      new RejectNullBytesPipe(),
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-    app.useGlobalFilters(new ApiExceptionFilter());
+    configureGlobals(app);
     await app.init();
   });
 

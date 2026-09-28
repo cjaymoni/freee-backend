@@ -109,6 +109,17 @@ const buildQueryBuilder = (
   skip: jest.fn().mockReturnThis(),
   take: jest.fn().mockReturnThis(),
   getRawAndEntities: jest.fn().mockResolvedValue({ entities, raw }),
+  // Renders its WHERE so assertions can read the distance subqueries.
+  subQuery: jest.fn(() => {
+    let where = '';
+    const sub = {
+      select: () => sub,
+      from: () => sub,
+      where: (sql: string) => ((where = sql), sub),
+      getQuery: () => `(SELECT l.id FROM locations l WHERE ${where})`,
+    };
+    return sub;
+  }),
   getManyAndCount: jest.fn().mockResolvedValue([entities, entities.length]),
   getRawMany: jest.fn().mockResolvedValue(
     raw
@@ -1490,6 +1501,12 @@ describe('ItemService', () => {
         const [sql, params] = radiusFilter()!;
         expect(sql).toContain('asin(');
         expect(params).toMatchObject({ lat: 5.6037, lng: -0.187, radius: 10 });
+        // 10 km is 0.0899° of latitude; at 5.6°N that is 0.0903° of longitude.
+        const box = params as Record<string, number>;
+        expect(box.min_lat).toBeCloseTo(5.6037 - 0.08993, 4);
+        expect(box.max_lat).toBeCloseTo(5.6037 + 0.08993, 4);
+        expect(box.min_lng).toBeCloseTo(-0.187 - 0.09037, 4);
+        expect(box.max_lng).toBeCloseTo(-0.187 + 0.09037, 4);
       });
 
       it('uses the requested radius', async () => {
@@ -1502,11 +1519,19 @@ describe('ItemService', () => {
         expect(radiusFilter()![1]).toMatchObject({ lat: 0, lng: 0 });
       });
 
+      it('boxes only latitude where the longitude range would wrap', async () => {
+        await service.findAll({ lat: -17.75, lng: 179.99, radius: 50 });
+        const box = radiusFilter()![1] as Record<string, number>;
+        expect(box.min_lat).toBeDefined();
+        expect(box.min_lng).toBeUndefined();
+        expect(radiusFilter()![0]).not.toContain('l.longitude BETWEEN');
+      });
+
       it('keeps items without coordinates', async () => {
         await service.findAll({ lat: 5.6037, lng: -0.187 });
         const [sql] = radiusFilter()!;
-        expect(sql).toContain('location.latitude IS NULL');
-        expect(sql).toContain('location.longitude IS NULL');
+        expect(sql).toContain('item.location_id IS NULL');
+        expect(sql).toContain('l.latitude IS NULL OR l.longitude IS NULL');
       });
     });
   });

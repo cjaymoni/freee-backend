@@ -4,10 +4,13 @@ import { ChatGateway } from './chat.gateway';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ChatService } from './chat.service';
 import { AuthService } from '../auth/auth.service';
-import { PIPES_METADATA } from '@nestjs/common/constants';
-import { ParamsTokenFactory } from '@nestjs/core/pipes/params-token-factory';
-import { WsParamtype } from '@nestjs/websockets/enums/ws-paramtype.enum';
-import { RejectNullBytesPipe } from '../common/pipes/reject-null-bytes.pipe';
+import { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { Server } from 'http';
+import { AddressInfo } from 'net';
+import { io, Socket as ClientSocket } from 'socket.io-client';
+import { CHAT_NAMESPACE, ChatClientEvents } from './chat.constants';
 
 describe('ChatGateway presence', () => {
   let realtime: ChatRealtimeService;
@@ -85,19 +88,84 @@ describe('ChatGateway presence', () => {
   });
 });
 
-describe('ChatGateway payload pipes', () => {
-  const pipes = Reflect.getMetadata(PIPES_METADATA, ChatGateway) as unknown[];
+describe('ChatGateway payloads over a real socket', () => {
+  let app: INestApplication;
+  let client: ClientSocket;
+  const sendMessage = jest.fn().mockResolvedValue({ state: true });
 
-  it('refuses NUL in a socket payload before validating it', () => {
-    expect(pipes[0]).toBeInstanceOf(RejectNullBytesPipe);
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        ChatGateway,
+        ChatRealtimeService,
+        {
+          provide: ChatService,
+          useValue: {
+            sendMessage,
+            broadcastPresence: jest.fn(),
+            pushUnreadCount: jest.fn(),
+          },
+        },
+        {
+          provide: JwtService,
+          useValue: {
+            verifyAsync: () =>
+              Promise.resolve({ sub: 'u1', session_token: 's1' }),
+          },
+        },
+        { provide: ConfigService, useValue: { get: () => 'secret' } },
+        {
+          provide: AuthService,
+          useValue: {
+            validateSession: () => Promise.resolve(true),
+            getUserForValidation: () => Promise.resolve({ is_active: true }),
+          },
+        },
+      ],
+    }).compile();
+    app = module.createNestApplication({ logger: false });
+    app.useWebSocketAdapter(new IoAdapter(app));
+    await app.listen(0);
+    const server = app.getHttpServer() as Server;
+    const { port } = server.address() as AddressInfo;
+
+    client = io(`http://127.0.0.1:${port}${CHAT_NAMESPACE}`, {
+      auth: { token: 't' },
+      transports: ['websocket'],
+    });
+    await new Promise<void>((resolve) => client.on('connect', resolve));
   });
 
-  it('hands @MessageBody payloads to pipes as the body', () => {
-    // So the pipe checks them: it skips only 'custom' arguments.
-    expect(
-      new ParamsTokenFactory().exchangeEnumForString(
-        WsParamtype.PAYLOAD as number,
-      ),
-    ).toBe('body');
+  afterAll(async () => {
+    client?.disconnect();
+    await app?.close();
+  });
+
+  afterEach(() => sendMessage.mockClear());
+
+  const send = (content: string) =>
+    client.timeout(2000).emitWithAck(ChatClientEvents.SEND_MESSAGE, {
+      conversation_id: '11111111-1111-4111-8111-111111111111',
+      content,
+      client_message_id: 'c1',
+    }) as Promise<Record<string, unknown>>;
+
+  it('refuses a NUL in the payload before the handler runs', async () => {
+    await expect(send('hi\u0000there')).resolves.toMatchObject({
+      state: false,
+      statusCode: 400,
+      message: 'body.content must not contain a NUL character',
+      client_message_id: 'c1',
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still delivers an ordinary message', async () => {
+    await expect(send('hi there')).resolves.toMatchObject({ state: true });
+    expect(sendMessage).toHaveBeenCalledWith(
+      'u1',
+      '11111111-1111-4111-8111-111111111111',
+      'hi there',
+    );
   });
 });

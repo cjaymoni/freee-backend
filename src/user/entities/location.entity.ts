@@ -13,6 +13,12 @@ import { UserEntity } from './user.entity';
 @Entity('locations')
 @Index(['user_id'])
 @Index(['latitude', 'longitude'])
+// Nearby item searches keep listings without coordinates; this finds those
+// locations without scanning the table. Created by the
+// AddLocationsMissingCoordinatesIndex migration under the same name.
+@Index('IDX_locations_missing_coordinates', ['id'], {
+  where: 'latitude IS NULL OR longitude IS NULL',
+})
 @Index(['country_code'])
 @Index(['is_deleted', 'user_id'])
 export class LocationEntity {

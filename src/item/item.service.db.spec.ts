@@ -1,5 +1,6 @@
-import { readdirSync } from 'fs';
 import { join } from 'path';
+import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ItemService } from './item.service';
 import {
@@ -11,6 +12,10 @@ import { ItemImageEntity } from './entities/item-image.entity';
 import { CategoryEntity } from '../category/entities/category.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { UserEntity } from '../user/entities/user.entity';
+import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { ItemViewService } from '../item-view/item-view.service';
+import { SearchService } from '../search/search.service';
 
 /**
  * GET /items against a real Postgres: paging over the images join, the
@@ -21,22 +26,23 @@ import { UserEntity } from '../user/entities/user.entity';
  *     -e POSTGRES_DB=freee_test postgres:16-alpine
  *   TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/freee_test \
  *     npx jest item.service.db
- * The schema is dropped and rebuilt from the entities on every run.
+ * The schema is dropped and rebuilt from the entities on every run, so the
+ * run refuses any database that is not local or named *_test.
  */
 const url = process.env.TEST_DATABASE_URL;
 const describeDb = url ? describe : describe.skip;
 
-/** Every entity, since relations reach across modules. */
-function allEntities(dir = join(__dirname, '..')): unknown[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return allEntities(path);
-    if (!entry.name.endsWith('.entity.ts')) return [];
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return Object.values(require(path) as Record<string, unknown>).filter(
-      (value) => typeof value === 'function',
+/** Throws unless the URL is plainly a throwaway database. */
+function assertDisposable(databaseUrl: string): void {
+  const { hostname, pathname } = new URL(databaseUrl);
+  const local = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
+  const database = decodeURIComponent(pathname.replace(/^\//, ''));
+  if (!local && !database.endsWith('_test')) {
+    throw new Error(
+      `Refusing to drop the schema of ${hostname}/${database}: ` +
+        'TEST_DATABASE_URL must be on localhost or name a *_test database.',
     );
-  });
+  }
 }
 
 /** Reference great-circle distance in km, the same formula as the SQL. */
@@ -58,6 +64,9 @@ const PLACES = {
   nullIsland: { lat: 0, lng: 0 },
   fiji: { lat: -17.75, lng: 179.95 }, // just west of the antimeridian
   arctic: { lat: 89.95, lng: 170 }, // ~7 km from 89.99,0 over the pole side
+  // 994 km from 60,0, near the widest longitude of that circle: inside the
+  // exact box, outside the flat-earth one (dLat / cos lat).
+  sweden: { lat: 61.2592, lng: 18.1 },
 };
 
 describeDb('ItemService.findAll on Postgres', () => {
@@ -67,25 +76,35 @@ describeDb('ItemService.findAll on Postgres', () => {
   const coords: Record<string, { lat: number; lng: number } | null> = {};
 
   beforeAll(async () => {
+    assertDisposable(url!);
     ds = await new DataSource({
       type: 'postgres',
       url,
-      entities: allEntities() as never[],
+      entities: [join(__dirname, '..', '**', '*.entity.ts')],
       synchronize: true,
       dropSchema: true,
       logging: false,
     }).initialize();
 
-    service = new ItemService(
-      ds.getRepository(ItemEntity),
-      ds.getRepository(ItemImageEntity),
-      { find: () => Promise.resolve([]) } as never,
-      ds.getRepository(LocationEntity),
-      {} as never,
-      {} as never,
-      ds,
-      { record: () => Promise.resolve() } as never,
-    );
+    const module = await Test.createTestingModule({
+      providers: [
+        ItemService,
+        { provide: DataSource, useValue: ds },
+        ...[ItemEntity, ItemImageEntity, SavedItemEntity, LocationEntity].map(
+          (entity) => ({
+            provide: getRepositoryToken(entity),
+            useValue: ds.getRepository(entity),
+          }),
+        ),
+        { provide: CloudinaryService, useValue: {} },
+        { provide: ItemViewService, useValue: {} },
+        {
+          provide: SearchService,
+          useValue: { record: () => Promise.resolve() },
+        },
+      ],
+    }).compile();
+    service = module.get(ItemService);
 
     const users = ds.getRepository(UserEntity);
     const [alice, bob] = await users.save([
@@ -112,12 +131,14 @@ describeDb('ItemService.findAll on Postgres', () => {
       const saved = await locations.save({ latitude: lat, longitude: lng });
       locationIds[name] = saved.id;
     }
+    // A location row that exists but was saved without coordinates.
+    locationIds.blank = (await locations.save({ label: 'Somewhere' })).id;
 
     // created_at is set afterwards so the order, and one tie, are exact.
     const seed: {
       key: string;
       by: UserEntity;
-      place: keyof typeof PLACES | null;
+      place: keyof typeof PLACES | 'blank' | null;
       category?: string;
       images: number;
       minutesAgo: number;
@@ -181,6 +202,14 @@ describeDb('ItemService.findAll on Postgres', () => {
       },
       { key: 'fiji', by: bob, place: 'fiji', images: 0, minutesAgo: 7 },
       { key: 'arctic', by: bob, place: 'arctic', images: 0, minutesAgo: 8 },
+      { key: 'sweden', by: bob, place: 'sweden', images: 0, minutesAgo: 9 },
+      {
+        key: 'blankCoords',
+        by: alice,
+        place: 'blank',
+        images: 0,
+        minutesAgo: 10,
+      },
     ];
     const now = Date.now();
     for (const row of seed) {
@@ -210,7 +239,8 @@ describeDb('ItemService.findAll on Postgres', () => {
         })),
       );
       ids[row.key] = item.id;
-      coords[row.key] = row.place ? PLACES[row.place] : null;
+      coords[row.key] =
+        row.place && row.place !== 'blank' ? PLACES[row.place] : null;
     }
     ids.alice = alice.id;
     ids.bob = bob.id;
@@ -231,18 +261,20 @@ describeDb('ItemService.findAll on Postgres', () => {
     'osuLamp',
     'fiji',
     'arctic',
+    'sweden',
+    'blankCoords',
   ];
 
   it('walks every visible item once, newest first, across pages', async () => {
     const seen: string[] = [];
     let total = 0;
-    for (let page = 1; page <= 4; page++) {
+    for (let page = 1; page <= 5; page++) {
       const result = await service.findAll({ page, limit: 2 });
       total = result.total!;
       seen.push(...(keysOf(result.data) as string[]));
     }
 
-    expect(total).toBe(7);
+    expect(total).toBe(9);
     expect(new Set(seen).size).toBe(seen.length);
     // noLocation and nullIsland share a created_at; the id decides.
     const [tieFirst, tieSecond] = [ids.noLocation, ids.nullIsland]
@@ -256,6 +288,8 @@ describeDb('ItemService.findAll on Postgres', () => {
       'osuLamp',
       'fiji',
       'arctic',
+      'sweden',
+      'blankCoords',
     ]);
   });
 
@@ -281,6 +315,7 @@ describeDb('ItemService.findAll on Postgres', () => {
     ['near the north pole', { lat: 89.99, lng: 0 }, 50],
     ['more than a quarter of the globe', ACCRA, 15000],
     ['half the globe', ACCRA, 20016],
+    ['high latitude, at the longitude edge', { lat: 60, lng: 0 }, 1000],
   ])('matches the JS haversine from %s', async (_, from, radius) => {
     const result = await service.findAll({
       lat: from.lat,
@@ -289,7 +324,7 @@ describeDb('ItemService.findAll on Postgres', () => {
     });
     const expected = VISIBLE.filter((key) => {
       const at = coords[key];
-      // Items without coordinates are always kept.
+      // Items without coordinates (no location, or a blank one) are kept.
       return (
         !at || haversineKm(from.lat, from.lng, at.lat, at.lng) <= (radius ?? 10)
       );
@@ -300,7 +335,7 @@ describeDb('ItemService.findAll on Postgres', () => {
 
   it('keeps the radius when paging', async () => {
     const result = await service.findAll({ ...ACCRA, page: 1, limit: 2 });
-    expect(result.total).toBe(3); // accraChair, noLocation, osuLamp
+    expect(result.total).toBe(4); // accraChair, noLocation, osuLamp, blankCoords
     expect(keysOf(result.data)).toEqual(['accraChair', 'noLocation']);
   });
 
@@ -321,9 +356,10 @@ describeDb('ItemService.findAll on Postgres', () => {
     const result = await service.findAll();
     const countFor = (key: string) =>
       result.data.find(({ id }) => id === ids[key])!.user!.items_count;
-    // Alice: accraChair, noLocation, osuLamp, hidden (deleted is not counted).
-    expect(countFor('accraChair')).toBe(4);
-    expect(countFor('kumasiTable')).toBe(4);
+    // Alice: accraChair, noLocation, osuLamp, hidden, blankCoords; her
+    // deleted listing is not counted. Bob: the other five.
+    expect(countFor('accraChair')).toBe(5);
+    expect(countFor('kumasiTable')).toBe(5);
   });
 
   it('shows the owner their hidden listing only in their own list', async () => {

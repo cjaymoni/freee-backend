@@ -33,39 +33,42 @@ import {
 } from './item-image-upload.options';
 import { closeActiveRequests } from '../item-request/close-active-requests';
 
+const EARTH_RADIUS_KM = 6371;
+
+/** Slack on each box edge so rounding never drops a point on the boundary. */
+const BOX_SLACK_DEG = 1e-9;
+
 /**
  * Coordinate ranges holding every point within radiusKm of lat/lng, so the
  * locations (latitude, longitude) index can narrow rows before the haversine
  * runs. The longitude range is left out where it would wrap: near a pole
  * and across the antimeridian. Bounds are exact (not the flat-earth
- * approximation), with a hair of slack for rounding.
+ * approximation, which is too narrow away from the equator).
  */
 function boundingBox(
   lat: number,
   lng: number,
   radiusKm: number,
 ): { min_lat: number; max_lat: number; min_lng?: number; max_lng?: number } {
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
   const angular = radiusKm / EARTH_RADIUS_KM;
-  const toDeg = (rad: number) => (rad * 180) / Math.PI + 1e-9;
-  const dLat = toDeg(angular);
+  const dLat = toDeg(angular) + BOX_SLACK_DEG;
   const box = { min_lat: lat - dLat, max_lat: lat + dLat };
   const sinDLng = Math.sin(angular) / Math.cos((lat * Math.PI) / 180);
   if (angular >= Math.PI / 2 || sinDLng >= 1) return box;
-  const dLng = toDeg(Math.asin(sinDLng));
+  const dLng = toDeg(Math.asin(sinDLng)) + BOX_SLACK_DEG;
   if (lng - dLng < -180 || lng + dLng > 180) return box;
   return { ...box, min_lng: lng - dLng, max_lng: lng + dLng };
 }
 
-const EARTH_RADIUS_KM = 6371;
-
 /**
- * Great-circle (haversine) distance in km from :lat/:lng to the joined
- * location. least() keeps rounding from pushing asin() past its domain.
+ * Great-circle (haversine) distance in km from :lat/:lng to the location
+ * aliased `l`. least() keeps rounding from pushing asin() past its domain.
  */
 const HAVERSINE_KM = `${EARTH_RADIUS_KM} * 2 * asin(least(1, sqrt(
-  power(sin(radians(location.latitude - CAST(:lat AS double precision)) / 2), 2) +
-  cos(radians(CAST(:lat AS double precision))) * cos(radians(location.latitude)) *
-  power(sin(radians(location.longitude - CAST(:lng AS double precision)) / 2), 2)
+  power(sin(radians(l.latitude - CAST(:lat AS double precision)) / 2), 2) +
+  cos(radians(CAST(:lat AS double precision))) * cos(radians(l.latitude)) *
+  power(sin(radians(l.longitude - CAST(:lng AS double precision)) / 2), 2)
 )))`;
 
 @Injectable()
@@ -599,12 +602,23 @@ export class ItemService {
       const box = boundingBox(lat, lng, radius);
       const inBox =
         box.min_lng === undefined
-          ? 'location.latitude BETWEEN :min_lat AND :max_lat'
-          : 'location.latitude BETWEEN :min_lat AND :max_lat AND location.longitude BETWEEN :min_lng AND :max_lng';
+          ? 'l.latitude BETWEEN :min_lat AND :max_lat'
+          : 'l.latitude BETWEEN :min_lat AND :max_lat AND l.longitude BETWEEN :min_lng AND :max_lng';
+      const locations = (where: string) =>
+        query
+          .subQuery()
+          .select('l.id')
+          .from(LocationEntity, 'l')
+          .where(where)
+          .getQuery();
       // Items without coordinates stay in: a listing is not left out of
-      // nearby results just because its sharer gave no location.
+      // nearby results just because its sharer gave no location. Each case
+      // is its own subquery, not one OR over the joined row, so Postgres
+      // can serve the nearby one from the locations index.
       query.andWhere(
-        `(location.latitude IS NULL OR location.longitude IS NULL OR (${inBox} AND ${HAVERSINE_KM} <= :radius))`,
+        `(item.location_id IS NULL
+          OR item.location_id IN ${locations('l.latitude IS NULL OR l.longitude IS NULL')}
+          OR item.location_id IN ${locations(`${inBox} AND ${HAVERSINE_KM} <= :radius`)})`,
         { lat, lng, radius, ...box },
       );
     }

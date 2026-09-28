@@ -23,11 +23,16 @@ export class RejectNullBytesPipe implements PipeTransform {
   }
 }
 
+/** Longest path echoed in the error; deep bodies would otherwise echo MBs. */
+const MAX_PATH_LENGTH = 200;
+
 /** A value still to check, linked to its parent to name it if it fails. */
 interface Node {
   value: unknown;
   parent?: Node;
   step: string;
+  /** Its key in the parent object holds a NUL. */
+  badKey?: boolean;
 }
 
 /**
@@ -41,6 +46,9 @@ function findNullByte(root: unknown, rootPath: string): string | undefined {
   while (stack.length) {
     const node = stack.pop()!;
     const { value } = node;
+    // Checked on visit, not on push, so the first NUL in document order is
+    // the one reported.
+    if (node.badKey) return `${pathOf(node.parent!)} key`;
     if (typeof value === 'string') {
       if (value.includes('\u0000')) return pathOf(node);
     } else if (Array.isArray(value)) {
@@ -51,18 +59,26 @@ function findNullByte(root: unknown, rootPath: string): string | undefined {
       const entries = Object.entries(value);
       for (let i = entries.length - 1; i >= 0; i--) {
         const [key, child] = entries[i];
-        if (key.includes('\u0000')) return `${pathOf(node)} key`;
-        stack.push({ value: child, parent: node, step: `.${key}` });
+        stack.push({
+          value: child,
+          parent: node,
+          step: `.${key}`,
+          badKey: key.includes('\u0000'),
+        });
       }
     }
   }
   return undefined;
 }
 
+/** The node's path, cut in the middle if long. */
 function pathOf(node: Node): string {
   const steps: string[] = [];
   for (let at: Node | undefined = node; at; at = at.parent) steps.push(at.step);
-  return steps.reverse().join('');
+  const path = steps.reverse().join('');
+  if (path.length <= MAX_PATH_LENGTH) return path;
+  const half = Math.floor((MAX_PATH_LENGTH - 1) / 2);
+  return `${path.slice(0, half)}…${path.slice(-half)}`;
 }
 
 /**

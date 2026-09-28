@@ -66,4 +66,30 @@ describe('RejectNullBytesPipe edge cases', () => {
       BadRequestException,
     );
   });
+
+  it('keeps the echoed path short however deep the NUL sits', () => {
+    const depth = 10_000;
+    const deep = JSON.parse(
+      '['.repeat(depth) + '"\\u0000"' + ']'.repeat(depth),
+    ) as unknown;
+    let message = '';
+    try {
+      pipe.transform(deep, { type: 'body' });
+    } catch (error) {
+      message = (error as BadRequestException).message;
+    }
+    expect(message).toMatch(/^body\[0\]\[0\].*….*\[0\] must not contain/);
+    expect(message.length).toBeLessThan(260);
+  });
+
+  it('reports the first NUL in document order, keys included', () => {
+    const value = { a: { b: 'x\u0000' }, ['c\u0000']: 1 };
+    expect(() => pipe.transform(value, { type: 'body' })).toThrow(
+      'body.a.b must not contain a NUL character',
+    );
+    const keyFirst = { ['c\u0000']: 1, a: { b: 'x\u0000' } };
+    expect(() => pipe.transform(keyFirst, { type: 'body' })).toThrow(
+      'body key must not contain a NUL character',
+    );
+  });
 });

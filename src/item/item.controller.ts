@@ -51,7 +51,7 @@ import { MAX_PAGE_LIMIT } from '../common/assert-paging';
  * Only the literal "true" or "false". The global ValidationPipe would turn any
  * other text into false, so `is_free=1` would quietly mean "not free".
  */
-function parseBooleanQuery(name: string, value?: string): boolean | undefined {
+function parseBooleanQuery(name: string, value?: unknown): boolean | undefined {
   if (value === undefined) return undefined;
   if (value === 'true') return true;
   if (value === 'false') return false;
@@ -61,17 +61,33 @@ function parseBooleanQuery(name: string, value?: string): boolean | undefined {
 /** Rejects text and blanks, which Number() would make NaN and 0. */
 function parseNumberQuery(
   name: string,
-  value: string | undefined,
+  value: unknown,
   isValid: (n: number) => boolean,
   rule: string,
 ): number | undefined {
   if (value === undefined) return undefined;
-  const parsed = value.trim() === '' ? NaN : Number(value);
+  const parsed =
+    typeof value !== 'string' || value.trim() === '' ? NaN : Number(value);
   if (!Number.isFinite(parsed) || !isValid(parsed)) {
     throw new AppError(new BadRequestException(`${name} must be ${rule}`));
   }
   return parsed;
 }
+
+/** The GET /items filters, each of which takes a single value. */
+const ITEM_LIST_PARAMS = [
+  'user_id',
+  'category_id',
+  'status',
+  'is_featured',
+  'is_free',
+  'lat',
+  'lng',
+  'radius',
+  'query',
+  'page',
+  'limit',
+];
 
 @ApiTags('Items')
 @ApiBearerAuth()
@@ -256,6 +272,18 @@ export class ItemController {
     @Query('limit') limit?: string,
     @Req() request?: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
+    // Express turns a repeated key into an array, which the global pipe
+    // flattens to "a,b": refused, so `query=a&query=b` is not a search for
+    // the text "a,b" and nothing here depends on how the pipe converts it.
+    const repeated = ITEM_LIST_PARAMS.find((name) =>
+      Array.isArray(request?.query[name]),
+    );
+    if (repeated) {
+      throw new AppError(
+        new BadRequestException(`${repeated} must be sent only once`),
+      );
+    }
+
     const parsedPage = page !== undefined ? Number(page) : undefined;
     const parsedLimit = limit !== undefined ? Number(limit) : undefined;
     if (

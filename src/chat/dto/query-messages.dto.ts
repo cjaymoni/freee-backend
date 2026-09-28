@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { MAX_PAGE_LIMIT } from '../../common/assert-paging';
 
 export class QueryMessagesDto {
   @ApiPropertyOptional({
@@ -12,11 +13,11 @@ export class QueryMessagesDto {
   @IsUUID('4', { message: 'before must be a valid message UUID' })
   before?: string;
 
-  @ApiPropertyOptional({ default: 30, minimum: 1, maximum: 100 })
+  @ApiPropertyOptional({ default: 30, minimum: 1, maximum: MAX_PAGE_LIMIT })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(MAX_PAGE_LIMIT)
   limit?: number = 30;
 }
