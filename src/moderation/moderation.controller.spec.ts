@@ -2,6 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ModerationController } from './moderation.controller';
 import { ModerationService } from './moderation.service';
 import { UserRole } from '../user/entities/user.entity';
+import { ReportStatus } from './dto/resolve-report.dto';
+import { ComplaintStatus } from './dto/resolve-complaint.dto';
+
+// A status in both the report and the complaint enums, so every handler
+// below takes it.
+const PENDING = ReportStatus.PENDING as ReportStatus & ComplaintStatus;
 
 describe('ModerationController list scoping', () => {
   let controller: ModerationController;
@@ -31,7 +37,7 @@ describe('ModerationController list scoping', () => {
   ] as const)('%s: staff see everything', async (handler, method) => {
     for (const role of [UserRole.ADMIN, UserRole.MODERATOR]) {
       service[method].mockClear();
-      await controller[handler]('staff-id', role, 'pending');
+      await controller[handler]('staff-id', role, PENDING);
       expect(service[method]).toHaveBeenCalledWith('pending', undefined);
     }
   });

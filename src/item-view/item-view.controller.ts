@@ -11,7 +11,9 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   BadRequestException,
+  DefaultValuePipe,
 } from '@nestjs/common';
+import { assertPaging } from '../common/assert-paging';
 import {
   ApiTags,
   ApiOperation,
@@ -170,14 +172,11 @@ export class ItemViewController {
   })
   async getUserViewHistory(
     @Request() req,
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     const userId = req.user.userId;
-    return await this.itemViewService.getUserViewHistory(
-      userId,
-      Number(page),
-      Number(limit),
-    );
+    assertPaging(page, limit);
+    return await this.itemViewService.getUserViewHistory(userId, page, limit);
   }
 }

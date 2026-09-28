@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
+import { RejectNullBytesPipe } from './common/pipes/reject-null-bytes.pipe';
 import helmet from 'helmet';
 import * as express from 'express';
 
@@ -32,8 +33,10 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Enable validation globally
+  // Enable validation globally. NUL is refused first: Postgres rejects it in
+  // text, so it would otherwise surface as a 500.
   app.useGlobalPipes(
+    new RejectNullBytesPipe(),
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
@@ -60,7 +63,10 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document, {
     customCssUrl: '/api/swagger-ui.css',
-    customJs: ['/api/swagger-ui-bundle.js', '/api/swagger-ui-standalone-preset.js'],
+    customJs: [
+      '/api/swagger-ui-bundle.js',
+      '/api/swagger-ui-standalone-preset.js',
+    ],
   });
   const port = process.env.PORT ?? 3004;
   await app.listen(port, '0.0.0.0');

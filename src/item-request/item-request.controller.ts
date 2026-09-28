@@ -10,7 +10,7 @@ import {
   Request,
   DefaultValuePipe,
   ParseIntPipe,
-  BadRequestException,
+  ParseEnumPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,16 +31,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequestStatus } from './entities/item-request.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { ItemRequestResponseDto } from './dto/item-request-response.dto';
-
-/** page/limit arrive as parsed integers; bad values would reach OFFSET. */
-function assertPaging(page: number, limit: number): void {
-  if (page < 1) {
-    throw new BadRequestException('page must be a positive integer');
-  }
-  if (limit < 1 || limit > 100) {
-    throw new BadRequestException('limit must be between 1 and 100');
-  }
-}
+import { assertPaging } from '../common/assert-paging';
 
 @ApiTags('Item Requests')
 @ApiBearerAuth()
@@ -232,7 +223,8 @@ export class ItemRequestController {
     @Request() req,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('status') status?: RequestStatus,
+    @Query('status', new ParseEnumPipe(RequestStatus, { optional: true }))
+    status?: RequestStatus,
   ) {
     const userId = req.user.userId;
     assertPaging(page, limit);
@@ -276,7 +268,8 @@ export class ItemRequestController {
     @Request() req,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('status') status?: RequestStatus,
+    @Query('status', new ParseEnumPipe(RequestStatus, { optional: true }))
+    status?: RequestStatus,
   ) {
     const ownerId = req.user.userId;
     assertPaging(page, limit);

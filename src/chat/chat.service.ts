@@ -51,6 +51,7 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
+import { escapeLike } from '../common/text-fold';
 
 /** Which side of the canonical pair a user sits on. See ConversationEntity. */
 type PairSide = 'a' | 'b';
@@ -665,7 +666,7 @@ export class ChatService {
       const search = query.search?.trim();
 
       if (search) {
-        const pattern = `%${search}%`;
+        const pattern = `%${escapeLike(search)}%`;
 
         // Which name to match depends on which side of the pair the searcher
         // is on, so each side is spelled out rather than matching both users.

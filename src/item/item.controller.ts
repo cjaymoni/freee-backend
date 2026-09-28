@@ -48,6 +48,32 @@ import { AppError } from '../common/app-error';
 
 const MAX_PAGE_LIMIT = 100;
 
+/**
+ * Only the literal "true" or "false". The global ValidationPipe would turn any
+ * other text into false, so `is_free=1` would quietly mean "not free".
+ */
+function parseBooleanQuery(name: string, value?: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new AppError(new BadRequestException(`${name} must be true or false`));
+}
+
+/** Rejects text and blanks, which Number() would make NaN and 0. */
+function parseNumberQuery(
+  name: string,
+  value: string | undefined,
+  isValid: (n: number) => boolean,
+  rule: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  if (!Number.isFinite(parsed) || !isValid(parsed)) {
+    throw new AppError(new BadRequestException(`${name} must be ${rule}`));
+  }
+  return parsed;
+}
+
 @ApiTags('Items')
 @ApiBearerAuth()
 @Controller('items')
@@ -127,7 +153,8 @@ export class ItemController {
   @ApiQuery({
     name: 'category_id',
     required: false,
-    description: 'Filter by category ID',
+    description:
+      'Filter by category ID. A top-level category also matches its subcategories.',
   })
   @ApiQuery({
     name: 'status',
@@ -139,32 +166,35 @@ export class ItemController {
     name: 'is_featured',
     required: false,
     type: Boolean,
-    description: 'Filter featured items',
+    description: 'Filter featured items (true or false)',
   })
   @ApiQuery({
     name: 'is_free',
     required: false,
     type: Boolean,
-    description: 'Filter free items',
+    description: 'Filter free items (true or false)',
   })
   @ApiQuery({
     name: 'lat',
     required: false,
     type: Number,
-    description: 'Requester latitude for proximity filtering',
+    description:
+      'Requester latitude for proximity filtering (-90 to 90). Send with lng.',
   })
   @ApiQuery({
     name: 'lng',
     required: false,
     type: Number,
-    description: 'Requester longitude for proximity filtering',
+    description:
+      'Requester longitude for proximity filtering (-180 to 180). Send with lat.',
   })
   @ApiQuery({
     name: 'radius',
     required: false,
     type: Number,
     description:
-      'Radius in km (default: 10). Only applied when lat & lng are provided',
+      'Radius in km, greater than 0 (default: 10). Only applied when lat & lng ' +
+      'are provided. Items without coordinates are always included.',
   })
   @ApiQuery({
     name: 'query',
@@ -217,8 +247,8 @@ export class ItemController {
     category_id?: string,
     @Query('status', new ParseEnumPipe(ItemStatus, { optional: true }))
     status?: ItemStatus,
-    @Query('is_featured') is_featured?: boolean,
-    @Query('is_free') is_free?: boolean,
+    @Query('is_featured') is_featured?: string,
+    @Query('is_free') is_free?: string,
     @Query('lat') lat?: string,
     @Query('lng') lng?: string,
     @Query('radius') radius?: string,
@@ -250,15 +280,39 @@ export class ItemController {
       );
     }
 
+    const parsedLat = parseNumberQuery(
+      'lat',
+      lat,
+      (n) => n >= -90 && n <= 90,
+      'a number between -90 and 90',
+    );
+    const parsedLng = parseNumberQuery(
+      'lng',
+      lng,
+      (n) => n >= -180 && n <= 180,
+      'a number between -180 and 180',
+    );
+    const parsedRadius = parseNumberQuery(
+      'radius',
+      radius,
+      (n) => n > 0,
+      'a number of km greater than 0',
+    );
+    if ((parsedLat === undefined) !== (parsedLng === undefined)) {
+      throw new AppError(
+        new BadRequestException('lat and lng must be sent together'),
+      );
+    }
+
     return this.itemService.findAll({
       user_id,
       category_id,
       status,
-      is_featured,
-      is_free,
-      lat: lat !== undefined ? Number(lat) : undefined,
-      lng: lng !== undefined ? Number(lng) : undefined,
-      radius: radius !== undefined ? Number(radius) : undefined,
+      is_featured: parseBooleanQuery('is_featured', is_featured),
+      is_free: parseBooleanQuery('is_free', is_free),
+      lat: parsedLat,
+      lng: parsedLng,
+      radius: parsedRadius,
       viewer_id: viewerId,
       query,
       page: parsedPage,

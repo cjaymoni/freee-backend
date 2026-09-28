@@ -10,7 +10,10 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  DefaultValuePipe,
+  ParseIntPipe,
 } from '@nestjs/common';
+import { assertPaging } from '../common/assert-paging';
 import {
   ApiTags,
   ApiOperation,
@@ -120,15 +123,12 @@ export class SavedItemController {
   })
   async getUserSavedItems(
     @Request() req,
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     const userId = req.user.userId;
-    return await this.savedItemService.getUserSavedItems(
-      userId,
-      Number(page),
-      Number(limit),
-    );
+    assertPaging(page, limit);
+    return await this.savedItemService.getUserSavedItems(userId, page, limit);
   }
 
   @Get('check/:itemId')

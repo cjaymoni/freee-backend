@@ -10,6 +10,7 @@ import { CategoryService } from '../../category/category.service';
 import { ItemViewController } from '../../item-view/item-view.controller';
 import { ItemViewService } from '../../item-view/item-view.service';
 import { AppError } from '../app-error';
+import { RejectNullBytesPipe } from '../pipes/reject-null-bytes.pipe';
 
 /**
  * Malformed ids and enums on public GETs are rejected before they reach
@@ -33,6 +34,7 @@ describe('public GETs with malformed input', () => {
     }).compile();
     app = module.createNestApplication({ logger: false });
     app.useGlobalPipes(
+      new RejectNullBytesPipe(),
       new ValidationPipe({
         whitelist: true,
         forbidNonWhitelisted: true,
@@ -56,6 +58,13 @@ describe('public GETs with malformed input', () => {
     ['/item-views/stats/abc'],
     ['/item-views/stats/11111111-1111-4111-8111-111111111111?days=abc'],
     ['/item-views/stats/11111111-1111-4111-8111-111111111111?days=0'],
+    ['/items?query=chair%00'],
+    ['/items?query=a&query=%00'],
+    ['/categories/slug/x%00'],
+    ['/items?is_free=1'],
+    ['/items?lat=abc&lng=1'],
+    ['/items?lat=1'],
+    ['/items?lat=1&lng=1&radius=0'],
   ])('%s answers 400 without querying', async (path) => {
     const res = await get(path);
 

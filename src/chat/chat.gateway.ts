@@ -1,4 +1,5 @@
 import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import { RejectNullBytesPipe } from '../common/pipes/reject-null-bytes.pipe';
 import {
   ConnectedSocket,
   MessageBody,
@@ -64,6 +65,7 @@ interface JwtPayload {
   },
 })
 @UsePipes(
+  new RejectNullBytesPipe(),
   new ValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: true,

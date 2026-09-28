@@ -22,7 +22,6 @@ import { ItemResponseDto } from './dto/item-response.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UploadImageResponseDto } from '../cloudinary/dto/upload-image-response.dto';
-import { DistanceService } from '../common/distance.service';
 import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
@@ -33,6 +32,16 @@ import {
   isItemImagePublicId,
 } from './item-image-upload.options';
 import { closeActiveRequests } from '../item-request/close-active-requests';
+
+/**
+ * Great-circle (haversine) distance in km from :lat/:lng to the joined
+ * location. least() keeps rounding from pushing asin() past its domain.
+ */
+const HAVERSINE_KM = `6371 * 2 * asin(least(1, sqrt(
+  power(sin(radians(location.latitude - CAST(:lat AS double precision)) / 2), 2) +
+  cos(radians(CAST(:lat AS double precision))) * cos(radians(location.latitude)) *
+  power(sin(radians(location.longitude - CAST(:lng AS double precision)) / 2), 2)
+)))`;
 
 @Injectable()
 export class ItemService {
@@ -46,11 +55,27 @@ export class ItemService {
     @InjectRepository(LocationEntity)
     private readonly locationRepository: Repository<LocationEntity>,
     private readonly cloudinaryService: CloudinaryService,
-    private readonly distanceService: DistanceService,
     private readonly itemViewService: ItemViewService,
     private readonly dataSource: DataSource,
     private readonly searchService: SearchService,
   ) {}
+
+  /** Live listings per sharer, shown as items_count on each item's card. */
+  private async getItemsCountByUser(
+    userIds: string[],
+  ): Promise<Map<string, number>> {
+    const unique = [...new Set(userIds)];
+    if (!unique.length) return new Map();
+    const rows = await this.itemRepository
+      .createQueryBuilder('item')
+      .select('item.user_id', 'user_id')
+      .addSelect('COUNT(*)', 'count')
+      .where('item.user_id IN (:...userIds)', { userIds: unique })
+      .andWhere('item.is_deleted = false')
+      .groupBy('item.user_id')
+      .getRawMany<{ user_id: string; count: string }>();
+    return new Map(rows.map((row) => [row.user_id, Number(row.count)]));
+  }
 
   private async getSavedItemIds(userId?: string): Promise<Set<string>> {
     if (!userId) return new Set();
@@ -485,14 +510,6 @@ export class ItemService {
         'images.is_deleted = :images_deleted',
         { images_deleted: false },
       )
-      .addSelect(
-        (sub) =>
-          sub
-            .select('COUNT(ui.id)', 'count')
-            .from('items', 'ui')
-            .where('ui.user_id = user.id AND ui.is_deleted = false'),
-        'user_items_count',
-      )
       .where('item.is_deleted = :is_deleted', { is_deleted: false });
 
     // Hidden listings are out of the app, except in their owner's own list.
@@ -508,9 +525,11 @@ export class ItemService {
     }
 
     if (filters?.category_id) {
-      query.andWhere('item.category_id = :category_id', {
-        category_id: filters.category_id,
-      });
+      // A top-level category also matches its subcategories.
+      query.andWhere(
+        '(item.category_id = :category_id OR category.parent_category_id = :category_id)',
+        { category_id: filters.category_id },
+      );
     }
 
     if (filters?.status) {
@@ -548,58 +567,46 @@ export class ItemService {
       }
     }
 
-    const { entities, raw } = await query
-      .orderBy('item.created_at', 'DESC')
-      .getRawAndEntities();
-
     const { lat, lng, radius = 10 } = filters ?? {};
-    const savedIds = await this.getSavedItemIds(filters?.viewer_id);
-
-    const filtered =
-      lat !== undefined && lng !== undefined
-        ? entities.filter((e) =>
-            e.location?.latitude && e.location?.longitude
-              ? this.distanceService.isWithinRadius(
-                  lat,
-                  lng,
-                  e.location.latitude,
-                  e.location.longitude,
-                  radius,
-                )
-              : true,
-          )
-        : entities;
-
-    // Keyed by poster rather than by position: the images join yields one
-    // raw row per image, so raw[i] is not the row for entities[i].
-    const itemsCountByUser = new Map<string, number>();
-    const rows = raw as { item_user_id: string; user_items_count: string }[];
-    for (const row of rows) {
-      itemsCountByUser.set(row.item_user_id, Number(row.user_items_count ?? 0));
+    if (lat !== undefined && lng !== undefined) {
+      // Items without coordinates stay in: a listing is not left out of
+      // nearby results just because its sharer gave no location.
+      query.andWhere(
+        `(location.latitude IS NULL OR location.longitude IS NULL OR ${HAVERSINE_KM} <= :radius)`,
+        { lat, lng, radius },
+      );
     }
-    filtered.forEach((entity) => {
+
+    // Paged in SQL, after every filter, so total and each page only count
+    // matching items. skip/take rather than offset/limit: TypeORM then pages
+    // on distinct listings, which the images join would otherwise multiply.
+    // The id breaks created_at ties so no item repeats or drops across pages.
+    const paginate =
+      filters?.page !== undefined || filters?.limit !== undefined;
+    const page = filters?.page ?? 1;
+    const limit = filters?.limit ?? 20;
+    query.orderBy('item.created_at', 'DESC').addOrderBy('item.id', 'DESC');
+    if (paginate) query.skip((page - 1) * limit).take(limit);
+
+    const [pageItems, total] = await query.getManyAndCount();
+
+    const [savedIds, itemsCountByUser] = await Promise.all([
+      this.getSavedItemIds(filters?.viewer_id),
+      this.getItemsCountByUser(pageItems.map((item) => item.user_id)),
+    ]);
+    pageItems.forEach((entity) => {
       if (entity.user) {
         (entity.user as any).items_count =
           itemsCountByUser.get(entity.user_id) ?? 0;
       }
     });
 
-    // Paged after the distance filter, which runs here rather than in SQL, so
-    // total and every page only ever count items inside the radius.
-    const paginate =
-      filters?.page !== undefined || filters?.limit !== undefined;
-    const page = filters?.page ?? 1;
-    const limit = filters?.limit ?? 20;
-    const pageItems = paginate
-      ? filtered.slice((page - 1) * limit, page * limit)
-      : filtered;
-
     return {
       message: 'Items retrieved successfully',
       data: pageItems.map((item) =>
         ItemResponseDto.fromEntity(item, savedIds.has(item.id)),
       ),
-      total: filtered.length,
+      total,
       ...(paginate ? { page, limit } : {}),
       state: true,
       statusCode: 200,
