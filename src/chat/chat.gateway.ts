@@ -1,5 +1,5 @@
-import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
-import { RejectNullBytesPipe } from '../common/pipes/reject-null-bytes.pipe';
+import { Logger, UseFilters, UsePipes } from '@nestjs/common';
+import { createGlobalPipes } from '../app-setup';
 import {
   ConnectedSocket,
   MessageBody,
@@ -64,14 +64,8 @@ interface JwtPayload {
     credentials: true,
   },
 })
-@UsePipes(
-  new RejectNullBytesPipe(),
-  new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-  }),
-)
+// Gateways don't get global pipes, so the same ones are applied here.
+@UsePipes(...createGlobalPipes())
 @UseFilters(new WsHttpExceptionFilter())
 export class ChatGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect

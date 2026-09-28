@@ -10,7 +10,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { Server } from 'http';
 import { AddressInfo } from 'net';
 import { io, Socket as ClientSocket } from 'socket.io-client';
-import { CHAT_NAMESPACE, ChatClientEvents } from './chat.constants';
+import { CHAT_NAMESPACE, ChatClientEvents, ChatEvents } from './chat.constants';
 
 describe('ChatGateway presence', () => {
   let realtime: ChatRealtimeService;
@@ -92,6 +92,11 @@ describe('ChatGateway payloads over a real socket', () => {
   let app: INestApplication;
   let client: ClientSocket;
   const sendMessage = jest.fn().mockResolvedValue({ state: true });
+  // pushUnreadCount is the last step of handleConnection: once it runs, the
+  // server has authenticated the socket, which the client's own 'connect'
+  // event does not promise.
+  let serverReady!: () => void;
+  const authenticated = new Promise<void>((resolve) => (serverReady = resolve));
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -103,7 +108,10 @@ describe('ChatGateway payloads over a real socket', () => {
           useValue: {
             sendMessage,
             broadcastPresence: jest.fn(),
-            pushUnreadCount: jest.fn(),
+            pushUnreadCount: jest.fn(() => {
+              serverReady();
+              return Promise.resolve();
+            }),
           },
         },
         {
@@ -133,7 +141,21 @@ describe('ChatGateway payloads over a real socket', () => {
       auth: { token: 't' },
       transports: ['websocket'],
     });
-    await new Promise<void>((resolve) => client.on('connect', resolve));
+    // A refused handshake fails here at once instead of at Jest's timeout:
+    // the gateway accepts the connection, then emits its error and drops it.
+    let refuse!: (why: unknown) => void;
+    const refused = new Promise<never>((_, reject) => {
+      refuse = (why) =>
+        reject(new Error(`chat socket refused: ${JSON.stringify(why)}`));
+    });
+    const refusals = ['connect_error', ChatEvents.ERROR, 'disconnect'];
+    refusals.forEach((event) => client.once(event, refuse));
+    try {
+      await Promise.race([authenticated, refused]);
+    } finally {
+      // Detached so the disconnect in afterAll is not taken as a refusal.
+      refusals.forEach((event) => client.off(event, refuse));
+    }
   });
 
   afterAll(async () => {

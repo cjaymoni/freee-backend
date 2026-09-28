@@ -10,6 +10,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * IF NOT EXISTS because a database synchronised from the entities already
  * has it under this name.
+ *
+ * Not CONCURRENTLY: migrations run in a transaction at boot, and locations
+ * is small (one row in the deployed database when this was written), so the
+ * brief write lock while it builds costs nothing. Revisit if that changes.
  */
 export class AddLocationsMissingCoordinatesIndex1795000000000 implements MigrationInterface {
   name = 'AddLocationsMissingCoordinatesIndex1795000000000';

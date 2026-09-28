@@ -46,6 +46,7 @@ import { ServiceResponseDto } from '../common/service-response.dto';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AppError } from '../common/app-error';
 import { MAX_PAGE_LIMIT } from '../common/assert-paging';
+import { SingleValueQuery } from '../common/guards/single-value-query.guard';
 
 /**
  * Only the literal "true" or "false". The global ValidationPipe would turn any
@@ -75,7 +76,7 @@ function parseNumberQuery(
 }
 
 /** The GET /items filters, each of which takes a single value. */
-const ITEM_LIST_PARAMS = [
+const ITEM_LIST_PARAMS: readonly string[] = [
   'user_id',
   'category_id',
   'status',
@@ -158,7 +159,8 @@ export class ItemController {
   }
 
   @Get()
-  @UseGuards(OptionalJwtAuthGuard)
+  // A repeated filter is refused before any pipe reads it.
+  @UseGuards(OptionalJwtAuthGuard, SingleValueQuery(ITEM_LIST_PARAMS))
   @ApiOperation({ summary: 'Get all items with optional filters' })
   @ApiQuery({
     name: 'user_id',
@@ -272,18 +274,6 @@ export class ItemController {
     @Query('limit') limit?: string,
     @Req() request?: Request,
   ): Promise<ServiceResponseDto<ItemResponseDto[]>> {
-    // Express turns a repeated key into an array, which the global pipe
-    // flattens to "a,b": refused, so `query=a&query=b` is not a search for
-    // the text "a,b" and nothing here depends on how the pipe converts it.
-    const repeated = ITEM_LIST_PARAMS.find((name) =>
-      Array.isArray(request?.query[name]),
-    );
-    if (repeated) {
-      throw new AppError(
-        new BadRequestException(`${repeated} must be sent only once`),
-      );
-    }
-
     const parsedPage = page !== undefined ? Number(page) : undefined;
     const parsedLimit = limit !== undefined ? Number(limit) : undefined;
     if (

@@ -6,6 +6,8 @@ import { UserActivityService } from '../audit/user-activity.service';
 import { ItemController } from './item.controller';
 import { ItemService } from './item.service';
 
+const UUID = '11111111-1111-4111-8111-111111111111';
+
 /** GET /items query parsing, over HTTP with the app's global pipes. */
 describe('GET /items query parsing', () => {
   let app: INestApplication;
@@ -59,6 +61,13 @@ describe('GET /items query parsing', () => {
     ['lat=1&lat=2&lng=1', 'lat must be sent only once'],
     ['query=a&query=b', 'query must be sent only once'],
     ['page=1&page=2', 'page must be sent only once'],
+    // Reach the check before ParseUUIDPipe/ParseEnumPipe would reject them.
+    [`user_id=${UUID}&user_id=${UUID}`, 'user_id must be sent only once'],
+    [
+      `category_id=${UUID}&category_id=${UUID}`,
+      'category_id must be sent only once',
+    ],
+    ['status=available&status=available', 'status must be sent only once'],
     ['lat=1&lng=1&radius=0', 'radius must be a number of km greater than 0'],
     ['lat=1&lng=1&radius=-5', 'radius must be a number of km greater than 0'],
     ['lat=1&lng=1&radius=far', 'radius must be a number of km greater than 0'],

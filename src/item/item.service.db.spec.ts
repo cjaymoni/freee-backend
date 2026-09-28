@@ -27,20 +27,22 @@ import { SearchService } from '../search/search.service';
  *   TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/freee_test \
  *     npx jest item.service.db
  * The schema is dropped and rebuilt from the entities on every run, so the
- * run refuses any database that is not local or named *_test.
+ * run refuses any database not named *_test.
  */
 const url = process.env.TEST_DATABASE_URL;
 const describeDb = url ? describe : describe.skip;
 
-/** Throws unless the URL is plainly a throwaway database. */
+/**
+ * Throws unless the URL names a *_test database. The host alone is not
+ * enough: a localhost port can be a tunnel to a real database.
+ */
 function assertDisposable(databaseUrl: string): void {
   const { hostname, pathname } = new URL(databaseUrl);
-  const local = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
   const database = decodeURIComponent(pathname.replace(/^\//, ''));
-  if (!local && !database.endsWith('_test')) {
+  if (!database.endsWith('_test')) {
     throw new Error(
       `Refusing to drop the schema of ${hostname}/${database}: ` +
-        'TEST_DATABASE_URL must be on localhost or name a *_test database.',
+        'TEST_DATABASE_URL must name a *_test database.',
     );
   }
 }
