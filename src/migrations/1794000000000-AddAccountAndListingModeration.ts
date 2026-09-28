@@ -3,10 +3,12 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 /**
  * Account status on users and moderation status on items.
  *
- * Idempotent: a database once run with `synchronize` (any NODE_ENV other
- * than production) already has these types, columns and indexes from the
- * entities, without this migration recorded. Every step is skipped if it is
- * already there, so the migration can be recorded on such a database too.
+ * Safe to run on a database once synchronised from the entities, which
+ * TypeORM does when NODE_ENV is not production and no DATABASE_URL is set.
+ * Such a database already has these types, columns and indexes without this
+ * migration recorded. The schema steps are skipped when their object exists
+ * (as-is: an existing type or column is not compared with this definition),
+ * and the status backfill only touches rows still at the default 'active'.
  */
 export class AddAccountAndListingModeration1794000000000 implements MigrationInterface {
   name = 'AddAccountAndListingModeration1794000000000';
