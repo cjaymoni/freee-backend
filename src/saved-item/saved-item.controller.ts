@@ -13,7 +13,7 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
 } from '@nestjs/common';
-import { assertPaging } from '../common/assert-paging';
+import { assertPaging, MAX_PAGE_LIMIT } from '../common/assert-paging';
 import {
   ApiTags,
   ApiOperation,
@@ -96,8 +96,21 @@ export class SavedItemController {
 
   @Get()
   @ApiOperation({ summary: 'Get all saved items for the authenticated user' })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    minimum: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    minimum: 1,
+    maximum: MAX_PAGE_LIMIT,
+  })
   @ApiResponse({
     status: 200,
     description: 'Saved items retrieved successfully',

@@ -4,6 +4,10 @@ import { ChatGateway } from './chat.gateway';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ChatService } from './chat.service';
 import { AuthService } from '../auth/auth.service';
+import { PIPES_METADATA } from '@nestjs/common/constants';
+import { ParamsTokenFactory } from '@nestjs/core/pipes/params-token-factory';
+import { WsParamtype } from '@nestjs/websockets/enums/ws-paramtype.enum';
+import { RejectNullBytesPipe } from '../common/pipes/reject-null-bytes.pipe';
 
 describe('ChatGateway presence', () => {
   let realtime: ChatRealtimeService;
@@ -78,5 +82,22 @@ describe('ChatGateway presence', () => {
     client.connected = false;
     await gateway.handleDisconnect(client as never);
     expect(realtime.isOnline('u1')).toBe(false);
+  });
+});
+
+describe('ChatGateway payload pipes', () => {
+  const pipes = Reflect.getMetadata(PIPES_METADATA, ChatGateway) as unknown[];
+
+  it('refuses NUL in a socket payload before validating it', () => {
+    expect(pipes[0]).toBeInstanceOf(RejectNullBytesPipe);
+  });
+
+  it('hands @MessageBody payloads to pipes as the body', () => {
+    // So the pipe checks them: it skips only 'custom' arguments.
+    expect(
+      new ParamsTokenFactory().exchangeEnumForString(
+        WsParamtype.PAYLOAD as number,
+      ),
+    ).toBe('body');
   });
 });

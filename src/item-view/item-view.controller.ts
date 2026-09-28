@@ -13,7 +13,7 @@ import {
   BadRequestException,
   DefaultValuePipe,
 } from '@nestjs/common';
-import { assertPaging } from '../common/assert-paging';
+import { assertPaging, MAX_PAGE_LIMIT } from '../common/assert-paging';
 import {
   ApiTags,
   ApiOperation,
@@ -145,8 +145,21 @@ export class ItemViewController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get viewing history for authenticated user' })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    minimum: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    minimum: 1,
+    maximum: MAX_PAGE_LIMIT,
+  })
   @ApiResponse({
     status: 200,
     description: 'View history retrieved successfully',

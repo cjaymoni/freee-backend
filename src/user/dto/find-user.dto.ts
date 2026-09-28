@@ -6,11 +6,8 @@ import {
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional } from 'class-validator';
 import { PaginationDto } from 'src/common/pagination.dto';
+import { toBoolean } from 'src/common/to-boolean';
 import { BaseUserDto } from './base-user.dto';
-
-/** Query strings arrive as text, so map "true"/"false" onto booleans. */
-const toBoolean = ({ value }: { value: unknown }) =>
-  value === 'true' ? true : value === 'false' ? false : value;
 
 /**
  * Exact-match filters for the staff user list. Only profile fields are

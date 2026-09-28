@@ -105,7 +105,8 @@ export class AdminItemsService {
     // skip/take rather than offset/limit: TypeORM then pages on distinct
     // listings, which the images join would otherwise multiply.
     const [rows, total] = await qb
-      .orderBy('item.created_at', 'DESC')
+      .orderBy('item.created_at', query.order ?? 'DESC')
+      .addOrderBy('item.id', query.order ?? 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();

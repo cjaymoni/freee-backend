@@ -1489,7 +1489,7 @@ describe('ItemService', () => {
         await service.findAll({ lat: 5.6037, lng: -0.187 });
         const [sql, params] = radiusFilter()!;
         expect(sql).toContain('asin(');
-        expect(params).toEqual({ lat: 5.6037, lng: -0.187, radius: 10 });
+        expect(params).toMatchObject({ lat: 5.6037, lng: -0.187, radius: 10 });
       });
 
       it('uses the requested radius', async () => {

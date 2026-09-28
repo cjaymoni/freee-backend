@@ -34,10 +34,35 @@ import {
 import { closeActiveRequests } from '../item-request/close-active-requests';
 
 /**
+ * Coordinate ranges holding every point within radiusKm of lat/lng, so the
+ * locations (latitude, longitude) index can narrow rows before the haversine
+ * runs. The longitude range is left out where it would wrap: near a pole
+ * and across the antimeridian. Bounds are exact (not the flat-earth
+ * approximation), with a hair of slack for rounding.
+ */
+function boundingBox(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+): { min_lat: number; max_lat: number; min_lng?: number; max_lng?: number } {
+  const angular = radiusKm / EARTH_RADIUS_KM;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI + 1e-9;
+  const dLat = toDeg(angular);
+  const box = { min_lat: lat - dLat, max_lat: lat + dLat };
+  const sinDLng = Math.sin(angular) / Math.cos((lat * Math.PI) / 180);
+  if (angular >= Math.PI / 2 || sinDLng >= 1) return box;
+  const dLng = toDeg(Math.asin(sinDLng));
+  if (lng - dLng < -180 || lng + dLng > 180) return box;
+  return { ...box, min_lng: lng - dLng, max_lng: lng + dLng };
+}
+
+const EARTH_RADIUS_KM = 6371;
+
+/**
  * Great-circle (haversine) distance in km from :lat/:lng to the joined
  * location. least() keeps rounding from pushing asin() past its domain.
  */
-const HAVERSINE_KM = `6371 * 2 * asin(least(1, sqrt(
+const HAVERSINE_KM = `${EARTH_RADIUS_KM} * 2 * asin(least(1, sqrt(
   power(sin(radians(location.latitude - CAST(:lat AS double precision)) / 2), 2) +
   cos(radians(CAST(:lat AS double precision))) * cos(radians(location.latitude)) *
   power(sin(radians(location.longitude - CAST(:lng AS double precision)) / 2), 2)
@@ -525,7 +550,9 @@ export class ItemService {
     }
 
     if (filters?.category_id) {
-      // A top-level category also matches its subcategories.
+      // A top-level category also matches its subcategories. Only live ones:
+      // the join drops deleted categories, so an item left in a deleted
+      // subcategory no longer counts towards its parent.
       query.andWhere(
         '(item.category_id = :category_id OR category.parent_category_id = :category_id)',
         { category_id: filters.category_id },
@@ -569,11 +596,16 @@ export class ItemService {
 
     const { lat, lng, radius = 10 } = filters ?? {};
     if (lat !== undefined && lng !== undefined) {
+      const box = boundingBox(lat, lng, radius);
+      const inBox =
+        box.min_lng === undefined
+          ? 'location.latitude BETWEEN :min_lat AND :max_lat'
+          : 'location.latitude BETWEEN :min_lat AND :max_lat AND location.longitude BETWEEN :min_lng AND :max_lng';
       // Items without coordinates stay in: a listing is not left out of
       // nearby results just because its sharer gave no location.
       query.andWhere(
-        `(location.latitude IS NULL OR location.longitude IS NULL OR ${HAVERSINE_KM} <= :radius)`,
-        { lat, lng, radius },
+        `(location.latitude IS NULL OR location.longitude IS NULL OR (${inBox} AND ${HAVERSINE_KM} <= :radius))`,
+        { lat, lng, radius, ...box },
       );
     }
 

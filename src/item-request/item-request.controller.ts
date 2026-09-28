@@ -31,7 +31,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequestStatus } from './entities/item-request.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { ItemRequestResponseDto } from './dto/item-request-response.dto';
-import { assertPaging } from '../common/assert-paging';
+import { assertPaging, MAX_PAGE_LIMIT } from '../common/assert-paging';
 
 @ApiTags('Item Requests')
 @ApiBearerAuth()
@@ -188,8 +188,21 @@ export class ItemRequestController {
 
   @Get('my-requests')
   @ApiOperation({ summary: 'Get all requests made by the authenticated user' })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    minimum: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    minimum: 1,
+    maximum: MAX_PAGE_LIMIT,
+  })
   @ApiQuery({
     name: 'status',
     required: false,
@@ -233,8 +246,21 @@ export class ItemRequestController {
 
   @Get('received')
   @ApiOperation({ summary: 'Get all requests received for your items' })
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    minimum: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    minimum: 1,
+    maximum: MAX_PAGE_LIMIT,
+  })
   @ApiQuery({
     name: 'status',
     required: false,

@@ -45,8 +45,7 @@ import { UserActivityService } from '../audit/user-activity.service';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AppError } from '../common/app-error';
-
-const MAX_PAGE_LIMIT = 100;
+import { MAX_PAGE_LIMIT } from '../common/assert-paging';
 
 /**
  * Only the literal "true" or "false". The global ValidationPipe would turn any

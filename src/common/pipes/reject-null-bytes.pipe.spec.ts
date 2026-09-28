@@ -32,3 +32,38 @@ describe('RejectNullBytesPipe', () => {
     expect(pipe.transform('\u0000', { type: 'custom' })).toBe('\u0000');
   });
 });
+
+describe('RejectNullBytesPipe edge cases', () => {
+  const pipe = new RejectNullBytesPipe();
+
+  it('checks route params', () => {
+    expect(() =>
+      pipe.transform('abc\u0000', { type: 'param', data: 'id' }),
+    ).toThrow(new BadRequestException('id must not contain a NUL character'));
+  });
+
+  it('leaves buffers and class instances untouched', () => {
+    const buffer = Buffer.from('a\u0000b');
+    class Upload {
+      name = 'x\u0000';
+    }
+    const upload = new Upload();
+    expect(pipe.transform(buffer, { type: 'body' })).toBe(buffer);
+    expect(pipe.transform({ file: upload }, { type: 'body' })).toEqual({
+      file: upload,
+    });
+  });
+
+  it('walks a very deeply nested body without overflowing the stack', () => {
+    const depth = 200_000;
+    const deep = JSON.parse(
+      '['.repeat(depth) + '"\\u0000"' + ']'.repeat(depth),
+    ) as unknown;
+    const ok = JSON.parse('['.repeat(depth) + ']'.repeat(depth)) as unknown;
+
+    expect(() => pipe.transform(ok, { type: 'body' })).not.toThrow();
+    expect(() => pipe.transform(deep, { type: 'body' })).toThrow(
+      BadRequestException,
+    );
+  });
+});

@@ -23,27 +23,54 @@ export class RejectNullBytesPipe implements PipeTransform {
   }
 }
 
-/** Path to the first string holding a NUL, in parsed JSON or a query. */
-function findNullByte(value: unknown, path: string): string | undefined {
-  if (typeof value === 'string') {
-    return value.includes('\u0000') ? path : undefined;
-  }
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const found = findNullByte(value[i], `${path}[${i}]`);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  // Only plain objects: files and other class instances are not client text.
-  // Express parses query strings into objects with no prototype at all.
-  const proto: unknown = value ? Object.getPrototypeOf(value) : undefined;
-  if (value && (proto === Object.prototype || proto === null)) {
-    for (const [key, child] of Object.entries(value)) {
-      if (key.includes('\u0000')) return `${path} key`;
-      const found = findNullByte(child, `${path}.${key}`);
-      if (found !== undefined) return found;
+/** A value still to check, linked to its parent to name it if it fails. */
+interface Node {
+  value: unknown;
+  parent?: Node;
+  step: string;
+}
+
+/**
+ * Path to the first string holding a NUL, in parsed JSON or a query. Walks
+ * with its own stack rather than recursion, and only spells out a path once
+ * something fails, so a deeply nested body costs linear time and memory
+ * instead of overflowing the call stack and surfacing as a 500.
+ */
+function findNullByte(root: unknown, rootPath: string): string | undefined {
+  const stack: Node[] = [{ value: root, step: rootPath }];
+  while (stack.length) {
+    const node = stack.pop()!;
+    const { value } = node;
+    if (typeof value === 'string') {
+      if (value.includes('\u0000')) return pathOf(node);
+    } else if (Array.isArray(value)) {
+      for (let i = value.length - 1; i >= 0; i--) {
+        stack.push({ value: value[i], parent: node, step: `[${i}]` });
+      }
+    } else if (isPlainObject(value)) {
+      const entries = Object.entries(value);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [key, child] = entries[i];
+        if (key.includes('\u0000')) return `${pathOf(node)} key`;
+        stack.push({ value: child, parent: node, step: `.${key}` });
+      }
     }
   }
   return undefined;
+}
+
+function pathOf(node: Node): string {
+  const steps: string[] = [];
+  for (let at: Node | undefined = node; at; at = at.parent) steps.push(at.step);
+  return steps.reverse().join('');
+}
+
+/**
+ * Only plain objects: files and other class instances are not client text.
+ * Express parses query strings into objects with no prototype at all.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
