@@ -75,7 +75,10 @@ function parseNumberQuery(
   return parsed;
 }
 
-/** The GET /items filters, each of which takes a single value. */
+/**
+ * The GET /items filters, each of which takes a single value. Add every new
+ * @Query name in findAll here, or a repeat of it goes unchecked.
+ */
 const ITEM_LIST_PARAMS: readonly string[] = [
   'user_id',
   'category_id',

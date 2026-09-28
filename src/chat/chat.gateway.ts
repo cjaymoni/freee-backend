@@ -1,5 +1,5 @@
 import { Logger, UseFilters, UsePipes } from '@nestjs/common';
-import { createGlobalPipes } from '../app-setup';
+import { createGlobalPipes } from '../common/pipes/global-pipes';
 import {
   ConnectedSocket,
   MessageBody,
