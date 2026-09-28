@@ -24,8 +24,8 @@ import { SearchService } from '../search/search.service';
  * Runs only when TEST_DATABASE_URL names a disposable database, e.g.
  *   docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=test \
  *     -e POSTGRES_DB=freee_test postgres:16-alpine
- *   TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/freee_test \
- *     npx jest item.service.db
+ * then point TEST_DATABASE_URL at it (user postgres, password test, host
+ * localhost:55432, database freee_test) and run `npx jest item.service.db`.
  * The schema is dropped and rebuilt from the entities on every run, so the
  * run refuses any database not named *_test.
  */
