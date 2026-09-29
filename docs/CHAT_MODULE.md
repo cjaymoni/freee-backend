@@ -200,21 +200,27 @@ that doesn't have the app open in front of them, with `data.type = "chat_message
 (`chat_messages`, or `item_requests` for request cards) for deep-linking.
 
 **Devices.** Send the FCM token as `fcm_token` in the login request
-(`POST /auth/login`, `/auth/firebase-login` or `/firebase-auth/authenticate`), and again with
-`PATCH /users/fcm-token` whenever FCM rotates it. It is stored on the session
-the request is signed in with, so every signed-in device gets pushes, until
-it signs out (or the account is banned, or its password reset). An idle
-device keeps getting them for 90 days after the app was last opened.
+(`POST /auth/login`, `/auth/firebase-login` or `/firebase-auth/authenticate`),
+and again with `PATCH /user/fcm-token` whenever FCM rotates it
+(`onTokenRefresh`). It is stored on the session the request is signed in
+with, so every signed-in device gets pushes, until it signs out (or the
+account is banned, or its password reset). An idle device keeps getting them
+for 90 days after the app was last opened.
 
 > **Required of every mobile build:** send `fcm_token` with every login, and
-> call `PATCH /users/fcm-token` on every app launch. A login without the token
-> starts a session with none, so a phone that had to sign in again (after a
-> week unopened, when its refresh token lapsed) keeps being pushed only
-> through its previous session, and that stops 90 days on. The launch call
-> repairs it every time. Sending the token at login is also what moves a
-> phone from one account to the next when the old sign-out never reached the
-> server. `DELETE /users/fcm-token` stops them on this
-device without signing out. Tokens FCM reports dead are forgotten.
+> call `PATCH /user/fcm-token` on every app launch (after any refresh or
+> login the launch needs) and whenever FCM rotates the token. A 401 from it
+> means the session is over: sign in again, sending `fcm_token`.
+>
+> Why: a login without the token starts a session with none. A phone that
+> had to sign in again (after a week unopened, when its refresh token lapsed)
+> is then pushed only through its previous session, and that stops 90 days
+> after the app was last opened before that sign-in. The launch call repairs
+> it every time. Sending the token at login is also what moves a phone from
+> one account to the next when the old sign-out never reached the server.
+
+`DELETE /user/fcm-token` stops pushes on this device without signing out.
+Tokens FCM reports dead are forgotten.
 
 **Background.** A socket counts as "in front of the user" until the app sends
 `app:state` `{ state: 'background' }`. Send it when the app goes to the
@@ -226,7 +232,7 @@ such as a phone while a web tab is open, still get the push.
 **Settings.** `notification_enabled` on the user turns pushes off; the keys in
 `notification_settings` (`push`, `email`, and per kind `chat_messages`,
 `item_requests`, `listings`, `account`) turn off a channel or a kind. See
-`PATCH /user-preferences/notifications`.
+`PATCH /user/preferences/notifications`.
 
 Account and listing notices (suspension, ban, reinstatement, a complaint's
 final answer;

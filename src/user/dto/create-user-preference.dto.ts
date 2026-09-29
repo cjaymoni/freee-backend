@@ -24,7 +24,7 @@ export class CreateUserPreferenceDto {
     description:
       'Booleans; a missing key means on. Channels: push, email. Kinds: ' +
       'chat_messages, item_requests, listings, account. See PATCH ' +
-      '/user-preferences/notifications.',
+      '/user/preferences/notifications.',
     example: { push: true, email: true, chat_messages: true },
   })
   @IsOptional()

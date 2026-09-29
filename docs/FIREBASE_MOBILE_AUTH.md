@@ -309,7 +309,7 @@ The `access_token` expires in **15 minutes**. When you get a `401` response, use
 
 After a successful login, send the device's FCM token to the backend so it can send push notifications.
 
-**`PATCH /users/fcm-token`**
+**`PATCH /user/fcm-token`**
 
 ```json
 // Request body
@@ -344,4 +344,4 @@ Refresh and re-send the FCM token whenever `FirebaseMessaging.getInstance().toke
 - [ ] Store `access_token` in memory, `refresh_token` in secure storage (Keystore / Keychain)
 - [ ] Attach `Authorization: Bearer <access_token>` to all API requests
 - [ ] On `401`, call `POST /auth/refresh` to get a new token pair
-- [ ] After login, send the FCM device token via `PATCH /users/fcm-token`
+- [ ] After login, send the FCM device token via `PATCH /user/fcm-token`

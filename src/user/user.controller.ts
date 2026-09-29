@@ -294,8 +294,9 @@ export class UserController {
     description:
       'Attaches the FCM token to the session the request is signed in with. ' +
       'Every signed-in device gets pushes; signing out stops them for that ' +
-      'device. Mobile clients must call it on every app launch (and send ' +
-      'fcm_token with every login); see docs/CHAT_MODULE.md.',
+      'device. Mobile clients must call it on every app launch and whenever ' +
+      'FCM rotates the token (onTokenRefresh), and send fcm_token with every ' +
+      'login; a 401 means sign in again. See docs/CHAT_MODULE.md.',
   })
   @ApiResponse({
     status: 200,
@@ -430,7 +431,7 @@ export class UserController {
     @GetUser('sessionToken') sessionToken: string,
   ) {
     // A device token belongs to the session that sent it, not the profile:
-    // registered like PATCH /users/fcm-token, and never stored on the user.
+    // registered like PATCH /user/fcm-token, and never stored on the user.
     const { fcm_token: fcmToken, ...profile } = updateUserDto;
     updateUserDto = profile;
     if (fcmToken !== undefined && id === requesterId) {

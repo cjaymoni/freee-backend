@@ -18,8 +18,8 @@ describe('FCM token validation', () => {
   const login = { email: 'ama@gmail.com', password: 'secret1' };
 
   it.each([
-    ['PATCH /users/fcm-token', UpdateFcmTokenDto, {}],
-    ['PATCH /users/:id', UpdateUserDto, {}],
+    ['PATCH /user/fcm-token', UpdateFcmTokenDto, {}],
+    ['PATCH /user/:id', UpdateUserDto, {}],
     ['a password login', LoginDto, login],
     ['a Firebase login', FirebaseAuthDto, { idToken: 'id' }],
   ])('rejects an empty or oversized token in %s', async (_, dto, rest) => {
