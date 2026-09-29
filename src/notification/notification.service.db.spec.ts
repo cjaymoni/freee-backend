@@ -98,7 +98,7 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       [new Date(Date.now() - hours * HOUR), sessionToken],
     );
 
-  it('pushes to every device not signed out, however long idle', async () => {
+  it('pushes to every device not signed out, even one idle for weeks', async () => {
     await session(ama, 'ama-phone');
     await session(ama, 'ama-tablet');
     await service.registerDevice(ama.id, 'ama-phone', 'fcm-phone');
@@ -107,12 +107,16 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       is_active: false,
       fcm_token: 'fcm-signed-out',
     });
-    // Unopened for weeks: its refresh token ran out, but it never signed out.
+    // Unopened for a month: its refresh token ran out, but it never signed out.
     await session(ama, 'ama-idle', {
-      refresh_token_expires_at: new Date(Date.now() - 30 * 24 * HOUR),
+      refresh_token_expires_at: new Date(Date.now() - 23 * 24 * HOUR),
       expires_at: new Date(Date.now() - 30 * 24 * HOUR),
       fcm_token: 'fcm-idle',
     });
+    await createdHoursAgo('ama-idle', 30 * 24);
+    // Past the backstop: probably no longer this account's phone.
+    await session(ama, 'ama-abandoned', { fcm_token: 'fcm-abandoned' });
+    await createdHoursAgo('ama-abandoned', 100 * 24);
 
     expect(await pushedTo(ama.id)).toEqual([
       'fcm-idle',
@@ -236,6 +240,20 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
 
       expect(await tokenOf('yaw-phone')).toBe('fcm-shared');
       expect(await tokenOf('esi-phone')).toBeNull();
+    });
+
+    it('skips legacy tokens a session could not hold', async () => {
+      const [kwame, adwoa] = await ds.getRepository(UserEntity).save([
+        { email: 'kwame@example.com', fcm_token: '' },
+        { email: 'adwoa@example.com', fcm_token: 'x'.repeat(300) },
+      ]);
+      await session(kwame, 'kwame-phone');
+      await session(adwoa, 'adwoa-phone');
+
+      await run();
+
+      expect(await tokenOf('kwame-phone')).toBeNull();
+      expect(await tokenOf('adwoa-phone')).toBeNull();
     });
 
     it('leaves a token alone that a session already holds', async () => {

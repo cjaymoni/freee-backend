@@ -8,7 +8,12 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * has not ended, so installs that registered before this keep getting pushes
  * until the app registers again. A token already on a session is left
  * there, and a token two users shared (one phone, two accounts) goes only to
- * the most recent of their sessions. users.fcm_token is left in place, unused.
+ * the most recent of their sessions. Empty or over-long values are skipped.
+ * users.fcm_token is left in place, unused.
+ *
+ * The latest session may be a browser's, since password logins can't be
+ * told apart by device. Then a phone's token sits on a web session until
+ * the phone registers again, which moves it to the phone's own session.
  *
  * The partial index serves the lookups by token: forgetting a dead one, and
  * taking a token off the session that held it before.
@@ -31,6 +36,10 @@ export class MoveFcmTokensToSessions1797000000000 implements MigrationInterface 
           ORDER BY user_id, created_at DESC
         ) latest ON latest.user_id = u.id
         WHERE u.fcm_token IS NOT NULL
+          -- What the session column holds and FCM accepts; anything else
+          -- would fail this migration or every push after it.
+          AND u.fcm_token <> ''
+          AND length(u.fcm_token) <= 255
           AND NOT EXISTS (
             SELECT 1 FROM user_sessions o WHERE o.fcm_token = u.fcm_token
           )

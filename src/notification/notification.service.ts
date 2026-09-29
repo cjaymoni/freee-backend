@@ -21,6 +21,11 @@ export interface NotifyOptions {
 
 class SessionNotLive extends Error {}
 
+const DAY = 24 * 60 * 60 * 1000;
+
+/** How long an unopened device keeps getting pushes. */
+export const PUSH_IDLE_DAYS = 90;
+
 /**
  * Sends a user push notifications and emails, and keeps track of the
  * devices they can be pushed to.
@@ -167,6 +172,12 @@ export class NotificationService {
    * The FCM tokens of the user's sessions that have not ended. A session
    * that sat idle past its refresh token still counts: the app is still
    * installed, and FCM tells us once a token stops working.
+   *
+   * Up to a point: one not opened for PUSH_IDLE_DAYS is left out. A phone
+   * that changed accounts without the server hearing of it (signed out
+   * offline, and the next login sent no token) would otherwise show the old
+   * account's pushes for good. created_at measures it, since an app in use
+   * gets a new session on every refresh.
    */
   private async deviceTokens(
     userId: string,
@@ -177,7 +188,10 @@ export class NotificationService {
       .select('DISTINCT s.fcm_token', 'token')
       .where('s.user_id = :userId', { userId })
       .andWhere('s.is_active = true')
-      .andWhere('s.fcm_token IS NOT NULL');
+      .andWhere('s.fcm_token IS NOT NULL')
+      .andWhere('s.created_at > :idleSince', {
+        idleSince: new Date(Date.now() - PUSH_IDLE_DAYS * DAY),
+      });
     if (skipDevicesOf.length) {
       // A device is known by its token, which survives session rotation.
       query.andWhere(

@@ -93,7 +93,7 @@ describe('NotificationService.notify', () => {
     });
   });
 
-  it('counts every session not signed out, however long idle', async () => {
+  it('counts every session not signed out and opened in the last 90 days', async () => {
     const { service, tokenQuery } = setup();
 
     await service.notify(USER, chat);
@@ -104,7 +104,14 @@ describe('NotificationService.notify', () => {
     expect(conditions).toEqual([
       's.is_active = true',
       's.fcm_token IS NOT NULL',
+      's.created_at > :idleSince',
     ]);
+    const [, { idleSince }] = tokenQuery.andWhere.mock.calls[2] as [
+      string,
+      { idleSince: Date },
+    ];
+    const days = (Date.now() - idleSince.getTime()) / 86_400_000;
+    expect(Math.round(days)).toBe(90);
   });
 
   it('leaves out the devices of the sessions it is told to skip', async () => {
@@ -112,7 +119,7 @@ describe('NotificationService.notify', () => {
 
     await service.notify(USER, chat, { skipDevicesOf: ['web', 'phone'] });
 
-    const [sql, params] = tokenQuery.andWhere.mock.calls[2] as [string, object];
+    const [sql, params] = tokenQuery.andWhere.mock.calls[3] as [string, object];
     expect(sql).toContain('s.fcm_token NOT IN');
     expect(params).toEqual({ skipDevicesOf: ['web', 'phone'] });
   });
