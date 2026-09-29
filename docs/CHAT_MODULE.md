@@ -204,9 +204,16 @@ that doesn't have the app open in front of them, with `data.type = "chat_message
 `PATCH /users/fcm-token` whenever FCM rotates it. It is stored on the session
 the request is signed in with, so every signed-in device gets pushes, until
 it signs out (or the account is banned, or its password reset). An idle
-device keeps getting them for 90 days after the app was last opened. Always
-send `fcm_token` on login: if another account signed in on this phone before
-and its sign-out never reached the server, that is what moves the phone over. `DELETE /users/fcm-token` stops them on this
+device keeps getting them for 90 days after the app was last opened.
+
+> **Required of every mobile build:** send `fcm_token` with every login, and
+> call `PATCH /users/fcm-token` on every app launch. A login without the token
+> starts a session with none, so a phone that had to sign in again (after a
+> week unopened, when its refresh token lapsed) keeps being pushed only
+> through its previous session, and that stops 90 days on. The launch call
+> repairs it every time. Sending the token at login is also what moves a
+> phone from one account to the next when the old sign-out never reached the
+> server. `DELETE /users/fcm-token` stops them on this
 device without signing out. Tokens FCM reports dead are forgotten.
 
 **Background.** A socket counts as "in front of the user" until the app sends

@@ -294,7 +294,8 @@ export class UserController {
     description:
       'Attaches the FCM token to the session the request is signed in with. ' +
       'Every signed-in device gets pushes; signing out stops them for that ' +
-      'device. Call again whenever FCM rotates the token.',
+      'device. Mobile clients must call it on every app launch (and send ' +
+      'fcm_token with every login); see docs/CHAT_MODULE.md.',
   })
   @ApiResponse({
     status: 200,
