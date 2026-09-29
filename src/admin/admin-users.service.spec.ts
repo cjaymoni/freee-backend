@@ -9,6 +9,8 @@ import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { AdminAuditService } from './admin-audit.service';
+import { NotificationService } from '../notification/notification.service';
+import { Notice } from '../notification/notification.types';
 import {
   AdminUsersService,
   ROLE_CHANGED,
@@ -61,12 +63,18 @@ const setup = (user: UserEntity | null, lifted: object[] = []) => {
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const firebase = { revokeRefreshTokens: jest.fn().mockResolvedValue(true) };
   const chat = { disconnectUser: jest.fn() };
+  const notifications = {
+    notify: jest
+      .fn<Promise<void>, [string, Notice]>()
+      .mockResolvedValue(undefined),
+  };
   const service = new AdminUsersService(
     dataSource as unknown as DataSource,
     userService as unknown as UserService,
     audit as unknown as AdminAuditService,
     firebase as unknown as FirebaseService,
     chat as unknown as ChatRealtimeService,
+    notifications as unknown as NotificationService,
   );
   // detail() runs a dozen counts; the actions only need to reach it.
   jest.spyOn(service, 'detail').mockResolvedValue({ data: {} } as never);
@@ -79,6 +87,7 @@ const setup = (user: UserEntity | null, lifted: object[] = []) => {
     chat,
     userRepo,
     liftQuery,
+    notifications,
   };
 };
 
@@ -452,5 +461,71 @@ describe('AdminUsersService.list filters', () => {
       { status: AccountStatus.BANNED },
     ]);
     expect(calls).toContainEqual(['u.role = :role', { role: UserRole.USER }]);
+  });
+});
+
+describe('AdminUsersService notices', () => {
+  const noticeFor = (notifications: {
+    notify: jest.Mock<Promise<void>, [string, Notice]>;
+  }) => {
+    expect(notifications.notify).toHaveBeenCalledTimes(1);
+    return notifications.notify.mock.calls[0];
+  };
+
+  it('tells a suspended user until when, and why', async () => {
+    const { service, notifications } = setup(member());
+    const until = new Date(Date.now() + 86_400_000);
+
+    await service.suspend(moderator, 'u-1', 'Spam', until.toISOString());
+
+    const [userId, notice] = noticeFor(notifications);
+    expect(userId).toBe('u-1');
+    expect(notice.title).toBe('Your account has been suspended');
+    expect(notice.evenIfInactive).toBe(true);
+    expect(notice.email?.transactional).toBe(true);
+    expect(notice.email?.paragraphs).toContain('Reason: Spam');
+  });
+
+  it('emails a banned user, since their sessions are gone', async () => {
+    const { service, notifications } = setup(member());
+
+    await service.ban(admin, 'u-1', 'Fraud');
+
+    const [, notice] = noticeFor(notifications);
+    expect(notice.title).toBe('Your account has been banned');
+    expect(notice.email?.transactional).toBe(true);
+  });
+
+  it('tells a reinstated user, without the staff reason', async () => {
+    const { service, notifications } = setup(
+      member({ account_status: AccountStatus.SUSPENDED, is_active: false }),
+    );
+
+    await service.reinstate(moderator, 'u-1', 'internal note');
+
+    const [, notice] = noticeFor(notifications);
+    expect(notice.title).toBe('Your account is active again');
+    expect(JSON.stringify(notice)).not.toContain('internal note');
+  });
+
+  it('tells each user whose suspension ran out', async () => {
+    const { service, notifications } = setup(null, [
+      { id: 'u-1' },
+      { id: 'u-2' },
+    ]);
+
+    await service.liftExpiredSuspensions();
+
+    const calls = notifications.notify.mock.calls;
+    expect(calls.map(([id]) => id)).toEqual(['u-1', 'u-2']);
+    expect(calls[0][1].body).toContain('Your suspension has ended.');
+  });
+
+  it('tells no one when the suspension lost a race', async () => {
+    const { service, userService, notifications } = setup(member());
+    userService.setAccountState.mockResolvedValueOnce(false);
+
+    await expect(service.suspend(moderator, 'u-1', 'Spam')).rejects.toThrow();
+    expect(notifications.notify).not.toHaveBeenCalled();
   });
 });

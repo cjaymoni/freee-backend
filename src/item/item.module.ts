@@ -1,3 +1,4 @@
+import { NotificationModule } from '../notification/notification.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ItemService } from './item.service';
@@ -25,6 +26,7 @@ import { SearchModule } from '../search/search.module';
     CloudinaryModule,
     ItemViewModule,
     SearchModule,
+    NotificationModule,
   ],
   controllers: [ItemController, ItemImageController],
   providers: [ItemService, ItemImageService],

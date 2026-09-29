@@ -22,6 +22,8 @@ import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationCategory } from '../notification/notification.types';
 
 const mockUser: UserEntity & { items_count?: number } = {
   id: 'user-1',
@@ -297,6 +299,7 @@ describe('ItemService', () => {
   };
 
   const mockSearchService = { record: jest.fn().mockResolvedValue(undefined) };
+  const mockNotifications = { notify: jest.fn().mockResolvedValue(undefined) };
 
   const mockItemViewService = {
     recordUniqueView: jest
@@ -325,6 +328,7 @@ describe('ItemService', () => {
         { provide: ItemViewService, useValue: mockItemViewService },
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
+        { provide: NotificationService, useValue: mockNotifications },
       ],
     }).compile();
 
@@ -1253,6 +1257,37 @@ describe('ItemService', () => {
         is_hidden: false,
         hidden_reason: null,
       });
+    });
+  });
+
+  describe('adminRemove', () => {
+    it('tells the owner their listing was removed, and why', async () => {
+      mockItemRepo.findOne.mockResolvedValueOnce({ ...mockItemEntity });
+      jest
+        .spyOn(
+          service as unknown as { softDeleteWithImages: () => unknown },
+          'softDeleteWithImages',
+        )
+        .mockResolvedValueOnce({
+          ...mockItemEntity,
+          is_deleted: true,
+        } as never);
+
+      await service.adminRemove('admin-1', 'item-1', 'Prohibited item');
+
+      expect(mockNotifications.notify).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          category: NotificationCategory.LISTINGS,
+          title: 'Your listing was removed',
+          body: '"Test Item" was removed by a moderator: Prohibited item',
+          data: {
+            type: 'listing_moderation',
+            status: 'removed',
+            item_id: 'item-1',
+          },
+        }),
+      );
     });
   });
 

@@ -299,7 +299,9 @@ export class AuthService {
     }
 
     const { email, phone_number, uid: firebase_uid } = decodedToken;
-    this.logger.log(`[firebaseAuthenticate] decoded token => uid present: ${!!firebase_uid}, email present: ${!!email}, phone present: ${!!phone_number}`);
+    this.logger.log(
+      `[firebaseAuthenticate] decoded token => uid present: ${!!firebase_uid}, email present: ${!!email}, phone present: ${!!phone_number}`,
+    );
 
     return this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
@@ -681,9 +683,12 @@ export class AuthService {
     await queryRunner.startTransaction();
 
     try {
-
       // Token Rotation: Invalidate old session and create a new one
-      await queryRunner.manager.update(UserSessionEntity, { id: session.id }, { is_active: false });
+      await queryRunner.manager.update(
+        UserSessionEntity,
+        { id: session.id },
+        { is_active: false },
+      );
 
       const user = session.user;
       const newSessionToken = randomBytes(32).toString('hex');
@@ -704,6 +709,8 @@ export class AuthService {
         user_agent: userAgent,
         expires_at: expiresAt,
         device_type: session.device_type,
+        // Same device, new session: its pushes carry over.
+        fcm_token: session.fcm_token,
       });
 
       await queryRunner.manager.save(newSession);

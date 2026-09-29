@@ -2,6 +2,12 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
 
+/** FCM errors meaning the token itself is dead, not that this send failed. */
+const DEAD_TOKEN_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+]);
+
 @Injectable()
 export class FirebaseService implements OnModuleInit {
   private readonly logger = new Logger(FirebaseService.name);
@@ -125,33 +131,45 @@ export class FirebaseService implements OnModuleInit {
     }
   }
 
-  async sendNotification(
-    token: string,
+  /**
+   * Send one notification to each of `tokens` (a user's devices).
+   *
+   * @returns the tokens FCM reported as no longer valid: the app was
+   * uninstalled or the token rotated. The caller should forget them; they
+   * will never work again. Any other failure is logged and not returned,
+   * since the token may work next time.
+   */
+  async sendToTokens(
+    tokens: string[],
     payload: { title: string; body: string; data?: Record<string, string> },
-  ) {
+  ): Promise<{ invalidTokens: string[] }> {
+    if (!tokens.length) return { invalidTokens: [] };
     if (!this.firebaseApp) {
       this.logger.warn('Firebase NOT initialized. Skipping notification');
-      return;
+      return { invalidTokens: [] };
     }
 
-    const message: admin.messaging.Message = {
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens,
+      notification: { title: payload.title, body: payload.body },
       data: payload.data,
-      token: token,
-    };
+    });
 
-    try {
-      const response = await admin.messaging().send(message);
-      this.logger.log('Successfully sent FCM message', {
-        messageId: String(response).replace(/[^\w-]/g, ''),
-      });
-      return response;
-    } catch (error) {
-      this.logger.error('Error sending FCM message', error);
-      throw error;
-    }
+    const invalidTokens: string[] = [];
+    response.responses.forEach(({ success, error }, index) => {
+      if (success) return;
+      if (error && DEAD_TOKEN_CODES.has(error.code)) {
+        invalidTokens.push(tokens[index]);
+      } else {
+        this.logger.warn(
+          `FCM send failed: ${error?.code ?? 'unknown'} ${error?.message ?? ''}`,
+        );
+      }
+    });
+    this.logger.log(
+      `FCM sent ${response.successCount}/${tokens.length}` +
+        (invalidTokens.length ? `, ${invalidTokens.length} dead token(s)` : ''),
+    );
+    return { invalidTokens };
   }
 }

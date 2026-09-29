@@ -1,3 +1,4 @@
+import { NotificationModule } from '../notification/notification.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ModerationController } from './moderation.controller';
@@ -11,9 +12,15 @@ import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ReportedItem, ReportedUser, BlockedUser, ModerationComplaint]),
+    TypeOrmModule.forFeature([
+      ReportedItem,
+      ReportedUser,
+      BlockedUser,
+      ModerationComplaint,
+    ]),
     forwardRef(() => ItemModule),
     forwardRef(() => UserModule),
+    NotificationModule,
   ],
   controllers: [ModerationController],
   providers: [ModerationService],

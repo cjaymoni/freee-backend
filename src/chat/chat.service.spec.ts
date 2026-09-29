@@ -16,7 +16,11 @@ import { ItemEntity } from '../item/entities/item.entity';
 import { ItemRequestEntity } from '../item-request/entities/item-request.entity';
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { FirebaseService } from '../firebase/firebase.service';
+import { NotificationService } from '../notification/notification.service';
+import {
+  NotificationCategory,
+  Notice,
+} from '../notification/notification.types';
 import { AppError } from '../common/app-error';
 
 // Chosen so that ALICE < BOB lexicographically, which is what the canonical
@@ -90,11 +94,17 @@ describe('ChatService', () => {
   let itemRequestRepository: any;
   let blockedUserRepository: any;
   let dataSource: any;
+  let notifications: { notify: jest.Mock<Promise<void>, [string, Notice]> };
   /** Every `set()` payload written during a test. */
   let updates: Record<string, unknown>[];
 
   beforeEach(async () => {
     updates = [];
+    notifications = {
+      notify: jest
+        .fn<Promise<void>, [string, Notice]>()
+        .mockResolvedValue(undefined),
+    };
 
     conversationRepository = {
       findOne: jest.fn(),
@@ -161,7 +171,7 @@ describe('ChatService', () => {
         },
         { provide: DataSource, useValue: dataSource },
         { provide: CloudinaryService, useValue: { uploadImage: jest.fn(), deleteImage: jest.fn() } },
-        { provide: FirebaseService, useValue: { sendNotification: jest.fn() } },
+        { provide: NotificationService, useValue: notifications },
       ],
     }).compile();
 
@@ -408,6 +418,104 @@ describe('ChatService', () => {
 
       expect(realtime.unregisterSocket(ALICE, 'socket-2')).toBe(true);
       expect(realtime.isOnline(ALICE)).toBe(false);
+    });
+
+    it('keeps a backgrounded socket online but not in the foreground', () => {
+      realtime.registerSocket(ALICE, 'phone');
+      expect(realtime.isInForeground(ALICE)).toBe(true);
+
+      realtime.setBackground(ALICE, 'phone', true);
+      expect(realtime.isOnline(ALICE)).toBe(true);
+      expect(realtime.isInForeground(ALICE)).toBe(false);
+
+      // Another device in front is enough.
+      realtime.registerSocket(ALICE, 'laptop');
+      expect(realtime.isInForeground(ALICE)).toBe(true);
+
+      realtime.setBackground(ALICE, 'phone', false);
+      realtime.unregisterSocket(ALICE, 'laptop');
+      expect(realtime.isInForeground(ALICE)).toBe(true);
+    });
+
+    it('ignores app state for a socket it does not know', () => {
+      realtime.setBackground(ALICE, 'ghost', true);
+      realtime.registerSocket(ALICE, 'ghost');
+      // The stale event must not have marked the new socket as background.
+      expect(realtime.isInForeground(ALICE)).toBe(true);
+    });
+
+    it('forgets a closed socket was in the background', () => {
+      realtime.registerSocket(ALICE, 'phone');
+      realtime.setBackground(ALICE, 'phone', true);
+      realtime.unregisterSocket(ALICE, 'phone');
+      realtime.registerSocket(ALICE, 'phone');
+      expect(realtime.isInForeground(ALICE)).toBe(true);
+    });
+  });
+
+  describe('push notifications', () => {
+    const conversation = { id: 'conv-1' } as ConversationEntity;
+    const broadcast = (msg: MessageEntity) =>
+      (
+        service as unknown as {
+          broadcastMessage: (
+            m: MessageEntity,
+            c: ConversationEntity,
+          ) => Promise<void>;
+        }
+      ).broadcastMessage(msg, conversation);
+
+    beforeEach(() => {
+      (userRepository as { findOne: jest.Mock }).findOne.mockResolvedValue({
+        id: ALICE,
+        first_name: 'Alice',
+        last_name: 'Ansah',
+      });
+    });
+
+    it('pushes a message to a recipient with no socket', async () => {
+      await broadcast(message());
+
+      expect(notifications.notify).toHaveBeenCalledWith(BOB, {
+        category: NotificationCategory.CHAT_MESSAGES,
+        title: 'Alice Ansah',
+        body: 'hello',
+        data: {
+          type: 'chat_message',
+          conversation_id: 'conv-1',
+          message_id: 'msg-1',
+          sender_id: ALICE,
+        },
+      });
+    });
+
+    it('pushes to a recipient whose only socket is in the background', async () => {
+      realtime.registerSocket(BOB, 'bob-phone');
+      realtime.setBackground(BOB, 'bob-phone', true);
+
+      await broadcast(message());
+
+      expect(notifications.notify).toHaveBeenCalled();
+    });
+
+    it('does not push to a recipient with the app open', async () => {
+      realtime.registerSocket(BOB, 'bob-phone');
+
+      await broadcast(message());
+
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('files an item-request card under item requests', async () => {
+      await broadcast(
+        message({
+          message_type: MessageType.SYSTEM,
+          system_event: SystemEvent.ITEM_REQUESTED,
+        }),
+      );
+
+      const [, notice] = notifications.notify.mock.calls[0];
+      expect(notice.category).toBe(NotificationCategory.ITEM_REQUESTS);
     });
   });
 

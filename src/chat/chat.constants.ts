@@ -45,6 +45,8 @@ export const ChatClientEvents = {
   MARK_READ: 'message:read',
   TYPING_START: 'typing:start',
   TYPING_STOP: 'typing:stop',
+  /** `{ state: 'foreground' | 'background' }` when the app changes state. */
+  APP_STATE: 'app:state',
 } as const;
 
 /** Rejects oversized and non-image attachments before they reach Cloudinary. */

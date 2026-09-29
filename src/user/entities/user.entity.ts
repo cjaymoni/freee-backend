@@ -118,6 +118,10 @@ export class UserEntity {
   @Column({ type: 'boolean', default: false })
   is_phone_verified: boolean;
 
+  /**
+   * @deprecated Push tokens live on the login session now (one per signed-in
+   * device); nothing reads this. Kept so older rows lose no data.
+   */
   @Column({ type: 'text', nullable: true })
   fcm_token: string;
 

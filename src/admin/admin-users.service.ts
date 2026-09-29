@@ -1,3 +1,9 @@
+import { NotificationService } from '../notification/notification.service';
+import {
+  accountBannedNotice,
+  accountReinstatedNotice,
+  accountSuspendedNotice,
+} from '../notification/notices';
 import {
   BadRequestException,
   ConflictException,
@@ -67,6 +73,7 @@ export class AdminUsersService {
     private readonly adminAudit: AdminAuditService,
     private readonly firebase: FirebaseService,
     private readonly chatRealtime: ChatRealtimeService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async list(
@@ -401,6 +408,10 @@ export class AdminUsersService {
         suspended_until: suspendedUntil,
       },
     );
+    await this.notifications.notify(
+      userId,
+      accountSuspendedNotice(suspendedUntil, reason),
+    );
     return this.detail(userId);
   }
 
@@ -454,6 +465,7 @@ export class AdminUsersService {
       }
     }
     await this.recordStatusChange(actor, user, USER_BANNED, reason, request);
+    await this.notifications.notify(userId, accountBannedNotice(reason));
     return this.detail(userId);
   }
 
@@ -498,6 +510,8 @@ export class AdminUsersService {
       reason,
       request,
     );
+    // The staff reason is for the record; the user is only told it's lifted.
+    await this.notifications.notify(userId, accountReinstatedNotice(false));
     return this.detail(userId);
   }
 
@@ -542,6 +556,7 @@ export class AdminUsersService {
         newValues: { account_status: AccountStatus.ACTIVE, is_active: true },
         reason: 'Suspension ended',
       });
+      await this.notifications.notify(user.id, accountReinstatedNotice(true));
     }
     if (lifted.length) {
       this.logger.log(`Lifted ${lifted.length} expired suspension(s)`);

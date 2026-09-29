@@ -16,36 +16,18 @@ import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
+import {
+  describeWithDatabase,
+  testDatabaseFor,
+} from '../common/testing/test-database';
+import { NotificationService } from '../notification/notification.service';
 
 /**
  * GET /items against a real Postgres: paging over the images join, the
  * distance SQL and category matching can only be proven on actual rows.
- *
- * Runs only when TEST_DATABASE_URL names a disposable database, e.g.
- *   docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=test \
- *     -e POSTGRES_DB=freee_test postgres:16-alpine
- * then point TEST_DATABASE_URL at it (user postgres, password test, host
- * localhost:55432, database freee_test) and run `npx jest item.service.db`.
- * The schema is dropped and rebuilt from the entities on every run, so the
- * run refuses any database not named *_test.
+ * See common/testing/test-database for how to run it.
  */
-const url = process.env.TEST_DATABASE_URL;
-const describeDb = url ? describe : describe.skip;
-
-/**
- * Throws unless the URL names a *_test database. The host alone is not
- * enough: a localhost port can be a tunnel to a real database.
- */
-function assertDisposable(databaseUrl: string): void {
-  const { hostname, pathname } = new URL(databaseUrl);
-  const database = decodeURIComponent(pathname.replace(/^\//, ''));
-  if (!database.endsWith('_test')) {
-    throw new Error(
-      `Refusing to drop the schema of ${hostname}/${database}: ` +
-        'TEST_DATABASE_URL must name a *_test database.',
-    );
-  }
-}
+const describeDb = describeWithDatabase;
 
 /** Reference great-circle distance in km, the same formula as the SQL. */
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -78,10 +60,9 @@ describeDb('ItemService.findAll on Postgres', () => {
   const coords: Record<string, { lat: number; lng: number } | null> = {};
 
   beforeAll(async () => {
-    assertDisposable(url!);
     ds = await new DataSource({
       type: 'postgres',
-      url,
+      url: await testDatabaseFor('items'),
       entities: [join(__dirname, '..', '**', '*.entity.ts')],
       synchronize: true,
       dropSchema: true,
@@ -104,6 +85,7 @@ describeDb('ItemService.findAll on Postgres', () => {
           provide: SearchService,
           useValue: { record: () => Promise.resolve() },
         },
+        { provide: NotificationService, useValue: { notify: jest.fn() } },
       ],
     }).compile();
     service = module.get(ItemService);

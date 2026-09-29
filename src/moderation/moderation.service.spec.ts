@@ -9,6 +9,11 @@ import { ItemService } from '../item/item.service';
 import { UserService } from '../user/user.service';
 import { ActionTaken } from './dto/resolve-report.dto';
 import { UserRole } from '../user/entities/user.entity';
+import { NotificationService } from '../notification/notification.service';
+import {
+  NotificationCategory,
+  Notice,
+} from '../notification/notification.types';
 
 const build = (repos: {
   reportedItem?: object;
@@ -17,6 +22,7 @@ const build = (repos: {
   complaint?: object;
   itemService?: object;
   userService?: object;
+  notifications?: object;
 }) =>
   new ModerationService(
     (repos.reportedItem ?? {}) as Repository<ReportedItem>,
@@ -25,6 +31,9 @@ const build = (repos: {
     (repos.complaint ?? {}) as Repository<ModerationComplaint>,
     (repos.itemService ?? {}) as ItemService,
     (repos.userService ?? {}) as UserService,
+    (repos.notifications ?? {
+      notify: jest.fn(),
+    }) as unknown as NotificationService,
   );
 
 describe('ModerationService.getBlockedUsers', () => {
@@ -205,7 +214,11 @@ describe('ModerationService.resolveUserReport', () => {
   const setup = (role: string, account_status = 'active') => {
     const update = jest.fn().mockResolvedValue(true);
     const save = jest.fn((r: unknown) => Promise.resolve(r));
+    const notify = jest
+      .fn<Promise<void>, [string, Notice]>()
+      .mockResolvedValue(undefined);
     const service = build({
+      notifications: { notify },
       reportedUser: {
         findOne: jest.fn().mockResolvedValue({
           id: 'rep-1',
@@ -218,7 +231,7 @@ describe('ModerationService.resolveUserReport', () => {
       },
       userService: { setAccountState: update },
     });
-    return { service, update, save };
+    return { service, update, save, notify };
   };
 
   it.each([
@@ -265,8 +278,40 @@ describe('ModerationService.resolveUserReport', () => {
     );
   });
 
+  it('tells the suspended user, with the report as the reason', async () => {
+    const { service, notify } = setup('USER');
+
+    await service.resolveUserReport(
+      'rep-1',
+      { status: 'resolved', actionTaken: ActionTaken.USER_SUSPENDED } as never,
+      'mod-1',
+    );
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [userId, notice] = notify.mock.calls[0];
+    expect(userId).toBe('target');
+    expect(notice.category).toBe(NotificationCategory.ACCOUNT);
+    expect(notice.title).toBe('Your account has been suspended');
+    expect(notice.evenIfInactive).toBe(true);
+    expect(notice.email?.transactional).toBe(true);
+    expect(notice.email?.paragraphs).toContain('Reason: Reported: Harassment');
+  });
+
+  it('tells no one when another change got there first', async () => {
+    const { service, update, notify } = setup('USER');
+    update.mockResolvedValueOnce(false);
+
+    await service.resolveUserReport(
+      'rep-1',
+      { status: 'resolved', actionTaken: ActionTaken.USER_SUSPENDED } as never,
+      'mod-1',
+    );
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('leaves a banned account banned', async () => {
-    const { service, update, save } = setup('USER', 'banned');
+    const { service, update, save, notify } = setup('USER', 'banned');
 
     await service.resolveUserReport(
       'rep-1',
@@ -276,6 +321,7 @@ describe('ModerationService.resolveUserReport', () => {
 
     expect(update).not.toHaveBeenCalled();
     expect(save).toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('refuses reviewing a report you filed', async () => {
@@ -293,5 +339,36 @@ describe('ModerationService.resolveUserReport', () => {
     ).rejects.toThrow('You cannot review a report you filed');
     expect(update).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('ModerationService.resolveComplaint', () => {
+  it('sends the answer to whoever lodged the appeal', async () => {
+    const notify = jest.fn().mockResolvedValue(undefined);
+    const service = build({
+      complaint: {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ id: 'c-1', userId: 'appellant' }),
+        save: jest.fn((c: unknown) => Promise.resolve(c)),
+      },
+      notifications: { notify },
+    });
+
+    await service.resolveComplaint(
+      'c-1',
+      { status: 'resolved', adminResponse: 'Suspension lifted.' } as never,
+      'mod-1',
+    );
+
+    expect(notify).toHaveBeenCalledWith(
+      'appellant',
+      expect.objectContaining({
+        category: NotificationCategory.ACCOUNT,
+        body: 'Suspension lifted.',
+        evenIfInactive: true,
+        data: { type: 'complaint', status: 'resolved', complaint_id: 'c-1' },
+      }),
+    );
   });
 });

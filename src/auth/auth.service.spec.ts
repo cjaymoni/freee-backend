@@ -161,3 +161,48 @@ describe('AuthService wrong verification codes', () => {
     expect(runner.manager.save).toHaveBeenCalled();
   });
 });
+
+describe('AuthService.refresh', () => {
+  it("keeps the device's push token on the rotated session", async () => {
+    const created: Record<string, unknown>[] = [];
+    const runner = {
+      isTransactionActive: false,
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+      manager: {
+        update: jest.fn(),
+        create: jest.fn((_entity: unknown, values: Record<string, unknown>) => {
+          created.push(values);
+          return values;
+        }),
+        save: jest.fn(),
+      },
+    };
+    const service = Object.create(AuthService.prototype) as Record<
+      string,
+      unknown
+    >;
+    service.userSessionRepository = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'old-session',
+        user: { id: 'u1', email: 'a@example.com', role: 'USER' },
+        device_type: 'android',
+        fcm_token: 'fcm-phone',
+        refresh_token_expires_at: new Date(Date.now() + 60_000),
+      }),
+    };
+    service.dataSource = { createQueryRunner: () => runner };
+    service.jwtService = { sign: () => 'access-token' };
+
+    await (service.refresh as AuthService['refresh'])('refresh-1', '::1', 'ua');
+
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      device_type: 'android',
+      fcm_token: 'fcm-phone',
+    });
+  });
+});

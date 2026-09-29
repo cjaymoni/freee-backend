@@ -149,6 +149,7 @@ same way it rejects REST calls. A socket that fails to authenticate receives
 | `message:send` | `{ conversation_id, content, client_message_id? }` |
 | `message:read` | `{ conversation_id }` |
 | `typing:start` / `typing:stop` | `{ conversation_id }` |
+| `app:state` | `{ state: 'foreground' \| 'background' }` |
 
 Each returns an ack in the same envelope REST uses. `message:send` echoes
 `client_message_id` back on the ack so you can reconcile the optimistic bubble
@@ -193,10 +194,31 @@ to a stranger that two people are talking.
 
 ## Push notifications
 
-If the recipient has no live socket, the message is sent as an FCM push to
-their `fcm_token` (respecting `notification_enabled`), with
-`data.type = "chat_message"` plus `conversation_id`, `message_id` and
-`sender_id` for deep-linking.
+Unless the recipient has the app open in front of them, a new message is also
+sent as an FCM push, with `data.type = "chat_message"` plus
+`conversation_id`, `message_id`, `sender_id` and `category`
+(`chat_messages`, or `item_requests` for request cards) for deep-linking.
+
+**Devices.** Register the FCM token with `PATCH /users/fcm-token` after every
+sign-in and whenever FCM rotates it. It is stored on the session the request
+is signed in with, so every signed-in device gets pushes and signing out stops
+them for that device. `DELETE /users/fcm-token` stops them on this device
+without signing out. Tokens FCM reports dead are forgotten.
+
+**Background.** A socket counts as "in front of the user" until the app sends
+`app:state` `{ state: 'background' }`. Send it when the app goes to the
+background (and `foreground` when it returns): an OS can keep a background
+socket open for minutes, and without it that user gets no push meanwhile.
+
+**Settings.** `notification_enabled` on the user turns pushes off; the keys in
+`notification_settings` (`push`, `email`, and per kind `chat_messages`,
+`item_requests`, `listings`, `account`) turn off a channel or a kind. See
+`PATCH /user-preferences/notifications`.
+
+Account and listing notices (suspension, ban, reinstatement, appeal answers;
+a listing hidden, restored or removed) use the same devices and settings, with
+`data.type` `account_status`, `complaint` or `listing_moderation`. Those
+about the account itself are also emailed, whatever the settings.
 
 Pushes are best-effort: a failed push never fails the send.
 

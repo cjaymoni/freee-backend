@@ -3,6 +3,9 @@ import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UserRole } from './entities/user.entity';
+import { NotificationService } from '../notification/notification.service';
+
+const SESSION = 'session-token-1';
 
 describe('UserController', () => {
   let controller: UserController;
@@ -25,6 +28,7 @@ describe('UserController', () => {
           provide: CloudinaryService,
           useValue: { uploadImage: jest.fn() },
         },
+        { provide: NotificationService, useValue: {} },
       ],
     }).compile();
 
@@ -41,7 +45,12 @@ describe('UserController authorization', () => {
   let userService: {
     update: jest.Mock;
     remove: jest.Mock;
+    findOne: jest.Mock;
     findOneEntityWithPassword: jest.Mock;
+  };
+  let notifications: {
+    registerDevice: jest.Mock;
+    unregisterDevice: jest.Mock;
   };
 
   const USER_ID = '11111111-1111-1111-1111-111111111111';
@@ -51,18 +60,88 @@ describe('UserController authorization', () => {
     userService = {
       update: jest.fn().mockResolvedValue({ state: true }),
       remove: jest.fn().mockResolvedValue({ state: true }),
+      findOne: jest.fn().mockResolvedValue({ state: true, data: {} }),
       findOneEntityWithPassword: jest
         .fn()
         .mockResolvedValue({ id: USER_ID, password_hash: null }),
+    };
+    notifications = {
+      registerDevice: jest.fn().mockResolvedValue(true),
+      unregisterDevice: jest.fn().mockResolvedValue(undefined),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UserController],
       providers: [
         { provide: UserService, useValue: userService },
         { provide: CloudinaryService, useValue: {} },
+        { provide: NotificationService, useValue: notifications },
       ],
     }).compile();
     controller = module.get<UserController>(UserController);
+  });
+
+  describe('device tokens', () => {
+    it('registers the FCM token on the calling session', async () => {
+      const result = await controller.updateFcmToken(USER_ID, SESSION, {
+        fcm_token: 'fcm-1',
+      });
+      expect(notifications.registerDevice).toHaveBeenCalledWith(
+        USER_ID,
+        SESSION,
+        'fcm-1',
+      );
+      expect(userService.update).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        state: true,
+        message: 'FCM token updated successfully',
+      });
+    });
+
+    it('answers 401 when the session is no longer live', async () => {
+      notifications.registerDevice.mockResolvedValueOnce(false);
+      await expect(
+        controller.updateFcmToken(USER_ID, SESSION, { fcm_token: 'fcm-1' }),
+      ).rejects.toMatchObject({ status: 401 });
+    });
+
+    it('forgets the token of the calling session only', async () => {
+      await controller.removeFcmToken(USER_ID, SESSION);
+      expect(notifications.unregisterDevice).toHaveBeenCalledWith(
+        USER_ID,
+        SESSION,
+      );
+    });
+
+    it('takes fcm_token out of a profile update and registers it', async () => {
+      await controller.update(
+        USER_ID,
+        { first_name: 'Ama', fcm_token: 'fcm-2' },
+        USER_ID,
+        UserRole.USER,
+        SESSION,
+      );
+      expect(notifications.registerDevice).toHaveBeenCalledWith(
+        USER_ID,
+        SESSION,
+        'fcm-2',
+      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+        first_name: 'Ama',
+      });
+    });
+
+    it("never stores a token an admin sends for someone else's profile", async () => {
+      await controller.update(
+        OTHER_ID,
+        { fcm_token: 'fcm-3' },
+        USER_ID,
+        UserRole.ADMIN,
+        SESSION,
+      );
+      expect(notifications.registerDevice).not.toHaveBeenCalled();
+      const [, sent] = userService.update.mock.calls[0] as [string, object];
+      expect(sent).not.toHaveProperty('fcm_token');
+    });
   });
 
   describe('update', () => {
@@ -72,6 +151,7 @@ describe('UserController authorization', () => {
         { first_name: 'Ama', bio: 'hi' },
         USER_ID,
         UserRole.USER,
+        SESSION,
       );
       expect(userService.update).toHaveBeenCalledWith(USER_ID, {
         first_name: 'Ama',
@@ -86,6 +166,7 @@ describe('UserController authorization', () => {
           { first_name: 'x' },
           USER_ID,
           UserRole.USER,
+          SESSION,
         ),
       ).rejects.toThrow('You can only update your own profile');
       expect(userService.update).not.toHaveBeenCalled();
@@ -102,6 +183,7 @@ describe('UserController authorization', () => {
         body,
         USER_ID,
         UserRole.USER,
+        SESSION,
       );
       expect(userService.update).toHaveBeenCalledWith(USER_ID, body);
       expect(result.warnings).toBeUndefined();
@@ -128,6 +210,7 @@ describe('UserController authorization', () => {
           { first_name: 'Ama', [field]: value },
           USER_ID,
           UserRole.USER,
+          SESSION,
         );
         expect(userService.update).toHaveBeenCalledWith(USER_ID, {
           first_name: 'Ama',
@@ -146,6 +229,7 @@ describe('UserController authorization', () => {
         { first_name: 'Ama', password: 'x-new-pass' },
         USER_ID,
         UserRole.USER,
+        SESSION,
       );
       expect(userService.update).toHaveBeenCalledWith(USER_ID, {
         first_name: 'Ama',
@@ -155,7 +239,13 @@ describe('UserController authorization', () => {
 
     it('rejects a too-short first password', async () => {
       await expect(
-        controller.update(USER_ID, { password: 'x' }, USER_ID, UserRole.USER),
+        controller.update(
+          USER_ID,
+          { password: 'x' },
+          USER_ID,
+          UserRole.USER,
+          SESSION,
+        ),
       ).rejects.toThrow('at least 6 characters');
       expect(userService.update).not.toHaveBeenCalled();
     });
@@ -166,6 +256,7 @@ describe('UserController authorization', () => {
         { first_name: 'Ama' },
         USER_ID,
         UserRole.ADMIN,
+        SESSION,
       );
       expect(userService.update).toHaveBeenCalledWith(OTHER_ID, {
         first_name: 'Ama',
@@ -176,7 +267,13 @@ describe('UserController authorization', () => {
       'refuses an admin setting is_active=%s here',
       async (is_active) => {
         await expect(
-          controller.update(OTHER_ID, { is_active }, USER_ID, UserRole.ADMIN),
+          controller.update(
+            OTHER_ID,
+            { is_active },
+            USER_ID,
+            UserRole.ADMIN,
+            SESSION,
+          ),
         ).rejects.toMatchObject({ status: 400 });
         expect(userService.update).not.toHaveBeenCalled();
       },
@@ -186,7 +283,13 @@ describe('UserController authorization', () => {
       'refuses an admin setting role %s here',
       async (role) => {
         await expect(
-          controller.update(OTHER_ID, { role }, USER_ID, UserRole.ADMIN),
+          controller.update(
+            OTHER_ID,
+            { role },
+            USER_ID,
+            UserRole.ADMIN,
+            SESSION,
+          ),
         ).rejects.toMatchObject({ status: 400 });
         expect(userService.update).not.toHaveBeenCalled();
       },

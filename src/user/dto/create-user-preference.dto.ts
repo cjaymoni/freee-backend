@@ -21,8 +21,11 @@ export class CreateUserPreferenceDto {
   preferred_category_ids?: string[];
 
   @ApiPropertyOptional({
-    description: 'Notification settings as a JSON object',
-    example: { email: true, push: true, sms: false },
+    description:
+      'Booleans; a missing key means on. Channels: push, email. Kinds: ' +
+      'chat_messages, item_requests, listings, account. See PATCH ' +
+      '/user-preferences/notifications.',
+    example: { push: true, email: true, chat_messages: true },
   })
   @IsOptional()
   @IsObject()

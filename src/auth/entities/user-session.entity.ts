@@ -14,6 +14,11 @@ import { UserEntity } from '../../user/entities/user.entity';
 @Index(['user', 'is_active'])
 @Index(['expires_at'])
 @Index('idx_sessions_cleanup', ['is_active', 'last_activity'])
+// Created by MoveFcmTokensToSessions under the same name. Keep the WHERE
+// identical to the migration's: TypeORM never compares an index's WHERE.
+@Index('IDX_user_sessions_fcm_token', ['fcm_token'], {
+  where: 'fcm_token IS NOT NULL',
+})
 export class UserSessionEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -51,7 +56,8 @@ export class UserSessionEntity {
     nullable: true,
     comment: 'Firebase Cloud Messaging for push notifications',
   })
-  fcm_token: string;
+  /** This device's push token; see NotificationService.registerDevice. */
+  fcm_token: string | null;
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;

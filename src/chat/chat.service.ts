@@ -48,7 +48,8 @@ import {
 } from '../item-request/entities/item-request.entity';
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { FirebaseService } from '../firebase/firebase.service';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationCategory } from '../notification/notification.types';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { escapeLike } from '../common/text-fold';
@@ -85,7 +86,7 @@ export class ChatService {
     private readonly blockedUserRepository: Repository<BlockedUser>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
-    private readonly firebaseService: FirebaseService,
+    private readonly notifications: NotificationService,
     private readonly realtime: ChatRealtimeService,
   ) {}
 
@@ -898,8 +899,8 @@ export class ChatService {
   }
 
   /**
-   * Fan a newly stored message out to both parties and, if the recipient has
-   * no live socket, to their phone.
+   * Fan a newly stored message out to both parties and, unless the recipient
+   * has the app open in front of them, to their devices as a push.
    *
    * Everything here runs after the message is committed and is best-effort:
    * a failed push must not turn a delivered message into an error.
@@ -930,7 +931,9 @@ export class ChatService {
       });
     }
 
-    if (this.realtime.isOnline(recipientId)) {
+    // A socket the app put in the background doesn't show the message, so
+    // only one in front of the user makes the push redundant.
+    if (this.realtime.isInForeground(recipientId)) {
       return;
     }
 
@@ -942,35 +945,20 @@ export class ChatService {
     conversation: ConversationEntity,
   ): Promise<void> {
     try {
-      const [recipient, sender] = await Promise.all([
-        this.userRepository.findOne({
-          where: { id: message.recipient_id },
-          select: {
-            id: true,
-            fcm_token: true,
-            notification_enabled: true,
-            is_active: true,
-          },
-        }),
-        this.userRepository.findOne({
-          where: { id: message.sender_id },
-          select: { id: true, first_name: true, last_name: true },
-        }),
-      ]);
-
-      if (
-        !recipient?.fcm_token ||
-        !recipient.notification_enabled ||
-        !recipient.is_active
-      ) {
-        return;
-      }
-
+      const sender = await this.userRepository.findOne({
+        where: { id: message.sender_id },
+        select: { id: true, first_name: true, last_name: true },
+      });
       const senderName =
         [sender?.first_name, sender?.last_name].filter(Boolean).join(' ') ||
         'Someone';
 
-      await this.firebaseService.sendNotification(recipient.fcm_token, {
+      // Delivery, preferences and which devices get it are all decided
+      // there; item-request cards are their own kind a user can turn off.
+      await this.notifications.notify(message.recipient_id, {
+        category: message.system_event
+          ? NotificationCategory.ITEM_REQUESTS
+          : NotificationCategory.CHAT_MESSAGES,
         title: senderName,
         body: this.buildPreview(message),
         data: {

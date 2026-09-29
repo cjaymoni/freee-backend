@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { ModerationStatus } from '../item/entities/item.entity';
 import { UserRole } from '../user/entities/user.entity';
 import { AdminAuditService } from './admin-audit.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   AdminItemsService,
   ITEM_FLAGGED,
@@ -17,16 +18,20 @@ const setup = (item: object | null) => {
     update: jest.fn().mockResolvedValue({}),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const notifications = { notify: jest.fn().mockResolvedValue(undefined) };
   const service = new AdminItemsService(
     { getRepository: () => repo } as unknown as DataSource,
     audit as unknown as AdminAuditService,
+    notifications as unknown as NotificationService,
   );
   jest.spyOn(service, 'detail').mockResolvedValue({ data: {} } as never);
-  return { service, repo, audit };
+  return { service, repo, audit, notifications };
 };
 
 const listing = (moderation_status: ModerationStatus) => ({
   id: 'item-1',
+  user_id: 'owner-1',
+  title: 'Blue sofa',
   is_deleted: false,
   moderation_status,
 });
@@ -121,6 +126,7 @@ describe('AdminItemsService.list filters', () => {
         getRepository: () => ({ createQueryBuilder: () => qb }),
       } as unknown as DataSource,
       {} as AdminAuditService,
+      {} as NotificationService,
     );
     return { service, calls };
   };
@@ -184,5 +190,48 @@ describe('AdminItemsService.list filters', () => {
       { moderation: ModerationStatus.HIDDEN },
     ]);
     expect(calls).toContainEqual(['item.user_id = :userId', { userId: 'u-1' }]);
+  });
+});
+
+describe('AdminItemsService owner notices', () => {
+  it('tells the owner their listing was hidden, and why', async () => {
+    const { service, notifications } = setup(listing(ModerationStatus.VISIBLE));
+
+    await service.hide(moderator, 'item-1', 'Counterfeit');
+
+    expect(notifications.notify).toHaveBeenCalledWith(
+      'owner-1',
+      expect.objectContaining({
+        title: 'Your listing was hidden',
+        body: '"Blue sofa" was hidden by a moderator: Counterfeit',
+        data: {
+          type: 'listing_moderation',
+          status: 'hidden',
+          item_id: 'item-1',
+        },
+      }),
+    );
+  });
+
+  it('tells the owner a hidden listing is back', async () => {
+    const { service, notifications } = setup(listing(ModerationStatus.HIDDEN));
+
+    await service.restore(moderator, 'item-1');
+
+    expect(notifications.notify).toHaveBeenCalledWith(
+      'owner-1',
+      expect.objectContaining({ title: 'Your listing is visible again' }),
+    );
+  });
+
+  it.each([
+    ['flagging', 'flag', ModerationStatus.VISIBLE],
+    ['clearing a flag', 'restore', ModerationStatus.FLAGGED],
+  ] as const)('stays quiet when %s', async (_, action, from) => {
+    const { service, notifications } = setup(listing(from));
+
+    await service[action](moderator, 'item-1', 'x');
+
+    expect(notifications.notify).not.toHaveBeenCalled();
   });
 });

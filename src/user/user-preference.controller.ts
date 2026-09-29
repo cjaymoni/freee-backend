@@ -189,7 +189,8 @@ export class UserPreferenceController {
   @Patch('categories')
   @ApiOperation({
     summary: 'Set preferred categories (screen 8 of onboarding)',
-    description: 'Replaces the user\'s preferred categories with the provided list of category IDs.',
+    description:
+      "Replaces the user's preferred categories with the provided list of category IDs.",
   })
   @ApiBody({
     schema: {
@@ -204,7 +205,11 @@ export class UserPreferenceController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Categories updated successfully', type: UserPreferenceResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Categories updated successfully',
+    type: UserPreferenceResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Preferences not found' })
   async setCategories(
@@ -218,12 +223,18 @@ export class UserPreferenceController {
   @ApiOperation({
     summary: 'Update notification settings',
     description:
-      'Merges the provided notification settings with existing ones. Use this to update specific notification preferences.',
+      'Merges the provided notification settings with existing ones. Every key is a ' +
+      'boolean and a missing key means on. Channels: `push`, `email` (`sms` is ' +
+      'stored but there is no SMS channel). Kinds: `chat_messages`, `item_requests`, ' +
+      '`listings` (a moderator hid, restored or removed your listing), `account` ' +
+      '(suspension, ban, reinstatement, appeal answers). Emails about the account ' +
+      'itself are always sent. The user-level `notification_enabled` turns ' +
+      'everything else off.',
   })
   @ApiBody({
     schema: {
       type: 'object',
-      example: { email: true, push: false, sms: true },
+      example: { push: true, email: false, item_requests: false },
     },
   })
   @ApiResponse({
