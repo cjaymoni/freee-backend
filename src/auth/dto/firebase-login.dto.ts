@@ -1,5 +1,6 @@
-import { IsNotEmpty, IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsFcmToken } from '../../notification/device-tokens';
+import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class FirebaseLoginDto {
   @ApiProperty({
@@ -9,4 +10,13 @@ export class FirebaseLoginDto {
   @IsString()
   @IsNotEmpty()
   idToken: string;
+
+  @ApiPropertyOptional({
+    description:
+      "This device's FCM token. Registers it for push on the new session, " +
+      'as PATCH /users/fcm-token would.',
+  })
+  @IsOptional()
+  @IsFcmToken()
+  fcm_token?: string;
 }

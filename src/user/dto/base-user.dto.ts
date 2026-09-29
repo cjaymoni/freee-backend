@@ -1,3 +1,4 @@
+import { IsFcmToken } from '../../notification/device-tokens';
 import {
   IsString,
   IsEmail,
@@ -127,7 +128,7 @@ export class BaseUserDto {
 
   @ApiProperty({ required: false, example: 'fcm-token-123' })
   @IsOptional()
-  @IsString()
+  @IsFcmToken()
   fcm_token?: string;
 
   @ApiProperty({ required: false, example: true })

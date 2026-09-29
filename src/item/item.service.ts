@@ -945,7 +945,7 @@ export class ItemService {
       adminId,
       reason || 'Removed by moderation',
     );
-    await this.notifications.notify(
+    void this.notifications.notify(
       item.user_id,
       listingRemovedNotice(item, reason),
     );

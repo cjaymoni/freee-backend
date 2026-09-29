@@ -173,7 +173,11 @@ export class ChatGateway
         return;
       }
 
-      const cameOnline = this.realtime.registerSocket(payload.sub, client.id);
+      const cameOnline = this.realtime.registerSocket(
+        payload.sub,
+        client.id,
+        payload.session_token,
+      );
 
       if (cameOnline) {
         await this.chatService.broadcastPresence(payload.sub, true);

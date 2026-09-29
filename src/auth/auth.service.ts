@@ -18,6 +18,7 @@ import { MailService } from '../mail/mail.service';
 import { AccountLockoutService } from './account-lockout.service';
 import { VerificationCodeEntity } from './entities/verification-code.entity';
 import { UserSessionEntity } from './entities/user-session.entity';
+import { releaseFcmToken } from '../notification/device-tokens';
 import { LoginAttemptEntity } from './entities/login-attempt.entity';
 import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -442,9 +443,13 @@ export class AuthService {
         user_agent: userAgent,
         expires_at: expiresAt,
         device_type: 'mobile',
+        fcm_token: firebaseAuthDto.fcm_token ?? null,
       });
 
       await sessionRepo.save(session);
+      if (firebaseAuthDto.fcm_token) {
+        await releaseFcmToken(manager, firebaseAuthDto.fcm_token, sessionToken);
+      }
 
       const payload = {
         sub: user.id,
@@ -482,7 +487,10 @@ export class AuthService {
   ) {
     // Wrap the new robust method to maintain backward compatibility
     return this.firebaseAuthenticate(
-      { idToken: firebaseLoginDto.idToken },
+      {
+        idToken: firebaseLoginDto.idToken,
+        fcm_token: firebaseLoginDto.fcm_token,
+      },
       ip,
       userAgent,
     );
@@ -585,9 +593,17 @@ export class AuthService {
         user_agent: userAgent,
         expires_at: expiresAt,
         device_type: 'web',
+        fcm_token: loginDto.fcm_token ?? null,
       });
 
       await queryRunner.manager.save(session);
+      if (loginDto.fcm_token) {
+        await releaseFcmToken(
+          queryRunner.manager,
+          loginDto.fcm_token,
+          sessionToken,
+        );
+      }
       await queryRunner.commitTransaction();
 
       // Generate JWT
@@ -683,12 +699,22 @@ export class AuthService {
     await queryRunner.startTransaction();
 
     try {
-      // Token Rotation: Invalidate old session and create a new one
-      await queryRunner.manager.update(
-        UserSessionEntity,
-        { id: session.id },
-        { is_active: false },
-      );
+      // Token rotation: end the old session and create a new one. Ending it
+      // and reading its push token is one statement, so a refresh that raced
+      // this one (or a token registered meanwhile) can't be lost or doubled.
+      const ended = await queryRunner.manager
+        .createQueryBuilder()
+        .update(UserSessionEntity)
+        .set({ is_active: false })
+        .where('id = :id AND is_active = true', { id: session.id })
+        .returning(['fcm_token'])
+        .execute();
+      if (!ended.affected) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+      const { fcm_token: fcmToken } = (
+        ended.raw as { fcm_token: string | null }[]
+      )[0];
 
       const user = session.user;
       const newSessionToken = randomBytes(32).toString('hex');
@@ -710,7 +736,7 @@ export class AuthService {
         expires_at: expiresAt,
         device_type: session.device_type,
         // Same device, new session: its pushes carry over.
-        fcm_token: session.fcm_token,
+        fcm_token: fcmToken,
       });
 
       await queryRunner.manager.save(newSession);

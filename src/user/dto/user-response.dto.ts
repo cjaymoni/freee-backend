@@ -1,6 +1,16 @@
 import { OmitType } from '@nestjs/swagger';
+import { Exclude } from 'class-transformer';
 import { BaseUserDto } from './base-user.dto';
 
 export class UserResponseDto extends OmitType(BaseUserDto, [
   'password',
-] as const) {}
+  'fcm_token',
+] as const) {
+  /**
+   * The deprecated users.fcm_token, copied in with the rest of the entity.
+   * Never returned: a push token is a device secret, and someone holding
+   * one could register it on their own session and take the pushes.
+   */
+  @Exclude()
+  fcm_token?: string;
+}

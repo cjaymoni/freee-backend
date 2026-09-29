@@ -93,7 +93,7 @@ describe('NotificationService.notify', () => {
     });
   });
 
-  it('only counts live, unexpired sessions with a token', async () => {
+  it('counts every session not signed out, however long idle', async () => {
     const { service, tokenQuery } = setup();
 
     await service.notify(USER, chat);
@@ -101,13 +101,20 @@ describe('NotificationService.notify', () => {
     const conditions = (tokenQuery.andWhere.mock.calls as [string][]).map(
       ([sql]) => sql,
     );
-    expect(conditions).toEqual(
-      expect.arrayContaining([
-        's.is_active = true',
-        's.fcm_token IS NOT NULL',
-        'COALESCE(s.refresh_token_expires_at, s.expires_at) > :now',
-      ]),
-    );
+    expect(conditions).toEqual([
+      's.is_active = true',
+      's.fcm_token IS NOT NULL',
+    ]);
+  });
+
+  it('leaves out the devices of the sessions it is told to skip', async () => {
+    const { service, tokenQuery } = setup();
+
+    await service.notify(USER, chat, { skipDevicesOf: ['web', 'phone'] });
+
+    const [sql, params] = tokenQuery.andWhere.mock.calls[2] as [string, object];
+    expect(sql).toContain('s.fcm_token NOT IN');
+    expect(params).toEqual({ skipDevicesOf: ['web', 'phone'] });
   });
 
   it('sends nothing when the user has no device', async () => {

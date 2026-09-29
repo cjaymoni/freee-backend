@@ -931,18 +931,19 @@ export class ChatService {
       });
     }
 
-    // A socket the app put in the background doesn't show the message, so
-    // only one in front of the user makes the push redundant.
-    if (this.realtime.isInForeground(recipientId)) {
-      return;
-    }
-
-    await this.sendPushNotification(message, conversation);
+    // Devices with the app open in front of the user already show it; the
+    // push goes to the rest (a phone in a pocket while a tab is open).
+    await this.sendPushNotification(
+      message,
+      conversation,
+      this.realtime.foregroundSessions(recipientId),
+    );
   }
 
   private async sendPushNotification(
     message: MessageEntity,
     conversation: ConversationEntity,
+    skipDevicesOf: string[],
   ): Promise<void> {
     try {
       const sender = await this.userRepository.findOne({
@@ -955,19 +956,23 @@ export class ChatService {
 
       // Delivery, preferences and which devices get it are all decided
       // there; item-request cards are their own kind a user can turn off.
-      await this.notifications.notify(message.recipient_id, {
-        category: message.system_event
-          ? NotificationCategory.ITEM_REQUESTS
-          : NotificationCategory.CHAT_MESSAGES,
-        title: senderName,
-        body: this.buildPreview(message),
-        data: {
-          type: 'chat_message',
-          conversation_id: conversation.id,
-          message_id: message.id,
-          sender_id: message.sender_id,
+      await this.notifications.notify(
+        message.recipient_id,
+        {
+          category: message.system_event
+            ? NotificationCategory.ITEM_REQUESTS
+            : NotificationCategory.CHAT_MESSAGES,
+          title: senderName,
+          body: this.buildPreview(message),
+          data: {
+            type: 'chat_message',
+            conversation_id: conversation.id,
+            message_id: message.id,
+            sender_id: message.sender_id,
+          },
         },
-      });
+        { skipDevicesOf },
+      );
     } catch (error) {
       this.logger.warn(
         `Failed to push chat notification: ${

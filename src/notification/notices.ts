@@ -112,17 +112,18 @@ export function complaintAnsweredNotice(
   status: string,
   response: string,
 ): Notice {
+  const outcome = status === 'resolved' ? 'resolved' : 'reviewed';
   return {
     category: NotificationCategory.ACCOUNT,
-    title: 'Your appeal has been answered',
-    body: response,
+    title: `Your complaint has been ${outcome}`,
+    body: response || 'Open the app to see the reply.',
     data: { type: 'complaint', status, complaint_id: complaintId },
-    // Appeals come from suspended accounts, which need the answer most.
+    // Complaints often come from suspended accounts, which need it most.
     evenIfInactive: true,
     email: {
-      subject: 'Your Freeee appeal has been answered',
+      subject: `Your Freeee complaint has been ${outcome}`,
       transactional: true,
-      paragraphs: [`Status: ${status.replace(/_/g, ' ')}`, response],
+      paragraphs: [`Outcome: ${status}`, ...(response ? [response] : [])],
     },
   };
 }

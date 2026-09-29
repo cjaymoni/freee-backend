@@ -202,10 +202,11 @@ describe('ChatGateway payloads over a real socket', () => {
 
     await expect(setState('background')).resolves.toEqual({ state: true });
     expect(realtime.isOnline('u1')).toBe(true);
-    expect(realtime.isInForeground('u1')).toBe(false);
+    expect(realtime.foregroundSessions('u1')).toEqual([]);
 
     await expect(setState('foreground')).resolves.toEqual({ state: true });
-    expect(realtime.isInForeground('u1')).toBe(true);
+    // Known by the session the socket authenticated with (the JWT's s1).
+    expect(realtime.foregroundSessions('u1')).toEqual(['s1']);
   });
 
   it('refuses an unknown app state', async () => {

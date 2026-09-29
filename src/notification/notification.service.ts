@@ -7,8 +7,19 @@ import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { FirebaseService } from '../firebase/firebase.service';
 import { MailService } from '../mail/mail.service';
 import { Notice } from './notification.types';
+import { releaseFcmToken } from './device-tokens';
 
 type Settings = Record<string, unknown>;
+
+export interface NotifyOptions {
+  /**
+   * Session tokens whose devices already show this, e.g. the ones with the
+   * app open in front of the user: they get no push.
+   */
+  skipDevicesOf?: string[];
+}
+
+class SessionNotLive extends Error {}
 
 /**
  * Sends a user push notifications and emails, and keeps track of the
@@ -42,7 +53,11 @@ export class NotificationService {
    * Best-effort: it never throws, so a notification can't undo or fail the
    * action it reports.
    */
-  async notify(userId: string, notice: Notice): Promise<void> {
+  async notify(
+    userId: string,
+    notice: Notice,
+    options: NotifyOptions = {},
+  ): Promise<void> {
     try {
       const user = await this.users.findOne({
         where: { id: userId },
@@ -72,7 +87,7 @@ export class NotificationService {
           (wantsNotifications && wantsCategory && settings.email !== false));
 
       const results = await Promise.allSettled([
-        push ? this.push(userId, notice) : Promise.resolve(),
+        push ? this.push(userId, notice, options) : Promise.resolve(),
         email
           ? this.mail.sendNotice(user.email!, {
               subject: notice.email!.subject,
@@ -90,35 +105,35 @@ export class NotificationService {
   }
 
   /**
-   * Attach the app's FCM token to the session it is signed in with. A token
-   * belongs to one install, so any other session holding it (another
-   * account signed in on that phone before) lets go of it.
+   * Attach the app's FCM token to the session it is signed in with, and take
+   * it off any other live session (see releaseFcmToken).
    *
-   * @returns false if the session is not live.
+   * @returns false, changing nothing, if the session is not live.
    */
   async registerDevice(
     userId: string,
     sessionToken: string,
     fcmToken: string,
   ): Promise<boolean> {
-    return this.dataSource.transaction(async (manager) => {
-      await manager
-        .createQueryBuilder()
-        .update(UserSessionEntity)
-        .set({ fcm_token: () => 'NULL' })
-        .where('fcm_token = :fcmToken', { fcmToken })
-        .andWhere('session_token <> :sessionToken', { sessionToken })
-        .execute();
-      const result = await manager
-        .createQueryBuilder()
-        .update(UserSessionEntity)
-        .set({ fcm_token: fcmToken })
-        .where('session_token = :sessionToken', { sessionToken })
-        .andWhere('user_id = :userId', { userId })
-        .andWhere('is_active = true')
-        .execute();
-      return (result.affected ?? 0) > 0;
-    });
+    return this.dataSource
+      .transaction(async (manager) => {
+        const result = await manager
+          .createQueryBuilder()
+          .update(UserSessionEntity)
+          .set({ fcm_token: fcmToken })
+          .where('session_token = :sessionToken', { sessionToken })
+          .andWhere('user_id = :userId', { userId })
+          .andWhere('is_active = true')
+          .execute();
+        // Rolls back, so no other session loses the token for nothing.
+        if (!result.affected) throw new SessionNotLive();
+        await releaseFcmToken(manager, fcmToken, sessionToken);
+        return true;
+      })
+      .catch((error: unknown) => {
+        if (error instanceof SessionNotLive) return false;
+        throw error;
+      });
   }
 
   /** Stop pushing to the device behind this session, e.g. on sign-out. */
@@ -132,8 +147,12 @@ export class NotificationService {
       .execute();
   }
 
-  private async push(userId: string, notice: Notice): Promise<void> {
-    const tokens = await this.deviceTokens(userId);
+  private async push(
+    userId: string,
+    notice: Notice,
+    { skipDevicesOf = [] }: NotifyOptions,
+  ): Promise<void> {
+    const tokens = await this.deviceTokens(userId, skipDevicesOf);
     if (!tokens.length) return;
 
     const { invalidTokens } = await this.firebase.sendToTokens(tokens, {
@@ -145,20 +164,31 @@ export class NotificationService {
   }
 
   /**
-   * The FCM tokens of the user's live sessions: not signed out, and not past
-   * the point where the app could still refresh them.
+   * The FCM tokens of the user's sessions that have not ended. A session
+   * that sat idle past its refresh token still counts: the app is still
+   * installed, and FCM tells us once a token stops working.
    */
-  private async deviceTokens(userId: string): Promise<string[]> {
-    const rows = await this.sessions
+  private async deviceTokens(
+    userId: string,
+    skipDevicesOf: string[],
+  ): Promise<string[]> {
+    const query = this.sessions
       .createQueryBuilder('s')
       .select('DISTINCT s.fcm_token', 'token')
       .where('s.user_id = :userId', { userId })
       .andWhere('s.is_active = true')
-      .andWhere('s.fcm_token IS NOT NULL')
-      .andWhere('COALESCE(s.refresh_token_expires_at, s.expires_at) > :now', {
-        now: new Date(),
-      })
-      .getRawMany<{ token: string }>();
+      .andWhere('s.fcm_token IS NOT NULL');
+    if (skipDevicesOf.length) {
+      // A device is known by its token, which survives session rotation.
+      query.andWhere(
+        `s.fcm_token NOT IN (
+          SELECT x.fcm_token FROM user_sessions x
+          WHERE x.session_token IN (:...skipDevicesOf) AND x.fcm_token IS NOT NULL
+        )`,
+        { skipDevicesOf },
+      );
+    }
+    const rows = await query.getRawMany<{ token: string }>();
     return rows.map((row) => row.token);
   }
 

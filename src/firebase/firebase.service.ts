@@ -2,10 +2,19 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
 
-/** FCM errors meaning the token itself is dead, not that this send failed. */
+/** FCM errors that always mean the token itself is dead. */
 const DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
+]);
+
+/**
+ * Errors that mean a bad token only if another token in the same send got
+ * through; otherwise they point at the payload or the credentials.
+ */
+const DEAD_IF_OTHERS_SENT = new Set([
+  'messaging/invalid-argument',
+  'messaging/mismatched-credential',
 ]);
 
 @Injectable()
@@ -156,9 +165,14 @@ export class FirebaseService implements OnModuleInit {
     });
 
     const invalidTokens: string[] = [];
+    const othersSent = response.successCount > 0;
     response.responses.forEach(({ success, error }, index) => {
       if (success) return;
-      if (error && DEAD_TOKEN_CODES.has(error.code)) {
+      const code = error?.code ?? '';
+      if (
+        DEAD_TOKEN_CODES.has(code) ||
+        (othersSent && DEAD_IF_OTHERS_SENT.has(code))
+      ) {
         invalidTokens.push(tokens[index]);
       } else {
         this.logger.warn(

@@ -12,6 +12,10 @@ import { MailService } from './mail.service';
           host: config.get('SMTP_HOST'),
           port: config.get('SMTP_PORT'),
           secure: false, // true for 465, false for other ports
+          // Nodemailer waits minutes by default; notices are best-effort.
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 20_000,
           auth: {
             user: config.get('SMTP_USER'),
             pass: config.get('SMTP_PASS'),

@@ -247,15 +247,12 @@ export class AdminItemsService {
     // The owner hears when their listing leaves the app or comes back to
     // it. A flag is internal, so flagging, or clearing a flag, stays quiet.
     if (to === ModerationStatus.HIDDEN) {
-      await this.notifications.notify(
+      void this.notifications.notify(
         item.user_id,
         listingHiddenNotice(item, reason),
       );
     } else if (item.moderation_status === ModerationStatus.HIDDEN) {
-      await this.notifications.notify(
-        item.user_id,
-        listingRestoredNotice(item),
-      );
+      void this.notifications.notify(item.user_id, listingRestoredNotice(item));
     }
 
     return this.detail(itemId);

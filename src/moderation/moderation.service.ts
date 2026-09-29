@@ -25,7 +25,10 @@ import { CreateReportedUserDto } from './dto/create-reported-user.dto';
 import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
 import { ActionTaken, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
-import { ResolveComplaintDto } from './dto/resolve-complaint.dto';
+import {
+  ComplaintStatus,
+  ResolveComplaintDto,
+} from './dto/resolve-complaint.dto';
 
 const PRIORITY_RANK: Record<string, number> = {
   urgent: 0,
@@ -74,6 +77,9 @@ function assertNotOwnReport(reporterId: string, reviewerId: string) {
     throw new ForbiddenException('You cannot review a report you filed');
   }
 }
+
+/** Complaint outcomes the user is told about. */
+const FINAL_COMPLAINT_STATUSES: string[] = ['resolved', 'rejected'];
 
 @Injectable()
 export class ModerationService {
@@ -268,7 +274,7 @@ export class ModerationService {
 
     const saved = await this.reportedUserRepo.save(report);
     if (suspended) {
-      await this.notifications.notify(
+      void this.notifications.notify(
         suspended.userId,
         accountSuspendedNotice(null, suspended.reason),
       );
@@ -332,6 +338,11 @@ export class ModerationService {
     if (!complaint) {
       throw new NotFoundException('Complaint not found');
     }
+    const answered = {
+      // Stored as plain text; it only ever holds a ComplaintStatus.
+      status: complaint.status as ComplaintStatus,
+      response: complaint.adminResponse,
+    };
     Object.assign(complaint, {
       ...dto,
       reviewedBy: reviewerId,
@@ -341,10 +352,17 @@ export class ModerationService {
         : null,
     });
     const saved = await this.complaintRepo.save(complaint);
-    await this.notifications.notify(
-      complaint.userId,
-      complaintAnsweredNotice(complaint.id, dto.status, dto.adminResponse),
-    );
+    // Only a final answer reaches the user, and only once: taking it under
+    // review, or saving the same answer again, stays between staff.
+    const final = FINAL_COMPLAINT_STATUSES.includes(dto.status);
+    const changed =
+      dto.status !== answered.status || dto.adminResponse !== answered.response;
+    if (final && changed) {
+      void this.notifications.notify(
+        complaint.userId,
+        complaintAnsweredNotice(complaint.id, dto.status, dto.adminResponse),
+      );
+    }
     return saved;
   }
 

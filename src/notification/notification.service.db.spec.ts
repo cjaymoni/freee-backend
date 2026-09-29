@@ -91,7 +91,14 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
     await ds?.destroy();
   });
 
-  it('pushes to each signed-in device, not signed-out or expired ones', async () => {
+  /** Backdate a session, since saves in a row can share a timestamp. */
+  const createdHoursAgo = (sessionToken: string, hours: number) =>
+    ds.query(
+      'UPDATE user_sessions SET created_at = $1 WHERE session_token = $2',
+      [new Date(Date.now() - hours * HOUR), sessionToken],
+    );
+
+  it('pushes to every device not signed out, however long idle', async () => {
     await session(ama, 'ama-phone');
     await session(ama, 'ama-tablet');
     await service.registerDevice(ama.id, 'ama-phone', 'fcm-phone');
@@ -100,12 +107,18 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       is_active: false,
       fcm_token: 'fcm-signed-out',
     });
-    await session(ama, 'ama-stale', {
-      refresh_token_expires_at: new Date(Date.now() - HOUR),
-      fcm_token: 'fcm-expired',
+    // Unopened for weeks: its refresh token ran out, but it never signed out.
+    await session(ama, 'ama-idle', {
+      refresh_token_expires_at: new Date(Date.now() - 30 * 24 * HOUR),
+      expires_at: new Date(Date.now() - 30 * 24 * HOUR),
+      fcm_token: 'fcm-idle',
     });
 
-    expect(await pushedTo(ama.id)).toEqual(['fcm-phone', 'fcm-tablet']);
+    expect(await pushedTo(ama.id)).toEqual([
+      'fcm-idle',
+      'fcm-phone',
+      'fcm-tablet',
+    ]);
   });
 
   it('moves a token to whoever signs in on that phone next', async () => {
@@ -115,17 +128,44 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
 
     expect(await tokenOf('ama-phone')).toBeNull();
     expect(await pushedTo(kofi.id)).toEqual(['fcm-phone']);
-    expect(await pushedTo(ama.id)).toEqual(['fcm-tablet']);
+    expect(await pushedTo(ama.id)).toEqual(['fcm-idle', 'fcm-tablet']);
   });
 
-  it("won't attach a token to a session that is over or someone else's", async () => {
-    expect(await service.registerDevice(ama.id, 'ama-old', 'fcm-x')).toBe(
-      false,
-    );
-    expect(await service.registerDevice(ama.id, 'kofi-phone', 'fcm-x')).toBe(
-      false,
-    );
+  it('leaves the token on ended sessions, which still name their device', async () => {
+    await service.registerDevice(ama.id, 'ama-tablet', 'fcm-signed-out');
+
+    expect(await tokenOf('ama-old')).toBe('fcm-signed-out');
+  });
+
+  it("changes nothing for a session that is over or someone else's", async () => {
+    expect(
+      await service.registerDevice(ama.id, 'ama-old', 'fcm-signed-out'),
+    ).toBe(false);
+    expect(
+      await service.registerDevice(ama.id, 'kofi-phone', 'fcm-phone'),
+    ).toBe(false);
+    // The failed attempts took the token off no one.
+    expect(await tokenOf('ama-tablet')).toBe('fcm-signed-out');
     expect(await tokenOf('kofi-phone')).toBe('fcm-phone');
+  });
+
+  it('skips a device with the app open, even after its session rotated', async () => {
+    await service.registerDevice(ama.id, 'ama-tablet', 'fcm-tablet');
+    // The tablet's socket connected on ama-tablet; a refresh then ended that
+    // session and carried the token onto a new one.
+    await session(ama, 'ama-tablet-2', { fcm_token: 'fcm-tablet' });
+    await ds.query(
+      "UPDATE user_sessions SET is_active = false WHERE session_token = 'ama-tablet'",
+    );
+
+    firebase.sendToTokens.mockClear();
+    await service.notify(
+      ama.id,
+      { category: NotificationCategory.CHAT_MESSAGES, title: 't', body: 'b' },
+      { skipDevicesOf: ['ama-tablet', 'ama-web-without-token'] },
+    );
+
+    expect(firebase.sendToTokens.mock.calls[0][0]).toEqual(['fcm-idle']);
   });
 
   it('stops one device without touching the others', async () => {
@@ -135,7 +175,7 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
     await service.unregisterDevice(ama.id, 'ama-laptop');
 
     expect(await tokenOf('ama-laptop')).toBeNull();
-    expect(await pushedTo(ama.id)).toEqual(['fcm-tablet']);
+    expect(await pushedTo(ama.id)).toEqual(['fcm-idle', 'fcm-tablet']);
   });
 
   it('forgets a token FCM reports dead, on every session holding it', async () => {
@@ -146,7 +186,8 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
     await pushedTo(ama.id);
 
     expect(await tokenOf('ama-tablet')).toBeNull();
-    expect(await pushedTo(ama.id)).toEqual([]);
+    expect(await tokenOf('ama-tablet-2')).toBeNull();
+    expect(await pushedTo(ama.id)).toEqual(['fcm-idle']);
   });
 
   describe('MoveFcmTokensToSessions migration', () => {
@@ -160,18 +201,19 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       }
     };
 
-    it("copies each user's token onto their latest live session", async () => {
+    it("copies each user's token onto their latest session not signed out", async () => {
       const [efua] = await ds
         .getRepository(UserEntity)
         .save([{ email: 'efua@example.com', fcm_token: 'fcm-legacy' }]);
-      await session(efua, 'efua-older', {
-        last_activity: new Date(Date.now() - 2 * HOUR),
+      await session(efua, 'efua-older');
+      await session(efua, 'efua-latest', {
+        // Idle past its refresh token still counts, as for sending.
+        refresh_token_expires_at: new Date(Date.now() - HOUR),
       });
-      await session(efua, 'efua-latest', { last_activity: new Date() });
-      await session(efua, 'efua-ended', {
-        is_active: false,
-        last_activity: new Date(Date.now() + HOUR),
-      });
+      await session(efua, 'efua-ended', { is_active: false });
+      await createdHoursAgo('efua-older', 3);
+      await createdHoursAgo('efua-latest', 2);
+      await createdHoursAgo('efua-ended', 1);
 
       await run();
 
@@ -180,16 +222,32 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       expect(await tokenOf('efua-ended')).toBeNull();
     });
 
-    it('leaves a token alone that a session already holds', async () => {
-      const [yaw] = await ds
-        .getRepository(UserEntity)
-        .save([{ email: 'yaw@example.com', fcm_token: 'fcm-phone' }]);
+    it('gives a token two users shared to the newest of their sessions', async () => {
+      const [esi, yaw] = await ds.getRepository(UserEntity).save([
+        { email: 'esi@example.com', fcm_token: 'fcm-shared' },
+        { email: 'yaw@example.com', fcm_token: 'fcm-shared' },
+      ]);
+      await session(esi, 'esi-phone');
       await session(yaw, 'yaw-phone');
+      await createdHoursAgo('esi-phone', 5);
+      await createdHoursAgo('yaw-phone', 4);
+
+      await run();
+
+      expect(await tokenOf('yaw-phone')).toBe('fcm-shared');
+      expect(await tokenOf('esi-phone')).toBeNull();
+    });
+
+    it('leaves a token alone that a session already holds', async () => {
+      const [abena] = await ds
+        .getRepository(UserEntity)
+        .save([{ email: 'abena@example.com', fcm_token: 'fcm-phone' }]);
+      await session(abena, 'abena-phone');
 
       await run();
 
       // kofi-phone registered fcm-phone itself; it is not copied again.
-      expect(await tokenOf('yaw-phone')).toBeNull();
+      expect(await tokenOf('abena-phone')).toBeNull();
       expect(await tokenOf('kofi-phone')).toBe('fcm-phone');
     });
 

@@ -1,3 +1,4 @@
+import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 
 type Row = {
@@ -163,17 +164,30 @@ describe('AuthService wrong verification codes', () => {
 });
 
 describe('AuthService.refresh', () => {
-  it("keeps the device's push token on the rotated session", async () => {
+  const setup = (ended: { affected: number; raw: object[] }) => {
     const created: Record<string, unknown>[] = [];
+    const endQuery = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      returning: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(ended),
+    };
     const runner = {
       isTransactionActive: false,
       connect: jest.fn(),
-      startTransaction: jest.fn(),
-      commitTransaction: jest.fn(),
-      rollbackTransaction: jest.fn(),
+      startTransaction: jest.fn(() => {
+        runner.isTransactionActive = true;
+      }),
+      commitTransaction: jest.fn(() => {
+        runner.isTransactionActive = false;
+      }),
+      rollbackTransaction: jest.fn(() => {
+        runner.isTransactionActive = false;
+      }),
       release: jest.fn(),
       manager: {
-        update: jest.fn(),
+        createQueryBuilder: () => endQuery,
         create: jest.fn((_entity: unknown, values: Record<string, unknown>) => {
           created.push(values);
           return values;
@@ -190,19 +204,110 @@ describe('AuthService.refresh', () => {
         id: 'old-session',
         user: { id: 'u1', email: 'a@example.com', role: 'USER' },
         device_type: 'android',
-        fcm_token: 'fcm-phone',
+        fcm_token: 'read-before-the-transaction',
         refresh_token_expires_at: new Date(Date.now() + 60_000),
       }),
     };
     service.dataSource = { createQueryRunner: () => runner };
     service.jwtService = { sign: () => 'access-token' };
+    const refresh = () =>
+      (service.refresh as AuthService['refresh'])('refresh-1', '::1', 'ua');
+    return { refresh, created, endQuery, runner };
+  };
 
-    await (service.refresh as AuthService['refresh'])('refresh-1', '::1', 'ua');
+  it('carries the push token read as the old session ends', async () => {
+    const { refresh, created, endQuery } = setup({
+      affected: 1,
+      raw: [{ fcm_token: 'fcm-registered-meanwhile' }],
+    });
 
+    await refresh();
+
+    expect(endQuery.where).toHaveBeenCalledWith(
+      'id = :id AND is_active = true',
+      { id: 'old-session' },
+    );
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
       device_type: 'android',
-      fcm_token: 'fcm-phone',
+      fcm_token: 'fcm-registered-meanwhile',
     });
+  });
+
+  it('refuses a refresh that lost the race to another one', async () => {
+    const { refresh, created, runner } = setup({ affected: 0, raw: [] });
+
+    await expect(refresh()).rejects.toThrow('Invalid or expired refresh token');
+    expect(created).toHaveLength(0);
+    expect(runner.rollbackTransaction).toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.login with a device token', () => {
+  it('registers the token on the new session and takes it off others', async () => {
+    const created: Record<string, unknown>[] = [];
+    const released: Record<string, unknown>[] = [];
+    const releaseQuery: Record<string, jest.Mock> = {};
+    Object.assign(releaseQuery, {
+      update: jest.fn(() => releaseQuery),
+      set: jest.fn(() => releaseQuery),
+      where: jest.fn((_sql: string, params: Record<string, unknown>) => {
+        released.push(params);
+        return releaseQuery;
+      }),
+      andWhere: jest.fn((_sql: string, params?: Record<string, unknown>) => {
+        if (params) released.push(params);
+        return releaseQuery;
+      }),
+      execute: jest.fn().mockResolvedValue({ affected: 1 }),
+    });
+    const runner = {
+      isTransactionActive: false,
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+      manager: {
+        create: jest.fn((_entity: unknown, values: Record<string, unknown>) => {
+          created.push(values);
+          return values;
+        }),
+        save: jest.fn(),
+        update: jest.fn(),
+        createQueryBuilder: () => releaseQuery,
+      },
+    };
+    const service = Object.create(AuthService.prototype) as Record<
+      string,
+      unknown
+    >;
+    service.userService = {
+      findByEmailWithPassword: jest.fn().mockResolvedValue({
+        id: 'u1',
+        email: 'ama@example.com',
+        is_active: true,
+        password_hash: await bcrypt.hash('secret1', 4),
+      }),
+    };
+    service.accountLockoutService = {
+      isAccountLocked: jest.fn().mockResolvedValue(false),
+      resetFailedAttempts: jest.fn(),
+    };
+    service.dataSource = { createQueryRunner: () => runner };
+    service.jwtService = { sign: () => 'access-token' };
+
+    await (service.login as AuthService['login'])(
+      { email: 'ama@example.com', password: 'secret1', fcm_token: 'fcm-phone' },
+      '::1',
+      'ua',
+    );
+
+    const session = created.find((values) => 'session_token' in values)!;
+    expect(session.fcm_token).toBe('fcm-phone');
+    expect(released).toEqual([
+      { fcmToken: 'fcm-phone' },
+      { keepSessionToken: session.session_token },
+    ]);
   });
 });

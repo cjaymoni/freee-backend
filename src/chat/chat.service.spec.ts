@@ -16,7 +16,10 @@ import { ItemEntity } from '../item/entities/item.entity';
 import { ItemRequestEntity } from '../item-request/entities/item-request.entity';
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { NotificationService } from '../notification/notification.service';
+import {
+  NotificationService,
+  NotifyOptions,
+} from '../notification/notification.service';
 import {
   NotificationCategory,
   Notice,
@@ -94,7 +97,9 @@ describe('ChatService', () => {
   let itemRequestRepository: any;
   let blockedUserRepository: any;
   let dataSource: any;
-  let notifications: { notify: jest.Mock<Promise<void>, [string, Notice]> };
+  let notifications: {
+    notify: jest.Mock<Promise<void>, [string, Notice, NotifyOptions?]>;
+  };
   /** Every `set()` payload written during a test. */
   let updates: Record<string, unknown>[];
 
@@ -102,7 +107,7 @@ describe('ChatService', () => {
     updates = [];
     notifications = {
       notify: jest
-        .fn<Promise<void>, [string, Notice]>()
+        .fn<Promise<void>, [string, Notice, NotifyOptions?]>()
         .mockResolvedValue(undefined),
     };
 
@@ -407,9 +412,13 @@ describe('ChatService', () => {
     it('reports a user online only while they hold at least one socket', () => {
       expect(realtime.isOnline(ALICE)).toBe(false);
 
-      expect(realtime.registerSocket(ALICE, 'socket-1')).toBe(true);
+      expect(realtime.registerSocket(ALICE, 'socket-1', 'session-1')).toBe(
+        true,
+      );
       // A second device must not re-announce them as newly online.
-      expect(realtime.registerSocket(ALICE, 'socket-2')).toBe(false);
+      expect(realtime.registerSocket(ALICE, 'socket-2', 'session-2')).toBe(
+        false,
+      );
       expect(realtime.isOnline(ALICE)).toBe(true);
 
       // Closing one of two sockets leaves them online.
@@ -420,36 +429,44 @@ describe('ChatService', () => {
       expect(realtime.isOnline(ALICE)).toBe(false);
     });
 
-    it('keeps a backgrounded socket online but not in the foreground', () => {
-      realtime.registerSocket(ALICE, 'phone');
-      expect(realtime.isInForeground(ALICE)).toBe(true);
+    it('tells which sessions have the app in front of the user', () => {
+      realtime.registerSocket(ALICE, 'phone', 'phone-session');
+      realtime.registerSocket(ALICE, 'tab', 'web-session');
+      expect(realtime.foregroundSessions(ALICE).sort()).toEqual([
+        'phone-session',
+        'web-session',
+      ]);
 
+      // A backgrounded socket stays online but its device is no longer in front.
       realtime.setBackground(ALICE, 'phone', true);
       expect(realtime.isOnline(ALICE)).toBe(true);
-      expect(realtime.isInForeground(ALICE)).toBe(false);
-
-      // Another device in front is enough.
-      realtime.registerSocket(ALICE, 'laptop');
-      expect(realtime.isInForeground(ALICE)).toBe(true);
+      expect(realtime.foregroundSessions(ALICE)).toEqual(['web-session']);
 
       realtime.setBackground(ALICE, 'phone', false);
-      realtime.unregisterSocket(ALICE, 'laptop');
-      expect(realtime.isInForeground(ALICE)).toBe(true);
+      expect(realtime.foregroundSessions(ALICE)).toContain('phone-session');
+    });
+
+    it('lists a session once, however many of its sockets are open', () => {
+      realtime.registerSocket(ALICE, 'a', 'session-1');
+      realtime.registerSocket(ALICE, 'b', 'session-1');
+      expect(realtime.foregroundSessions(ALICE)).toEqual(['session-1']);
     });
 
     it('ignores app state for a socket it does not know', () => {
       realtime.setBackground(ALICE, 'ghost', true);
-      realtime.registerSocket(ALICE, 'ghost');
+      realtime.registerSocket(ALICE, 'ghost', 'session-1');
       // The stale event must not have marked the new socket as background.
-      expect(realtime.isInForeground(ALICE)).toBe(true);
+      expect(realtime.foregroundSessions(ALICE)).toEqual(['session-1']);
     });
 
-    it('forgets a closed socket was in the background', () => {
-      realtime.registerSocket(ALICE, 'phone');
+    it('forgets a closed socket and its state', () => {
+      realtime.registerSocket(ALICE, 'phone', 'old-session');
       realtime.setBackground(ALICE, 'phone', true);
       realtime.unregisterSocket(ALICE, 'phone');
-      realtime.registerSocket(ALICE, 'phone');
-      expect(realtime.isInForeground(ALICE)).toBe(true);
+      expect(realtime.foregroundSessions(ALICE)).toEqual([]);
+
+      realtime.registerSocket(ALICE, 'phone', 'new-session');
+      expect(realtime.foregroundSessions(ALICE)).toEqual(['new-session']);
     });
   });
 
@@ -473,37 +490,35 @@ describe('ChatService', () => {
       });
     });
 
-    it('pushes a message to a recipient with no socket', async () => {
+    it('pushes a message to every device of a recipient with no socket', async () => {
       await broadcast(message());
 
-      expect(notifications.notify).toHaveBeenCalledWith(BOB, {
-        category: NotificationCategory.CHAT_MESSAGES,
-        title: 'Alice Ansah',
-        body: 'hello',
-        data: {
-          type: 'chat_message',
-          conversation_id: 'conv-1',
-          message_id: 'msg-1',
-          sender_id: ALICE,
+      expect(notifications.notify).toHaveBeenCalledWith(
+        BOB,
+        {
+          category: NotificationCategory.CHAT_MESSAGES,
+          title: 'Alice Ansah',
+          body: 'hello',
+          data: {
+            type: 'chat_message',
+            conversation_id: 'conv-1',
+            message_id: 'msg-1',
+            sender_id: ALICE,
+          },
         },
-      });
+        { skipDevicesOf: [] },
+      );
     });
 
-    it('pushes to a recipient whose only socket is in the background', async () => {
-      realtime.registerSocket(BOB, 'bob-phone');
+    it('skips only the devices with the app in front', async () => {
+      realtime.registerSocket(BOB, 'bob-tab', 'bob-web');
+      realtime.registerSocket(BOB, 'bob-phone', 'bob-mobile');
       realtime.setBackground(BOB, 'bob-phone', true);
 
       await broadcast(message());
 
-      expect(notifications.notify).toHaveBeenCalled();
-    });
-
-    it('does not push to a recipient with the app open', async () => {
-      realtime.registerSocket(BOB, 'bob-phone');
-
-      await broadcast(message());
-
-      expect(notifications.notify).not.toHaveBeenCalled();
+      const [, , options] = notifications.notify.mock.calls[0];
+      expect(options).toEqual({ skipDevicesOf: ['bob-web'] });
     });
 
     it('files an item-request card under item requests', async () => {
