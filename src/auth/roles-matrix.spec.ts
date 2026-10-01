@@ -16,6 +16,7 @@ import { ItemRequestController } from '../item-request/item-request.controller';
 import { ItemViewController } from '../item-view/item-view.controller';
 import { ItemImageController } from '../item/item-image.controller';
 import { ItemController } from '../item/item.controller';
+import { LocationsController } from '../locations/locations.controller';
 import { ModerationController } from '../moderation/moderation.controller';
 import { SavedItemController } from '../saved-item/saved-item.controller';
 import { SearchController } from '../search/search.controller';
@@ -78,6 +79,7 @@ const CONTROLLERS = [
   ItemViewController,
   ItemImageController,
   ItemController,
+  LocationsController,
   ModerationController,
   SavedItemController,
   SearchController,

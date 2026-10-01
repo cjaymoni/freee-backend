@@ -28,6 +28,7 @@ import { ItemRequestModule } from './item-request/item-request.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { ChatModule } from './chat/chat.module';
 import { AdminModule } from './admin/admin.module';
+import { LocationsModule } from './locations/locations.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -112,6 +113,7 @@ import { envValidationSchema } from './config/env.validation';
     ModerationModule,
     ChatModule,
     AdminModule,
+    LocationsModule,
     HealthModule,
     CommonModule,
     FirebaseModule,

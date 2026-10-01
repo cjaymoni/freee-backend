@@ -336,6 +336,16 @@ first. The two must travel together, and cannot be combined with a
 coordinates again on a later edit moves the item rather than accumulating
 rows, and never touches a location the user saved to their profile.
 
+**Pick places from `/locations`, then save them under `/user/locations`.**
+The `/locations` endpoints are a fixed directory of countries, states and
+cities, so load one level at a time as the user picks. Each country carries
+two codes: `code` (`GH`) and `code3` (`GHA`). The directory accepts either,
+but a saved location's `country_code` holds the three-letter one, so send
+`code3` as `country_code` and the state and city names as `region` and
+`city`. `GET /user/locations/country/{code}` is not part of the directory: it
+returns only the caller's own saved locations in that country, so it is empty
+for a user who has saved none there.
+
 **Uploads go up to 10 MB per file, as multipart.** Item images, avatars and
 chat images all share this limit (it is the Cloudinary plan's ceiling). Item
 images use `multipart/form-data`, at most 10 files per request. A request with
@@ -394,6 +404,9 @@ defaulting to 1 and 20.
 | `GET` | `/items/my-items` | The signed-in user's listings. |
 | `POST` | `/items/{itemId}/images` | Takes Cloudinary metadata as JSON, not a file. Edit photos through `PUT /items/{id}` instead. |
 | `GET` | `/categories` | Seeded and stable — cache it locally. |
+| `GET` | `/locations/countries` | Public. Every country, for the location picker. Cache it. |
+| `GET` | `/locations/countries/{code}/states` | Public. States of one country. |
+| `GET` | `/locations/countries/{code}/states/{stateCode}/cities` | Public. Cities of one state. |
 | `POST` | `/saved-items` | Save an item. |
 | `DELETE` | `/saved-items/{itemId}` | Unsave. |
 | `GET` | `/auth/me` | The signed-in user's own profile. |
@@ -401,7 +414,7 @@ defaulting to 1 and 20.
 | `POST` | `/moderation/users/block` | Block a user. Reporting lives under the same prefix. |
 | `GET` | `/health` | Unauthenticated. Useful as a connectivity probe. |
 
-There are 100 routes in total. The live Swagger UI at `/api` is
+There are 129 routes in total. The live Swagger UI at `/api` is
 authoritative — generate your client from `/api-json` if you would
 rather not hand-write the interface.
 
