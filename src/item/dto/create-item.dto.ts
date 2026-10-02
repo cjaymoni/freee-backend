@@ -53,7 +53,10 @@ export class CreateItemDto {
   @Type(() => Number)
   price?: number;
 
-  @ApiPropertyOptional({ description: 'Whether the item is free', default: true })
+  @ApiPropertyOptional({
+    description: 'Whether the item is free',
+    default: true,
+  })
   @Transform(({ value }) => {
     if (value === 'true' || value === '1') return true;
     if (value === 'false' || value === '0') return false;
@@ -134,7 +137,11 @@ export class CreateItemDto {
   @IsOptional()
   pickup_time?: string;
 
-  @ApiPropertyOptional({ description: 'Pickup type', enum: PickupType, enumName: 'PickupType' })
+  @ApiPropertyOptional({
+    description: 'Pickup type',
+    enum: PickupType,
+    enumName: 'PickupType',
+  })
   @IsEnum(PickupType)
   @IsOptional()
   pickup_type?: PickupType;

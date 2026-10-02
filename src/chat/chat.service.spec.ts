@@ -131,7 +131,10 @@ describe('ChatService', () => {
       update: jest.fn().mockResolvedValue(undefined),
     };
 
-    itemRepository = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    itemRepository = {
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+    };
     itemRequestRepository = { find: jest.fn().mockResolvedValue([]) };
     blockedUserRepository = { findOne: jest.fn().mockResolvedValue(null) };
 
@@ -175,7 +178,10 @@ describe('ChatService', () => {
           useValue: blockedUserRepository,
         },
         { provide: DataSource, useValue: dataSource },
-        { provide: CloudinaryService, useValue: { uploadImage: jest.fn(), deleteImage: jest.fn() } },
+        {
+          provide: CloudinaryService,
+          useValue: { uploadImage: jest.fn(), deleteImage: jest.fn() },
+        },
         { provide: NotificationService, useValue: notifications },
       ],
     }).compile();
@@ -184,8 +190,7 @@ describe('ChatService', () => {
     realtime = module.get<ChatRealtimeService>(ChatRealtimeService);
   });
 
-  const statusOf = (error: unknown): number =>
-    (error as AppError).getStatus();
+  const statusOf = (error: unknown): number => (error as AppError).getStatus();
 
   describe('listConversations', () => {
     const listBuilder = (rows: ConversationEntity[]) => ({

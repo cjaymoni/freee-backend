@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class UserPreferredCategoriesJoinTable1767900000001
-  implements MigrationInterface
-{
+export class UserPreferredCategoriesJoinTable1767900000001 implements MigrationInterface {
   name = 'UserPreferredCategoriesJoinTable1767900000001';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

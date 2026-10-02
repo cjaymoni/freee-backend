@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+  CreateDateColumn,
+  Index,
+} from 'typeorm';
 import { UserEntity } from '../../user/entities/user.entity';
 
 @Entity('reported_users')
@@ -49,7 +57,12 @@ export class ReportedUser {
   @Column({ name: 'resolution_notes', type: 'text', nullable: true })
   resolutionNotes: string;
 
-  @Column({ name: 'action_taken', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'action_taken',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   actionTaken: string;
 
   @CreateDateColumn({ name: 'created_at' })

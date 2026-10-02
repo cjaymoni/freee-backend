@@ -16,7 +16,11 @@ export class ItemRequestResponseDto {
   @ApiProperty({ description: 'User ID of the item owner' })
   owner_id: string;
 
-  @ApiProperty({ description: 'Current status of the request', enum: RequestStatus, enumName: 'RequestStatus' })
+  @ApiProperty({
+    description: 'Current status of the request',
+    enum: RequestStatus,
+    enumName: 'RequestStatus',
+  })
   status: RequestStatus;
 
   @ApiPropertyOptional({

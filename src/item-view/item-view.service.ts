@@ -105,9 +105,7 @@ export class ItemViewService {
     if (!existing) {
       // Should be unreachable: the insert was rejected by a unique index, so a
       // matching row must exist unless it was deleted in between.
-      throw new ConflictException(
-        `Unable to record view for item ${itemId}`,
-      );
+      throw new ConflictException(`Unable to record view for item ${itemId}`);
     }
 
     return { isNew: false, view: existing };
@@ -122,7 +120,9 @@ export class ItemViewService {
       const { item_id, device_type, referrer, view_duration_seconds } =
         createItemViewDto;
 
-      const item = await this.itemRepository.findOne({ where: { id: item_id } });
+      const item = await this.itemRepository.findOne({
+        where: { id: item_id },
+      });
       if (!item) {
         throw new NotFoundException(`Item with ID ${item_id} not found`);
       }
@@ -250,8 +250,6 @@ export class ItemViewService {
         })),
       };
 
-
-
       return {
         message: 'Statistics retrieved successfully',
         data: stats,
@@ -275,7 +273,6 @@ export class ItemViewService {
     limit: number = 20,
   ): Promise<ServiceResponseDto<ItemViewResponseDto[]>> {
     try {
-
       const skip = (page - 1) * limit;
 
       const [items, total] = await this.itemViewRepository.findAndCount({
@@ -342,9 +339,7 @@ export class ItemViewService {
       `);
 
       // node-postgres returns [rows, rowCount] for UPDATE via TypeORM's query()
-      const updatedCount = Array.isArray(result)
-        ? Number(result[1] ?? 0)
-        : 0;
+      const updatedCount = Array.isArray(result) ? Number(result[1] ?? 0) : 0;
 
       const duration = Date.now() - startTime;
       await this.systemEventService.completeEvent(

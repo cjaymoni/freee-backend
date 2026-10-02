@@ -16,8 +16,6 @@ export class AddPickedByIdToItems1783200000002 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "items" DROP CONSTRAINT "FK_items_picked_by_id"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "items" DROP COLUMN "picked_by_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "items" DROP COLUMN "picked_by_id"`);
   }
 }

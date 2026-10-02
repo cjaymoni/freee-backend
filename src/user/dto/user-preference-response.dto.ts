@@ -13,7 +13,12 @@ export class UserPreferenceResponseDto {
     type: 'array',
     items: { type: 'object' },
   })
-  preferred_categories?: { id: string; name: string; slug: string; icon_url: string | null }[];
+  preferred_categories?: {
+    id: string;
+    name: string;
+    slug: string;
+    icon_url: string | null;
+  }[];
 
   @ApiPropertyOptional({
     description: 'Notification settings',
