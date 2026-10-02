@@ -1,3 +1,8 @@
+import { NotificationService } from '../notification/notification.service';
+import {
+  accountSuspendedNotice,
+  complaintAnsweredNotice,
+} from '../notification/notices';
 import {
   Injectable,
   NotFoundException,
@@ -20,7 +25,10 @@ import { CreateReportedUserDto } from './dto/create-reported-user.dto';
 import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
 import { ActionTaken, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
-import { ResolveComplaintDto } from './dto/resolve-complaint.dto';
+import {
+  ComplaintStatus,
+  ResolveComplaintDto,
+} from './dto/resolve-complaint.dto';
 
 const PRIORITY_RANK: Record<string, number> = {
   urgent: 0,
@@ -70,6 +78,9 @@ function assertNotOwnReport(reporterId: string, reviewerId: string) {
   }
 }
 
+/** Complaint outcomes the user is told about. */
+const FINAL_COMPLAINT_STATUSES: string[] = ['resolved', 'rejected'];
+
 @Injectable()
 export class ModerationService {
   constructor(
@@ -85,6 +96,7 @@ export class ModerationService {
     private itemService: ItemService,
     @Inject(forwardRef(() => UserService))
     private userService: UserService,
+    private notifications: NotificationService,
   ) {}
 
   async reportItem(dto: CreateReportedItemDto, reporterId: string) {
@@ -222,6 +234,7 @@ export class ModerationService {
         ? new Date()
         : null,
     });
+    let suspended: { userId: string; reason: string } | undefined;
 
     // item_removed is the pre-user_suspended way of suspending from a user
     // report; still honoured so existing admin tooling keeps working.
@@ -240,17 +253,33 @@ export class ModerationService {
       // the report as the recorded reason.
       const target = report.reportedUser;
       if (target && target.account_status !== AccountStatus.BANNED) {
-        await this.userService.setAccountState(target, target.account_status, {
-          is_active: false,
-          account_status: AccountStatus.SUSPENDED,
-          status_reason: `Reported: ${report.reason}`,
-          suspended_until: null,
-          status_changed_by: reviewerId,
-        });
+        const reason = `Reported: ${report.reason}`;
+        const written = await this.userService.setAccountState(
+          target,
+          target.account_status,
+          {
+            is_active: false,
+            account_status: AccountStatus.SUSPENDED,
+            status_reason: reason,
+            suspended_until: null,
+            status_changed_by: reviewerId,
+          },
+        );
+        // Only when this call did the suspending, not one that raced it.
+        if (written) {
+          suspended = { userId: target.id, reason };
+        }
       }
     }
 
-    return this.reportedUserRepo.save(report);
+    const saved = await this.reportedUserRepo.save(report);
+    if (suspended) {
+      void this.notifications.notify(
+        suspended.userId,
+        accountSuspendedNotice(null, suspended.reason),
+      );
+    }
+    return saved;
   }
 
   /**
@@ -309,6 +338,11 @@ export class ModerationService {
     if (!complaint) {
       throw new NotFoundException('Complaint not found');
     }
+    const answered = {
+      // Stored as plain text; it only ever holds a ComplaintStatus.
+      status: complaint.status as ComplaintStatus,
+      response: complaint.adminResponse,
+    };
     Object.assign(complaint, {
       ...dto,
       reviewedBy: reviewerId,
@@ -317,7 +351,19 @@ export class ModerationService {
         ? new Date()
         : null,
     });
-    return this.complaintRepo.save(complaint);
+    const saved = await this.complaintRepo.save(complaint);
+    // Only a final answer reaches the user, and only once: taking it under
+    // review, or saving the same answer again, stays between staff.
+    const final = FINAL_COMPLAINT_STATUSES.includes(dto.status);
+    const changed =
+      dto.status !== answered.status || dto.adminResponse !== answered.response;
+    if (final && changed) {
+      void this.notifications.notify(
+        complaint.userId,
+        complaintAnsweredNotice(complaint.id, dto.status, dto.adminResponse),
+      );
+    }
+    return saved;
   }
 
   /** All complaints for admins, or only `userId`'s own for a regular user. */

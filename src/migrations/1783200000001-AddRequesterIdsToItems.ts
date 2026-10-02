@@ -10,8 +10,6 @@ export class AddRequesterIdsToItems1783200000001 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "items" DROP COLUMN "requester_ids"`,
-    );
+    await queryRunner.query(`ALTER TABLE "items" DROP COLUMN "requester_ids"`);
   }
 }

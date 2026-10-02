@@ -1,4 +1,10 @@
-import { IsUUID, IsString, IsOptional, MaxLength, IsEnum } from 'class-validator';
+import {
+  IsUUID,
+  IsString,
+  IsOptional,
+  MaxLength,
+  IsEnum,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { ReportPriority } from './create-reported-item.dto';
 
@@ -17,7 +23,11 @@ export class CreateReportedUserDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: ReportPriority, default: ReportPriority.MEDIUM, required: false })
+  @ApiProperty({
+    enum: ReportPriority,
+    default: ReportPriority.MEDIUM,
+    required: false,
+  })
   @IsOptional()
   @IsEnum(ReportPriority)
   priority?: ReportPriority;

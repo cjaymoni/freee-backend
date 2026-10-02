@@ -25,6 +25,7 @@ import {
 import {
   WsMarkReadDto,
   WsSendMessageDto,
+  WsAppStateDto,
   WsTypingDto,
 } from './dto/ws-events.dto';
 import { AuthService } from '../auth/auth.service';
@@ -172,7 +173,11 @@ export class ChatGateway
         return;
       }
 
-      const cameOnline = this.realtime.registerSocket(payload.sub, client.id);
+      const cameOnline = this.realtime.registerSocket(
+        payload.sub,
+        client.id,
+        payload.session_token,
+      );
 
       if (cameOnline) {
         await this.chatService.broadcastPresence(payload.sub, true);
@@ -301,6 +306,31 @@ export class ChatGateway
     }
 
     await this.chatService.relayTyping(userId, payload.conversation_id, false);
+
+    return { state: true };
+  }
+
+  /**
+   * The app says whether it is in front of the user. A backgrounded socket
+   * may stay open for a while, and without this its user would get no push
+   * for new messages until it closed.
+   */
+  @SubscribeMessage(ChatClientEvents.APP_STATE)
+  handleAppState(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: WsAppStateDto,
+  ): unknown {
+    const userId = this.requireUser(client);
+
+    if (!userId) {
+      return { state: false, message: 'Unauthorized' };
+    }
+
+    this.realtime.setBackground(
+      userId,
+      client.id,
+      payload.state === 'background',
+    );
 
     return { state: true };
   }

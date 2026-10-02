@@ -53,7 +53,9 @@ export class UserPreferenceService {
     const preference = new UserPreferenceEntity();
     preference.user_id = userId;
     preference.preferred_categories = createDto.preferred_category_ids?.length
-      ? await this.categoryRepository.findBy({ id: In(createDto.preferred_category_ids) })
+      ? await this.categoryRepository.findBy({
+          id: In(createDto.preferred_category_ids),
+        })
       : [];
     preference.notification_settings = createDto.notification_settings || null;
     preference.language = createDto.language || 'en';
@@ -130,7 +132,9 @@ export class UserPreferenceService {
 
     if (updateDto.preferred_category_ids !== undefined) {
       preference.preferred_categories = updateDto.preferred_category_ids.length
-        ? await this.categoryRepository.findBy({ id: In(updateDto.preferred_category_ids) })
+        ? await this.categoryRepository.findBy({
+            id: In(updateDto.preferred_category_ids),
+          })
         : [];
     }
     if (updateDto.notification_settings !== undefined) {

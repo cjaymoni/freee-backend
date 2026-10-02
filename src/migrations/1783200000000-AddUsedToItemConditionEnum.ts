@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddUsedToItemConditionEnum1783200000000
-  implements MigrationInterface
-{
+export class AddUsedToItemConditionEnum1783200000000 implements MigrationInterface {
   name = 'AddUsedToItemConditionEnum1783200000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

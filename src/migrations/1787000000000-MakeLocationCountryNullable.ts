@@ -5,9 +5,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * row that has no country attached. Nothing in the application reads these two
  * columns beyond echoing them back, so they become optional.
  */
-export class MakeLocationCountryNullable1787000000000
-  implements MigrationInterface
-{
+export class MakeLocationCountryNullable1787000000000 implements MigrationInterface {
   name = 'MakeLocationCountryNullable1787000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

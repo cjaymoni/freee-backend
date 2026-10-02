@@ -32,6 +32,8 @@ import {
   isItemImagePublicId,
 } from './item-image-upload.options';
 import { closeActiveRequests } from '../item-request/close-active-requests';
+import { NotificationService } from '../notification/notification.service';
+import { listingRemovedNotice } from '../notification/notices';
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -86,6 +88,7 @@ export class ItemService {
     private readonly itemViewService: ItemViewService,
     private readonly dataSource: DataSource,
     private readonly searchService: SearchService,
+    private readonly notifications: NotificationService,
   ) {}
 
   /** Live listings per sharer, shown as items_count on each item's card. */
@@ -941,6 +944,10 @@ export class ItemService {
       item,
       adminId,
       reason || 'Removed by moderation',
+    );
+    void this.notifications.notify(
+      item.user_id,
+      listingRemovedNotice(item, reason),
     );
     return {
       message: 'Item removed successfully',

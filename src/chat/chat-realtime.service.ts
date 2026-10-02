@@ -32,6 +32,16 @@ export class ChatRealtimeService {
    */
   private readonly socketsByUser = new Map<string, Set<string>>();
 
+  /**
+   * Sockets whose app said it went to the background. The OS can keep such a
+   * socket open for a while, so it still counts for presence but no longer
+   * stands in for a push.
+   */
+  private readonly backgroundSockets = new Set<string>();
+
+  /** socketId -> the session it authenticated with, to tell devices apart. */
+  private readonly sessionBySocket = new Map<string, string>();
+
   bindServer(server: Server): void {
     this.server = server;
   }
@@ -56,7 +66,11 @@ export class ChatRealtimeService {
    * @returns true when this socket brought the user online, so the caller
    * knows whether to broadcast a presence change.
    */
-  registerSocket(userId: string, socketId: string): boolean {
+  registerSocket(
+    userId: string,
+    socketId: string,
+    sessionToken: string,
+  ): boolean {
     let sockets = this.socketsByUser.get(userId);
 
     if (!sockets) {
@@ -66,6 +80,7 @@ export class ChatRealtimeService {
 
     const wasOffline = sockets.size === 0;
     sockets.add(socketId);
+    this.sessionBySocket.set(socketId, sessionToken);
 
     return wasOffline;
   }
@@ -82,6 +97,8 @@ export class ChatRealtimeService {
     }
 
     sockets.delete(socketId);
+    this.backgroundSockets.delete(socketId);
+    this.sessionBySocket.delete(socketId);
 
     if (sockets.size > 0) {
       return false;
@@ -93,6 +110,31 @@ export class ChatRealtimeService {
 
   isOnline(userId: string): boolean {
     return (this.socketsByUser.get(userId)?.size ?? 0) > 0;
+  }
+
+  /** Record whether the app behind a socket is in the background. */
+  setBackground(userId: string, socketId: string, background: boolean): void {
+    // Only a registered socket, so a late event can't outlive its socket.
+    if (!this.socketsByUser.get(userId)?.has(socketId)) return;
+    if (background) this.backgroundSockets.add(socketId);
+    else this.backgroundSockets.delete(socketId);
+  }
+
+  /**
+   * The sessions on which the user has the app open in front of them: those
+   * devices already show a new message, so they need no push. The user's
+   * other devices still do. A socket counts as in front until its app says
+   * otherwise.
+   */
+  foregroundSessions(userId: string): string[] {
+    const sessions = new Set<string>();
+    for (const socketId of this.socketsByUser.get(userId) ?? []) {
+      const session = this.sessionBySocket.get(socketId);
+      if (session && !this.backgroundSockets.has(socketId)) {
+        sessions.add(session);
+      }
+    }
+    return [...sessions];
   }
 
   /**

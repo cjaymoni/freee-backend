@@ -190,4 +190,30 @@ describe('ChatGateway payloads over a real socket', () => {
       'hi there',
     );
   });
+
+  it('records when the app goes to the background and comes back', async () => {
+    const realtime = app.get(ChatRealtimeService);
+    const setState = (state: string) =>
+      client
+        .timeout(2000)
+        .emitWithAck(ChatClientEvents.APP_STATE, { state }) as Promise<
+        Record<string, unknown>
+      >;
+
+    await expect(setState('background')).resolves.toEqual({ state: true });
+    expect(realtime.isOnline('u1')).toBe(true);
+    expect(realtime.foregroundSessions('u1')).toEqual([]);
+
+    await expect(setState('foreground')).resolves.toEqual({ state: true });
+    // Known by the session the socket authenticated with (the JWT's s1).
+    expect(realtime.foregroundSessions('u1')).toEqual(['s1']);
+  });
+
+  it('refuses an unknown app state', async () => {
+    await expect(
+      client
+        .timeout(2000)
+        .emitWithAck(ChatClientEvents.APP_STATE, { state: 'asleep' }),
+    ).resolves.toMatchObject({ state: false, statusCode: 400 });
+  });
 });

@@ -128,4 +128,48 @@ export class MailService {
       throw error;
     }
   }
+
+  /**
+   * A plain notice about the account, e.g. a suspension or a reply to a
+   * complaint. `paragraphs` are plain text: they are escaped here, since
+   * they carry text staff typed.
+   */
+  async sendNotice(
+    email: string,
+    notice: { subject: string; title: string; paragraphs: string[] },
+  ) {
+    try {
+      const html = this.getTemplate(
+        escapeHtml(notice.title),
+        notice.paragraphs
+          .map((paragraph) => `<p class="text">${escapeHtml(paragraph)}</p>`)
+          .join(''),
+        'You are receiving this because it concerns your Freeee account.',
+      );
+
+      await this.mailerService.sendMail({
+        to: email,
+        subject: notice.subject,
+        text: [notice.title, ...notice.paragraphs].join('\n\n'),
+        html,
+      });
+      this.logger.log('Account notice sent');
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to send account notice: ${errorMessage}`);
+      throw error;
+    }
+  }
+}
+
+/** For text placed into an email's HTML. */
+function escapeHtml(text: string): string {
+  return text.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        char
+      ]!,
+  );
 }

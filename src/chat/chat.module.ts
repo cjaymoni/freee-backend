@@ -1,3 +1,4 @@
+import { NotificationModule } from '../notification/notification.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
@@ -28,6 +29,7 @@ import { AuthModule } from '../auth/auth.module';
       BlockedUser,
     ]),
     CloudinaryModule,
+    NotificationModule,
     // The gateway authenticates handshakes itself rather than through the
     // passport strategy, which is HTTP-only. Same secret, same session check.
     AuthModule,

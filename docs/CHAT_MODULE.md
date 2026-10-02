@@ -149,6 +149,7 @@ same way it rejects REST calls. A socket that fails to authenticate receives
 | `message:send` | `{ conversation_id, content, client_message_id? }` |
 | `message:read` | `{ conversation_id }` |
 | `typing:start` / `typing:stop` | `{ conversation_id }` |
+| `app:state` | `{ state: 'foreground' \| 'background' }` |
 
 Each returns an ack in the same envelope REST uses. `message:send` echoes
 `client_message_id` back on the ack so you can reconcile the optimistic bubble
@@ -193,10 +194,51 @@ to a stranger that two people are talking.
 
 ## Push notifications
 
-If the recipient has no live socket, the message is sent as an FCM push to
-their `fcm_token` (respecting `notification_enabled`), with
-`data.type = "chat_message"` plus `conversation_id`, `message_id` and
-`sender_id` for deep-linking.
+A new message is also sent as an FCM push to each of the recipient's devices
+that doesn't have the app open in front of them, with `data.type = "chat_message"` plus
+`conversation_id`, `message_id`, `sender_id` and `category`
+(`chat_messages`, or `item_requests` for request cards) for deep-linking.
+
+**Devices.** Send the FCM token as `fcm_token` in the login request
+(`POST /auth/login`, `/auth/firebase-login` or `/firebase-auth/authenticate`),
+and again with `PATCH /user/fcm-token` whenever FCM rotates it
+(`onTokenRefresh`). It is stored on the session the request is signed in
+with, so every signed-in device gets pushes, until it signs out (or the
+account is banned, or its password reset). An idle device keeps getting them
+for 90 days after the app was last opened.
+
+> **Required of every mobile build:** send `fcm_token` with every login, and
+> call `PATCH /user/fcm-token` on every app launch (after any refresh or
+> login the launch needs) and whenever FCM rotates the token. A 401 from it
+> means the session is over: sign in again, sending `fcm_token`.
+>
+> Why: a login without the token starts a session with none. A phone that
+> had to sign in again (after a week unopened, when its refresh token lapsed)
+> is then pushed only through its previous session, and that stops 90 days
+> after the app was last opened before that sign-in. The launch call repairs
+> it every time. Sending the token at login is also what moves a phone from
+> one account to the next when the old sign-out never reached the server.
+
+`DELETE /user/fcm-token` stops pushes on this device without signing out.
+Tokens FCM reports dead are forgotten.
+
+**Background.** A socket counts as "in front of the user" until the app sends
+`app:state` `{ state: 'background' }`. Send it when the app goes to the
+background (and `foreground` when it returns): an OS can keep a background
+socket open for minutes, and without it that device gets no push meanwhile.
+Only the device with the app in front is skipped; the user's other devices,
+such as a phone while a web tab is open, still get the push.
+
+**Settings.** `notification_enabled` on the user turns pushes off; the keys in
+`notification_settings` (`push`, `email`, and per kind `chat_messages`,
+`item_requests`, `listings`, `account`) turn off a channel or a kind. See
+`PATCH /user/preferences/notifications`.
+
+Account and listing notices (suspension, ban, reinstatement, a complaint's
+final answer;
+a listing hidden, restored or removed) use the same devices and settings, with
+`data.type` `account_status`, `complaint` or `listing_moderation`. Those
+about the account itself are also emailed, whatever the settings.
 
 Pushes are best-effort: a failed push never fails the send.
 

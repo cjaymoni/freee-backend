@@ -881,6 +881,69 @@
       ]
     },
     {
+      "name": "Locations",
+      "description": "Public directory of countries, states and cities for location pickers. No auth. Country codes may be alpha-2 or alpha-3, any case.",
+      "item": [
+        {
+          "name": "Get Countries",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/locations/countries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "countries"
+              ]
+            },
+            "description": "Every country, with alpha-2 `code` and alpha-3 `code3`. Save `code3` as a user location's `country_code`."
+          }
+        },
+        {
+          "name": "Get States of Country",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/locations/countries/GH/states",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "countries",
+                "GH",
+                "states"
+              ]
+            },
+            "description": "States of a country. 404 for an unknown country."
+          }
+        },
+        {
+          "name": "Get Cities of State",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/locations/countries/GH/states/AA/cities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "countries",
+                "GH",
+                "states",
+                "AA",
+                "cities"
+              ]
+            },
+            "description": "Cities of a state; the state code comes from the states request. 404 for an unknown country or state."
+          }
+        }
+      ]
+    },
+    {
       "name": "User Preferences",
       "item": [
         {

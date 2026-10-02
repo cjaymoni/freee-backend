@@ -14,6 +14,7 @@ import {
   UploadedFile,
   ForbiddenException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
@@ -45,6 +46,7 @@ import { STAFF_ROLES, UserRole, isStaff } from './entities/user.entity';
 import { GetUser } from '../common/decorators/get-user.decorator';
 import { AppError } from '../common/app-error';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { NotificationService } from '../notification/notification.service';
 import { avatarUploadOptions } from './avatar-upload.options';
 
 /**
@@ -83,6 +85,7 @@ export class UserController {
   constructor(
     private readonly userService: UserService,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly notifications: NotificationService,
   ) {}
 
   @Post()
@@ -286,16 +289,65 @@ export class UserController {
 
   @Patch('fcm-token')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update FCM token for push notifications' })
+  @ApiOperation({
+    summary: 'Register this device for push notifications',
+    description:
+      'Attaches the FCM token to the session the request is signed in with. ' +
+      'Every signed-in device gets pushes; signing out stops them for that ' +
+      'device. Mobile clients must call it on every app launch and whenever ' +
+      'FCM rotates the token (onTokenRefresh), and send fcm_token with every ' +
+      'login; a 401 means sign in again. See docs/CHAT_MODULE.md.',
+  })
   @ApiResponse({
     status: 200,
     description: 'FCM token updated successfully',
   })
   async updateFcmToken(
     @GetUser('userId') userId: string,
+    @GetUser('sessionToken') sessionToken: string,
     @Body() fcmTokenDto: UpdateFcmTokenDto,
   ) {
-    return this.userService.update(userId, fcmTokenDto);
+    await this.registerDevice(userId, sessionToken, fcmTokenDto.fcm_token);
+    return {
+      ...(await this.userService.findOne(userId)),
+      message: 'FCM token updated successfully',
+    };
+  }
+
+  @Delete('fcm-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Stop push notifications on this device',
+    description:
+      'Forgets the FCM token of the session the request is signed in with. ' +
+      'Other devices keep theirs.',
+  })
+  @ApiResponse({ status: 200, description: 'FCM token removed' })
+  async removeFcmToken(
+    @GetUser('userId') userId: string,
+    @GetUser('sessionToken') sessionToken: string,
+  ) {
+    await this.notifications.unregisterDevice(userId, sessionToken);
+    return {
+      state: true,
+      statusCode: 200,
+      message: 'FCM token removed',
+      data: null,
+    };
+  }
+
+  private async registerDevice(
+    userId: string,
+    sessionToken: string,
+    fcmToken: string,
+  ): Promise<void> {
+    if (
+      !(await this.notifications.registerDevice(userId, sessionToken, fcmToken))
+    ) {
+      throw new AppError(
+        new UnauthorizedException('Session is no longer active'),
+      );
+    }
   }
 
   @Post('phone-number')
@@ -376,7 +428,16 @@ export class UserController {
     @Body() updateUserDto: UpdateUserDto,
     @GetUser('userId') requesterId: string,
     @GetUser('role') requesterRole: UserRole,
+    @GetUser('sessionToken') sessionToken: string,
   ) {
+    // A device token belongs to the session that sent it, not the profile:
+    // registered like PATCH /user/fcm-token, and never stored on the user.
+    const { fcm_token: fcmToken, ...profile } = updateUserDto;
+    updateUserDto = profile;
+    if (fcmToken !== undefined && id === requesterId) {
+      await this.registerDevice(requesterId, sessionToken, fcmToken);
+    }
+
     if (requesterRole !== UserRole.ADMIN) {
       if (id !== requesterId) {
         throw new AppError(

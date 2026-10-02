@@ -504,10 +504,10 @@ describe('UserService.setAccountState', () => {
       service.setAccountState(user as never, 'active' as never, state),
     ).resolves.toBe(true);
 
-    expect(where).toHaveBeenCalledWith(
-      'id = :id AND account_status = :from',
-      { id: 'u1', from: 'active' },
-    );
+    expect(where).toHaveBeenCalledWith('id = :id AND account_status = :from', {
+      id: 'u1',
+      from: 'active',
+    });
     expect(cache.del.mock.calls.map(([key]) => key as string)).toEqual([
       'user:id:u1',
       'user:email:a@b.c',

@@ -1,3 +1,8 @@
+import { NotificationService } from '../notification/notification.service';
+import {
+  listingHiddenNotice,
+  listingRestoredNotice,
+} from '../notification/notices';
 import {
   ConflictException,
   Injectable,
@@ -47,6 +52,7 @@ export class AdminItemsService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly adminAudit: AdminAuditService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async list(
@@ -237,6 +243,17 @@ export class AdminItemsService {
       reason,
       request,
     });
+
+    // The owner hears when their listing leaves the app or comes back to
+    // it. A flag is internal, so flagging, or clearing a flag, stays quiet.
+    if (to === ModerationStatus.HIDDEN) {
+      void this.notifications.notify(
+        item.user_id,
+        listingHiddenNotice(item, reason),
+      );
+    } else if (item.moderation_status === ModerationStatus.HIDDEN) {
+      void this.notifications.notify(item.user_id, listingRestoredNotice(item));
+    }
 
     return this.detail(itemId);
   }

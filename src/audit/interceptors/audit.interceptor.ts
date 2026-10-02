@@ -134,11 +134,17 @@ export class AuditInterceptor implements NestInterceptor {
     if (entityInfo) {
       let entityId = entityInfo.entityId;
       if (!entityId && response) {
-        entityId = response.data?.id || response.id || response.data?.uuid || response.uuid;
+        entityId =
+          response.data?.id ||
+          response.id ||
+          response.data?.uuid ||
+          response.uuid;
       }
 
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const validEntityId = entityId && uuidRegex.test(entityId) ? entityId : null;
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const validEntityId =
+        entityId && uuidRegex.test(entityId) ? entityId : null;
 
       await this.auditService.log({
         userId: request.user?.userId,

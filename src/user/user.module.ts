@@ -1,3 +1,4 @@
+import { NotificationModule } from '../notification/notification.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserService } from './user.service';
@@ -21,6 +22,7 @@ import { CategoryEntity } from '../category/entities/category.entity';
       CategoryEntity,
     ]),
     CloudinaryModule,
+    NotificationModule,
   ],
   controllers: [
     UserLocationController,

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsFcmToken } from '../../notification/device-tokens';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class UpdateFcmTokenDto {
@@ -6,7 +6,6 @@ export class UpdateFcmTokenDto {
     example: 'fcm-token-123456...',
     description: 'Firebase Cloud Messaging Token',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsFcmToken()
   fcm_token: string;
 }

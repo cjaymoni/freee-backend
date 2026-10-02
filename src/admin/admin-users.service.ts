@@ -1,3 +1,9 @@
+import { NotificationService } from '../notification/notification.service';
+import {
+  accountBannedNotice,
+  accountReinstatedNotice,
+  accountSuspendedNotice,
+} from '../notification/notices';
 import {
   BadRequestException,
   ConflictException,
@@ -57,6 +63,9 @@ const changedMeanwhile = () =>
 /** Reports still waiting on staff. */
 const OPEN_REPORT = [ReportStatus.PENDING, ReportStatus.IN_REVIEW];
 
+/** Expiry notices sent at once by liftExpiredSuspensions. */
+const NOTIFY_BATCH = 5;
+
 @Injectable()
 export class AdminUsersService {
   private readonly logger = new Logger(AdminUsersService.name);
@@ -67,6 +76,7 @@ export class AdminUsersService {
     private readonly adminAudit: AdminAuditService,
     private readonly firebase: FirebaseService,
     private readonly chatRealtime: ChatRealtimeService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async list(
@@ -401,6 +411,12 @@ export class AdminUsersService {
         suspended_until: suspendedUntil,
       },
     );
+    // Not awaited: notify() never throws, and a slow mail server must not
+    // hold up the request. The same goes for the notices below.
+    void this.notifications.notify(
+      userId,
+      accountSuspendedNotice(suspendedUntil, reason),
+    );
     return this.detail(userId);
   }
 
@@ -454,6 +470,7 @@ export class AdminUsersService {
       }
     }
     await this.recordStatusChange(actor, user, USER_BANNED, reason, request);
+    void this.notifications.notify(userId, accountBannedNotice(reason));
     return this.detail(userId);
   }
 
@@ -498,6 +515,8 @@ export class AdminUsersService {
       reason,
       request,
     );
+    // The staff reason is for the record; the user is only told it's lifted.
+    void this.notifications.notify(userId, accountReinstatedNotice(false));
     return this.detail(userId);
   }
 
@@ -542,6 +561,17 @@ export class AdminUsersService {
         newValues: { account_status: AccountStatus.ACTIVE, is_active: true },
         reason: 'Suspension ended',
       });
+    }
+    // A few at a time, so a slow mail server can't stall one run past the
+    // next, and a burst of expiries doesn't open a connection per user.
+    for (let i = 0; i < lifted.length; i += NOTIFY_BATCH) {
+      await Promise.all(
+        lifted
+          .slice(i, i + NOTIFY_BATCH)
+          .map((user) =>
+            this.notifications.notify(user.id, accountReinstatedNotice(true)),
+          ),
+      );
     }
     if (lifted.length) {
       this.logger.log(`Lifted ${lifted.length} expired suspension(s)`);

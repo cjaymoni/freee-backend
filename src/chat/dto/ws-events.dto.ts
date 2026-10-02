@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -45,6 +46,15 @@ export class WsTypingDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('4', { message: 'conversation_id must be a valid UUID' })
   conversation_id: string;
+}
+
+/** Payload of the `app:state` client event. */
+export class WsAppStateDto {
+  @ApiProperty({ enum: ['foreground', 'background'] })
+  @IsIn(['foreground', 'background'], {
+    message: "state must be 'foreground' or 'background'",
+  })
+  state: 'foreground' | 'background';
 }
 
 /** Payload of the server's `typing` event. */
