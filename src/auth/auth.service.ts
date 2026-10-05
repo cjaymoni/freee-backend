@@ -9,7 +9,12 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, QueryFailedError } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+  EntityManager,
+  QueryFailedError,
+} from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomInt } from 'crypto';
@@ -31,6 +36,14 @@ import { AccountStatus, UserEntity } from '../user/entities/user.entity';
 import { FirebaseService } from '../firebase/firebase.service';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { FirebaseAuthDto } from './dto/firebase-auth.dto';
+import { normalizeEmail } from '../common/email';
+import {
+  claimVerifiedIdentifier,
+  Identifier,
+  VERIFIED_FLAG,
+} from '../user/identifier-claims';
+
+type CachedUser = Parameters<UserService['invalidateUserCache']>[0];
 
 @Injectable()
 export class AuthService {
@@ -299,12 +312,18 @@ export class AuthService {
       throw new UnauthorizedException(`Authentication failed: ${errorMessage}`);
     }
 
-    const { email, phone_number, uid: firebase_uid } = decodedToken;
+    const { phone_number, uid: firebase_uid } = decodedToken;
+    const email = normalizeEmail(decodedToken.email);
+    const emailVerified = decodedToken.email_verified === true;
     this.logger.log(
       `[firebaseAuthenticate] decoded token => uid present: ${!!firebase_uid}, email present: ${!!email}, phone present: ${!!phone_number}`,
     );
 
-    return this.dataSource.transaction(async (manager) => {
+    // Accounts whose cached copies the fills below make stale; cleared once
+    // the transaction commits.
+    const staleCache: CachedUser[] = [];
+
+    const signedIn = await this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(UserEntity);
       const sessionRepo = manager.getRepository(UserSessionEntity);
 
@@ -316,7 +335,7 @@ export class AuthService {
       if (!user) {
         const link = await this.resolveFirebaseLink(userRepo, {
           email,
-          emailVerified: decodedToken.email_verified === true,
+          emailVerified,
           phone_number,
         });
         user = link.user;
@@ -334,18 +353,18 @@ export class AuthService {
           await userRepo.save(user);
         }
       } else {
-        let needsUpdate = false;
-        if (email && !user.email) {
-          user.email = email;
-          needsUpdate = true;
-        }
-        if (phone_number && !user.phone_number) {
-          user.phone_number = phone_number;
-          needsUpdate = true;
-        }
-        if (needsUpdate) {
-          await userRepo.save(user);
-        }
+        // A Firebase account linked to both phone and email carries both in
+        // its token; fill in whichever this account lacks.
+        await this.fillFromToken(manager, staleCache, user, 'email', email, {
+          proven: emailVerified,
+        });
+        await this.fillFromToken(
+          manager,
+          staleCache,
+          user,
+          'phone_number',
+          phone_number,
+        );
       }
 
       if (!user) {
@@ -356,20 +375,23 @@ export class AuthService {
         };
 
         try {
-          const userServiceResponse = await this.userService.create(
-            createUserDto,
-            undefined,
-            {
-              is_active: true,
-              is_email_verified:
-                !!usableEmail && decodedToken.email_verified === true,
-              is_phone_verified: !!phone_number,
-              source: 'auth.firebaseAuthenticate',
-              // Linking to an existing row is decided above; anything that
-              // still collides here is a concurrent sign-in, handled below.
-              upsertOnConflict: false,
-            },
-            manager,
+          // In a savepoint: a unique violation aborts the Postgres
+          // transaction, and the race handling below still needs to query.
+          const userServiceResponse = await manager.transaction((inner) =>
+            this.userService.create(
+              createUserDto,
+              undefined,
+              {
+                is_active: true,
+                is_email_verified: !!usableEmail && emailVerified,
+                is_phone_verified: !!phone_number,
+                source: 'auth.firebaseAuthenticate',
+                // Linking to an existing row is decided above; anything that
+                // still collides here is a concurrent sign-in, handled below.
+                upsertOnConflict: false,
+              },
+              inner,
+            ),
           );
 
           user = (await userRepo.findOne({
@@ -388,31 +410,37 @@ export class AuthService {
           }
 
           // Existing user won the race; merge token-derived values and continue.
-          let needsMergeUpdate = false;
-          if (!user.firebase_uid) {
-            user.firebase_uid = firebase_uid;
-            needsMergeUpdate = true;
-          }
-          if (email && !user.email) {
-            user.email = email;
-            needsMergeUpdate = true;
-          }
-          if (phone_number && !user.phone_number) {
-            user.phone_number = phone_number;
-            needsMergeUpdate = true;
-          }
-          if (needsMergeUpdate) {
-            await userRepo.save(user);
-          }
+          await this.fillFromToken(manager, staleCache, user, 'email', email, {
+            proven: emailVerified,
+          });
+          await this.fillFromToken(
+            manager,
+            staleCache,
+            user,
+            'phone_number',
+            phone_number,
+          );
         }
       }
 
+      // Only the values the token proves are marked verified. A stored value
+      // that differs (say an email typed in via PATCH) stays unverified, or
+      // resolveFirebaseLink would route its real owner's sign-in here.
       let needsStatusUpdate = false;
-      if (decodedToken.email_verified && !user.is_email_verified) {
+      if (
+        emailVerified &&
+        email &&
+        user.email === email &&
+        !user.is_email_verified
+      ) {
         user.is_email_verified = true;
         needsStatusUpdate = true;
       }
-      if (phone_number && !user.is_phone_verified) {
+      if (
+        phone_number &&
+        user.phone_number === phone_number &&
+        !user.is_phone_verified
+      ) {
         user.is_phone_verified = true;
         needsStatusUpdate = true;
       }
@@ -478,6 +506,11 @@ export class AuthService {
       this.logger.log(`[firebaseAuthenticate] response => user authenticated`);
       return response;
     });
+
+    for (const entry of staleCache) {
+      await this.userService.invalidateUserCache(entry);
+    }
+    return signedIn;
   }
 
   async firebaseLogin(
@@ -682,6 +715,52 @@ export class AuthService {
     }
 
     return { user: linked, usableEmail };
+  }
+
+  /**
+   * Fill in an identifier a returning account lacks from its sign-in token.
+   * A value the token proves (any Firebase phone number; an email only when
+   * verified) takes over another account's unverified claim on it and is
+   * saved as verified. Otherwise, or when another account holds it verified,
+   * it is only taken if nobody holds it.
+   *
+   * Optional, so it never fails the sign-in: it runs in a savepoint, and a
+   * concurrent request claiming the value first just leaves it out. The
+   * accounts it changes are added to `staleCache`.
+   */
+  private async fillFromToken(
+    manager: EntityManager,
+    staleCache: CachedUser[],
+    user: UserEntity,
+    field: Identifier,
+    value: string | undefined,
+    { proven = true } = {},
+  ): Promise<void> {
+    if (!value || user[field]) return;
+    const flag = VERIFIED_FLAG[field];
+    try {
+      await manager.transaction(async (inner) => {
+        const repo = inner.getRepository(UserEntity);
+        const free = proven
+          ? await claimVerifiedIdentifier(repo, field, value, user.id)
+          : !(await repo.findOne({ where: { [field]: value } }));
+        if (!free) return;
+        await repo.update(user.id, {
+          [field]: value,
+          ...(proven && { [flag]: true }),
+        });
+        user[field] = value;
+        if (proven) user[flag] = true;
+        const email = field === 'email' ? value : undefined;
+        if (free !== true && free.releasedFrom) {
+          staleCache.push({ ...free.releasedFrom, email });
+        }
+        staleCache.push(user);
+      });
+    } catch (error) {
+      if (!this.isConflictError(error)) throw error;
+      this.logger.log(`[fillFromToken] ${field} claimed concurrently; skipped`);
+    }
   }
 
   async refresh(refreshToken: string, ip: string, userAgent: string) {

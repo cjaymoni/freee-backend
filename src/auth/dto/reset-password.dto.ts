@@ -1,11 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
+import { NormalizeEmail } from '../../common/email';
 
 export class ResetPasswordDto {
   @ApiProperty({ example: 'johndoe@gmail.com' })
   @IsEmail()
   @IsNotDisposableEmail()
+  @NormalizeEmail()
   email: string;
 
   @ApiProperty({ example: '123456', description: '6-digit OTP' })

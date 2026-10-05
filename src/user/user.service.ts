@@ -37,6 +37,33 @@ import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { closeActiveRequests } from '../item-request/close-active-requests';
 import { isItemImagePublicId } from '../item/item-image-upload.options';
+import { normalizeEmail } from '../common/email';
+import {
+  claimVerifiedIdentifier,
+  ReleasedHolder,
+  VERIFIED_FLAG,
+} from './identifier-claims';
+
+type DecodedIdToken = Awaited<ReturnType<FirebaseService['verifyIdToken']>>;
+
+/** What POST /user/phone-number and POST /user/email read from a token. */
+const FIREBASE_IDENTIFIERS = {
+  phone: {
+    field: 'phone_number',
+    label: 'Phone number',
+    noun: 'phone number',
+    short: 'number',
+    read: (token: DecodedIdToken) => token.phone_number,
+  },
+  email: {
+    field: 'email',
+    label: 'Email',
+    noun: 'email',
+    short: 'email',
+    read: (token: DecodedIdToken) =>
+      token.email_verified === true ? normalizeEmail(token.email) : undefined,
+  },
+} as const;
 
 type UploadFile = {
   buffer: Buffer;
@@ -64,7 +91,10 @@ export class UserService {
 
   private readonly logger = new Logger(UserService.name);
 
-  async findByEmail(email: string): Promise<UserEntity | null> {
+  async findByEmail(rawEmail: string): Promise<UserEntity | null> {
+    // A blank email would make the lookup below match any user.
+    const email = normalizeEmail(rawEmail);
+    if (!email) return null;
     const cacheKey = `user:email:${email}`;
     const cachedUser = await this.cacheManager.get<UserEntity>(cacheKey);
     if (cachedUser) return cachedUser;
@@ -74,6 +104,19 @@ export class UserService {
       await this.cacheManager.set(cacheKey, user, 3600); // Cache for 1 hour
     }
     return user;
+  }
+
+  /** Drop every cached copy of a user, after a write made outside update(). */
+  async invalidateUserCache(user: {
+    id: string;
+    email?: string | null;
+    firebase_uid?: string | null;
+  }): Promise<void> {
+    await this.cacheManager.del(`user:id:${user.id}`);
+    if (user.email) await this.cacheManager.del(`user:email:${user.email}`);
+    if (user.firebase_uid) {
+      await this.cacheManager.del(`user:firebase_uid:${user.firebase_uid}`);
+    }
   }
 
   async findByFirebaseUid(firebaseUid: string): Promise<UserEntity | null> {
@@ -103,10 +146,11 @@ export class UserService {
    * deliberately uncached so the hash does not sit in Redis.
    */
   async findByEmailWithPassword(email: string): Promise<UserEntity | null> {
+    if (!normalizeEmail(email)) return null;
     return this.userRepository
       .createQueryBuilder('user')
       .addSelect('user.password_hash')
-      .where('user.email = :email', { email })
+      .where('user.email = :email', { email: normalizeEmail(email) })
       .getOne();
   }
 
@@ -127,7 +171,7 @@ export class UserService {
     phoneNumber?: string,
   ): Promise<UserEntity | null> {
     const whereConditions: FindOptionsWhere<UserEntity>[] = [];
-    if (email) whereConditions.push({ email });
+    if (email) whereConditions.push({ email: normalizeEmail(email) });
     if (phoneNumber) {
       whereConditions.push({ phone_number: phoneNumber });
     }
@@ -158,6 +202,12 @@ export class UserService {
     } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    if (createUserDto.email) {
+      createUserDto = {
+        ...createUserDto,
+        email: normalizeEmail(createUserDto.email),
+      };
+    }
     const queryRunner = !manager ? this.dataSource.createQueryRunner() : null;
     if (queryRunner) {
       await queryRunner.connect();
@@ -574,6 +624,12 @@ export class UserService {
     updateUserDto: UpdateUserDto,
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    if (updateUserDto.email) {
+      updateUserDto = {
+        ...updateUserDto,
+        email: normalizeEmail(updateUserDto.email),
+      };
+    }
     try {
       const entityManager = manager || this.userRepository.manager;
       const user = await entityManager.findOne(UserEntity, { where: { id } });
@@ -709,13 +765,41 @@ export class UserService {
    * same Firebase account as the user; the number and its verified flag are
    * written in one statement, so a failure leaves the old phone untouched.
    */
-  async updatePhoneFromFirebase(
+  updatePhoneFromFirebase(
     id: string,
     idToken: string,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
+    return this.linkFirebaseIdentifier(id, idToken, 'phone');
+  }
+
+  /**
+   * Attach the verified email from the user's own Firebase account, so a
+   * later email or Google sign-in lands in this account instead of a new one.
+   */
+  updateEmailFromFirebase(
+    id: string,
+    idToken: string,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    return this.linkFirebaseIdentifier(id, idToken, 'email');
+  }
+
+  /**
+   * Save a phone number or email taken from a verified Firebase ID token as
+   * verified. The token must belong to the user's own Firebase account, so
+   * the identifier is one they proved they own; resolveFirebaseLink then
+   * routes sign-ins with it to this account.
+   */
+  private async linkFirebaseIdentifier(
+    id: string,
+    idToken: string,
+    kind: keyof typeof FIREBASE_IDENTIFIERS,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    const spec = FIREBASE_IDENTIFIERS[kind];
     let decoded: Awaited<ReturnType<FirebaseService['verifyIdToken']>>;
     try {
-      decoded = await this.firebaseService.verifyIdToken(idToken);
+      // Checks revocation too: a revoked token must not vouch for an
+      // identifier that sign-ins will then trust.
+      decoded = await this.firebaseService.verifyIdToken(idToken, true);
     } catch (error) {
       this.logger.warn(
         `Firebase token verification failed for user ${id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -727,11 +811,11 @@ export class UserService {
       );
     }
 
-    const phoneNumber = decoded.phone_number;
-    if (!phoneNumber) {
+    const value = spec.read(decoded);
+    if (!value) {
       throw new AppError(
         new BadRequestException(
-          'The Firebase account has no verified phone number. Verify the number in Firebase first.',
+          `The Firebase account has no verified ${spec.noun}. Verify the ${spec.short} in Firebase first.`,
         ),
       );
     }
@@ -750,33 +834,62 @@ export class UserService {
       );
     }
 
-    if (user.phone_number === phoneNumber && user.is_phone_verified) {
+    const flag = VERIFIED_FLAG[spec.field];
+    if (user[spec.field] === value && user[flag]) {
       const responseDto = new UserResponseDto();
       Object.assign(responseDto, user);
       return {
-        message: 'Phone number is already up to date',
+        message: `${spec.label} is already up to date`,
         data: responseDto,
         state: true,
         statusCode: 200,
       };
     }
 
-    const owner = await this.userRepository.findOne({
-      where: { phone_number: phoneNumber },
-    });
-    if (owner && owner.id !== id) {
+    // Email is also the password sign-in, so a verified one is never swapped
+    // out from under the user here; a number can be, to change phones.
+    if (
+      spec.field === 'email' &&
+      user.email &&
+      user.is_email_verified &&
+      user.email !== value
+    ) {
       throw new AppError(
         new ConflictException(
-          'This phone number is already linked to another account.',
+          'This account already has a verified email. Change it from the profile instead.',
         ),
       );
     }
 
-    const result = await this.update(id, {
-      phone_number: phoneNumber,
-      is_phone_verified: true,
+    let releasedFrom: ReleasedHolder | undefined;
+    const result = await this.dataSource.transaction(async (manager) => {
+      const claim = await claimVerifiedIdentifier(
+        manager.getRepository(UserEntity),
+        spec.field,
+        value,
+        id,
+      );
+      if (!claim) {
+        throw new AppError(
+          new ConflictException(
+            `This ${spec.noun} is already linked to another account.`,
+          ),
+        );
+      }
+      releasedFrom = claim.releasedFrom;
+      return this.update(id, { [spec.field]: value, [flag]: true }, manager);
     });
-    return { ...result, message: 'Phone number updated successfully' };
+    // After the commit, so a read during the transaction can't re-cache the
+    // old rows; update() already cleared them once, before it.
+    const email = spec.field === 'email' ? value : undefined;
+    if (releasedFrom) {
+      await this.invalidateUserCache({ ...releasedFrom, email });
+    }
+    await this.invalidateUserCache({ ...user, email: email ?? user.email });
+    if (email && user.email && user.email !== email) {
+      await this.cacheManager.del(`user:email:${user.email}`);
+    }
+    return { ...result, message: `${spec.label} updated successfully` };
   }
 
   /**

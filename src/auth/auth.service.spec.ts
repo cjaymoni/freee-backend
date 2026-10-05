@@ -1,4 +1,5 @@
 import * as bcrypt from 'bcrypt';
+import { QueryFailedError } from 'typeorm';
 import { AuthService } from './auth.service';
 
 type Row = {
@@ -102,6 +103,384 @@ describe('AuthService Firebase account linking', () => {
     });
     expect(released.user).toBeNull();
     expect(rows[0].phone_number).toBeNull();
+  });
+});
+
+describe('AuthService.firebaseAuthenticate for a returning user', () => {
+  type DbRow = Record<string, unknown> & { id: string };
+  const uniqueViolation = () =>
+    Object.assign(new QueryFailedError('UPDATE', [], new Error('dup')), {
+      driverError: { code: '23505' },
+    });
+
+  const setup = (
+    rows: DbRow[],
+    token: Record<string, unknown>,
+    {
+      updateError,
+      create,
+    }: {
+      updateError?: Error;
+      create?: (dto: Record<string, unknown>) => Promise<unknown>;
+    } = {},
+  ) => {
+    // Lookups hand out copies, so only what the service writes back counts:
+    // a change made in memory and never saved fails the assertions.
+    const find = (where: Record<string, unknown>) => {
+      const row = rows.find((r) =>
+        Object.entries(where).every(([k, v]) => r[k] === v),
+      );
+      return Promise.resolve(row ? { ...row } : null);
+    };
+    const userRepo = {
+      findOne: ({ where }: { where: Record<string, unknown> }) => find(where),
+      save: jest.fn((entity: DbRow) => {
+        Object.assign(rows.find((r) => r.id === entity.id)!, entity);
+        return Promise.resolve(entity);
+      }),
+      update: jest.fn(
+        (
+          criteria: string | Record<string, unknown>,
+          values: Record<string, unknown>,
+        ) => {
+          if (updateError) return Promise.reject(updateError);
+          const where =
+            typeof criteria === 'string' ? { id: criteria } : criteria;
+          const hit = rows.filter((r) =>
+            Object.entries(where).every(([k, v]) => r[k] === v),
+          );
+          hit.forEach((r) => Object.assign(r, values));
+          return Promise.resolve({ affected: hit.length });
+        },
+      ),
+    };
+    const sessionRepo = { create: (v: object) => v, save: jest.fn() };
+    const manager = {
+      getRepository: (entity: { name: string }) =>
+        entity.name === 'UserEntity' ? userRepo : sessionRepo,
+      // Savepoints are invisible here; the service's catch is what's tested.
+      transaction: (run: (m: unknown) => unknown) => run(manager),
+    };
+    const service = Object.create(AuthService.prototype) as Record<
+      string,
+      unknown
+    >;
+    service.logger = { log: jest.fn(), error: jest.fn() };
+    service.firebaseService = {
+      verifyIdToken: jest.fn().mockResolvedValue({ uid: 'fb-1', ...token }),
+    };
+    service.dataSource = {
+      transaction: (run: (m: typeof manager) => unknown) => run(manager),
+    };
+    service.jwtService = { sign: () => 'access-token' };
+    const userService = {
+      create: jest.fn(create ?? (() => Promise.reject(new Error('unused')))),
+      invalidateUserCache: jest.fn(),
+    };
+    service.userService = userService;
+    const signIn = () =>
+      (service.firebaseAuthenticate as AuthService['firebaseAuthenticate'])(
+        { idToken: 't' },
+        '::1',
+        'ua',
+      );
+    return { signIn, userRepo, userService };
+  };
+  const me = (over: Partial<DbRow> = {}): DbRow => ({
+    id: 'u1',
+    firebase_uid: 'fb-1',
+    email: null,
+    phone_number: null,
+    is_email_verified: false,
+    is_phone_verified: false,
+    ...over,
+  });
+
+  it('fills in the verified email a linked Firebase account now carries', async () => {
+    const rows = [me({ phone_number: '+233201', is_phone_verified: true })];
+    const { signIn } = setup(rows, {
+      phone_number: '+233201',
+      email: 'Ama@Gmail.com',
+      email_verified: true,
+    });
+
+    await signIn();
+
+    expect(rows[0]).toMatchObject({
+      email: 'ama@gmail.com',
+      is_email_verified: true,
+    });
+  });
+
+  it('fills in an unverified email but leaves it unverified', async () => {
+    const rows = [me({ phone_number: '+233201', is_phone_verified: true })];
+    const { signIn } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: false,
+    });
+
+    await signIn();
+
+    expect(rows[0]).toMatchObject({
+      email: 'ama@gmail.com',
+      is_email_verified: false,
+    });
+  });
+
+  it('leaves out an email another account has verified', async () => {
+    const rows = [
+      me({ phone_number: '+233201', is_phone_verified: true }),
+      { id: 'u2', email: 'ama@gmail.com', is_email_verified: true },
+    ];
+    const { signIn } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: true,
+    });
+
+    await signIn();
+
+    expect(rows[0]).toMatchObject({ email: null, is_email_verified: false });
+    expect(rows[1].email).toBe('ama@gmail.com');
+  });
+
+  it('takes a verified email over from an account that only claimed it', async () => {
+    const rows = [
+      me({ phone_number: '+233201', is_phone_verified: true }),
+      {
+        id: 'u2',
+        firebase_uid: 'fb-2',
+        email: 'ama@gmail.com',
+        is_email_verified: false,
+      },
+    ];
+    const { signIn, userService } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: true,
+    });
+
+    await signIn();
+
+    expect(rows[1].email).toBeNull();
+    expect(rows[0]).toMatchObject({
+      email: 'ama@gmail.com',
+      is_email_verified: true,
+    });
+    // Both accounts' cached copies, or a password reset for this email
+    // could still go to the account that gave it up.
+    expect(userService.invalidateUserCache).toHaveBeenCalledWith({
+      id: 'u2',
+      firebase_uid: 'fb-2',
+      email: 'ama@gmail.com',
+    });
+    expect(userService.invalidateUserCache).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'u1', email: 'ama@gmail.com' }),
+    );
+  });
+
+  it('keeps an email verified since the claim was read', async () => {
+    const rows = [
+      me({ phone_number: '+233201', is_phone_verified: true }),
+      { id: 'u2', email: 'ama@gmail.com', is_email_verified: false },
+    ];
+    const { signIn, userRepo } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: true,
+    });
+    // The holder verifies between the service's read and its write.
+    const read = userRepo.findOne;
+    userRepo.findOne = async (query) => {
+      const found = await read(query);
+      if (found?.id === 'u2') rows[1].is_email_verified = true;
+      return found;
+    };
+
+    await signIn();
+
+    expect(rows[1].email).toBe('ama@gmail.com');
+    expect(rows[0].email).toBeNull();
+  });
+
+  it('does not take an unverified email from another account', async () => {
+    const rows = [
+      me({ phone_number: '+233201', is_phone_verified: true }),
+      { id: 'u2', email: 'ama@gmail.com', is_email_verified: false },
+    ];
+    const { signIn } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: false,
+    });
+
+    await signIn();
+
+    expect(rows[0].email).toBeNull();
+    expect(rows[1].email).toBe('ama@gmail.com');
+  });
+
+  it('leaves out a phone number another account has verified', async () => {
+    const rows = [
+      me({ email: 'ama@gmail.com', is_email_verified: true }),
+      { id: 'u2', phone_number: '+233201', is_phone_verified: true },
+    ];
+    const { signIn } = setup(rows, {
+      email: 'ama@gmail.com',
+      email_verified: true,
+      phone_number: '+233201',
+    });
+
+    await signIn();
+
+    expect(rows[0].phone_number).toBeNull();
+    expect(rows[1].phone_number).toBe('+233201');
+  });
+
+  it('takes a phone number over from an account that only claimed it', async () => {
+    const rows = [
+      me({ email: 'ama@gmail.com', is_email_verified: true }),
+      { id: 'u2', phone_number: '+233201', is_phone_verified: false },
+    ];
+    const { signIn } = setup(rows, {
+      email: 'ama@gmail.com',
+      email_verified: true,
+      phone_number: '+233201',
+    });
+
+    await signIn();
+
+    expect(rows[1].phone_number).toBeNull();
+    expect(rows[0]).toMatchObject({
+      phone_number: '+233201',
+      is_phone_verified: true,
+    });
+  });
+
+  it('still signs in when a concurrent request claims the email first', async () => {
+    const rows = [me({ phone_number: '+233201', is_phone_verified: true })];
+    const { signIn } = setup(
+      rows,
+      { phone_number: '+233201', email: 'ama@gmail.com', email_verified: true },
+      { updateError: uniqueViolation() },
+    );
+
+    const response = await signIn();
+
+    expect(response.statusCode).toBe(200);
+    expect(rows[0].email).toBeNull();
+  });
+
+  it('fails the sign-in on an error that is not a conflict', async () => {
+    const rows = [me({ phone_number: '+233201', is_phone_verified: true })];
+    const { signIn } = setup(
+      rows,
+      { phone_number: '+233201', email: 'ama@gmail.com', email_verified: true },
+      { updateError: new Error('connection lost') },
+    );
+
+    await expect(signIn()).rejects.toThrow('connection lost');
+  });
+
+  describe('when a concurrent first sign-in creates the account', () => {
+    const lose = (rows: DbRow[], competitor: DbRow) => () => {
+      rows.push(competitor);
+      return Promise.reject(uniqueViolation());
+    };
+
+    it('adopts the account the same Firebase user created and fills it', async () => {
+      const rows: DbRow[] = [];
+      const { signIn } = setup(
+        rows,
+        {
+          phone_number: '+233201',
+          email: 'ama@gmail.com',
+          email_verified: true,
+        },
+        { create: lose(rows, me({ phone_number: '+233201' })) },
+      );
+
+      const response = await signIn();
+
+      expect(response.data.user.id).toBe('u1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+        phone_number: '+233201',
+        is_phone_verified: true,
+      });
+    });
+
+    it('does not adopt an account another Firebase user created', async () => {
+      const rows: DbRow[] = [];
+      const { signIn } = setup(
+        rows,
+        { phone_number: '+233201' },
+        { create: lose(rows, me({ id: 'u2', firebase_uid: 'fb-2' })) },
+      );
+
+      await expect(signIn()).rejects.toBeInstanceOf(QueryFailedError);
+    });
+  });
+
+  it('does not verify a stored email the token does not carry', async () => {
+    const rows = [me({ email: 'victim@gmail.com' })];
+    const { signIn } = setup(rows, {
+      email: 'mine@gmail.com',
+      email_verified: true,
+      phone_number: '+2332',
+    });
+
+    await signIn();
+
+    expect(rows[0].is_email_verified).toBe(false);
+  });
+
+  it('does not verify the stored email when the token has not verified it', async () => {
+    const rows = [me({ email: 'ama@gmail.com' })];
+    const { signIn } = setup(rows, {
+      email: 'ama@gmail.com',
+      email_verified: false,
+    });
+
+    await signIn();
+
+    expect(rows[0].is_email_verified).toBe(false);
+  });
+
+  it('does not verify a stored phone number the token does not carry', async () => {
+    const rows = [me({ phone_number: '+233999' })];
+    const { signIn } = setup(rows, { phone_number: '+233201' });
+
+    await signIn();
+
+    expect(rows[0].is_phone_verified).toBe(false);
+  });
+
+  it('verifies the email of an account it links to by phone', async () => {
+    // Not found by Firebase UID: a first sign-in that links on the number.
+    const rows = [
+      me({
+        firebase_uid: 'fb-old',
+        phone_number: '+233201',
+        is_phone_verified: true,
+        email: 'ama@gmail.com',
+      }),
+    ];
+    const { signIn } = setup(rows, {
+      phone_number: '+233201',
+      email: 'ama@gmail.com',
+      email_verified: true,
+    });
+
+    await signIn();
+
+    expect(rows[0]).toMatchObject({
+      firebase_uid: 'fb-1',
+      is_email_verified: true,
+    });
   });
 });
 

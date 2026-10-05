@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UserService } from './user.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UserEntity } from './entities/user.entity';
-import { UserResponseDto } from './dto/user-response.dto';
 import { FirebaseService } from '../firebase/firebase.service';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -240,125 +239,6 @@ describe('UserService.remove', () => {
   });
 });
 
-describe('UserService.updatePhoneFromFirebase', () => {
-  let service: UserService;
-  let update: jest.SpyInstance;
-  const firebase = { verifyIdToken: jest.fn() };
-  const repo = { findOne: jest.fn() };
-  const user = {
-    id: 'u1',
-    firebase_uid: 'fb-1',
-    phone_number: '+233200000001',
-    is_phone_verified: true,
-    is_deleted: false,
-  };
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        UserService,
-        { provide: getRepositoryToken(UserEntity), useValue: repo },
-        { provide: CloudinaryService, useValue: {} },
-        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
-        { provide: DataSource, useValue: {} },
-        { provide: FirebaseService, useValue: firebase },
-      ],
-    }).compile();
-
-    service = module.get(UserService);
-    update = jest.spyOn(service, 'update').mockImplementation((_id, dto) =>
-      Promise.resolve({
-        message: 'User updated successfully',
-        data: { ...user, ...dto } as UserResponseDto,
-        state: true,
-        statusCode: 200,
-      }),
-    );
-  });
-
-  afterEach(() => jest.resetAllMocks());
-
-  const statusOf = (promise: Promise<unknown>) =>
-    promise.then(
-      () => undefined,
-      (error: { getStatus: () => number }) => error.getStatus(),
-    );
-
-  it('saves the phone from the verified token as verified', async () => {
-    firebase.verifyIdToken.mockResolvedValue({
-      uid: 'fb-1',
-      phone_number: '+233200000002',
-    });
-    repo.findOne.mockResolvedValueOnce({ ...user }).mockResolvedValueOnce(null);
-
-    const result = await service.updatePhoneFromFirebase('u1', 'token');
-
-    expect(update).toHaveBeenCalledWith('u1', {
-      phone_number: '+233200000002',
-      is_phone_verified: true,
-    });
-    expect(result.data.phone_number).toBe('+233200000002');
-  });
-
-  it('rejects an invalid token without touching the profile', async () => {
-    firebase.verifyIdToken.mockRejectedValue(new Error('expired'));
-
-    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
-      401,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it('rejects a token from a different Firebase account', async () => {
-    firebase.verifyIdToken.mockResolvedValue({
-      uid: 'fb-other',
-      phone_number: '+233200000002',
-    });
-    repo.findOne.mockResolvedValue({ ...user });
-
-    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
-      403,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it('rejects a user with no linked Firebase account', async () => {
-    firebase.verifyIdToken.mockResolvedValue({
-      uid: 'fb-1',
-      phone_number: '+233200000002',
-    });
-    repo.findOne.mockResolvedValue({ ...user, firebase_uid: null });
-
-    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
-      403,
-    );
-  });
-
-  it('rejects a token without a phone number', async () => {
-    firebase.verifyIdToken.mockResolvedValue({ uid: 'fb-1' });
-
-    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
-      400,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it('rejects a number already linked to another account', async () => {
-    firebase.verifyIdToken.mockResolvedValue({
-      uid: 'fb-1',
-      phone_number: '+233200000002',
-    });
-    repo.findOne
-      .mockResolvedValueOnce({ ...user })
-      .mockResolvedValueOnce({ id: 'u2', phone_number: '+233200000002' });
-
-    expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
-      409,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-});
-
 describe('UserService.create from POST /user (actingUserId)', () => {
   const me = {
     id: 'me',
@@ -534,5 +414,335 @@ describe('UserService.setAccountState', () => {
       manager as never,
     );
     expect(cache.del).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserService linking identifiers from Firebase', () => {
+  type Row = Record<string, unknown> & { id: string };
+  let service: UserService;
+  let rows: Row[];
+  const firebase = { verifyIdToken: jest.fn() };
+  const cache = { del: jest.fn(), get: jest.fn(), set: jest.fn() };
+
+  // An in-memory users table: lookups answer by their `where`, so the tests
+  // don't depend on the order of the service's queries, and the real
+  // update() runs against it.
+  const rowsWhere = (where: Record<string, unknown>) =>
+    rows.filter((r) => Object.entries(where).every(([k, v]) => r[k] === v));
+  // Copies, so only what the service writes back counts.
+  const matches = (where: Record<string, unknown>) => {
+    const [row] = rowsWhere(where);
+    return row ? { ...row } : null;
+  };
+  const patch = (
+    criteria: string | Record<string, unknown>,
+    values: Record<string, unknown>,
+  ) => {
+    const hit = rowsWhere(
+      typeof criteria === 'string' ? { id: criteria } : criteria,
+    );
+    hit.forEach((r) => Object.assign(r, values));
+    return Promise.resolve({ affected: hit.length });
+  };
+  const repo = {
+    findOne: jest.fn<
+      Promise<Row | null>,
+      [{ where: Record<string, unknown> }]
+    >(),
+    update: patch,
+  };
+  const manager = {
+    getRepository: () => repo,
+    findOne: (
+      _entity: unknown,
+      { where }: { where: Record<string, unknown> },
+    ) => Promise.resolve(matches(where)),
+    update: (
+      _entity: unknown,
+      criteria: string | Record<string, unknown>,
+      values: Record<string, unknown>,
+    ) => patch(criteria, values),
+  };
+
+  const me = (over: Partial<Row> = {}): Row => ({
+    id: 'u1',
+    firebase_uid: 'fb-1',
+    email: null,
+    phone_number: null,
+    is_email_verified: false,
+    is_phone_verified: false,
+    is_deleted: false,
+    ...over,
+  });
+  const token = (claims: Record<string, unknown>) =>
+    firebase.verifyIdToken.mockResolvedValue({ uid: 'fb-1', ...claims });
+  const statusOf = (promise: Promise<unknown>) =>
+    promise.then(
+      () => undefined,
+      (error: { getStatus: () => number }) => error.getStatus(),
+    );
+
+  beforeEach(async () => {
+    repo.findOne.mockImplementation(({ where }) =>
+      Promise.resolve(matches(where)),
+    );
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        {
+          provide: getRepositoryToken(UserEntity),
+          useValue: { ...repo, manager },
+        },
+        { provide: CloudinaryService, useValue: {} },
+        { provide: CACHE_MANAGER, useValue: cache },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: (run: (m: typeof manager) => unknown) => run(manager),
+          },
+        },
+        { provide: FirebaseService, useValue: firebase },
+      ],
+    }).compile();
+
+    service = module.get(UserService);
+  });
+
+  afterEach(() => jest.resetAllMocks());
+
+  it('finds nobody for a blank email', async () => {
+    rows = [me({ email: 'ama@gmail.com' })];
+
+    expect(await service.findByEmail('  ')).toBeNull();
+    expect(repo.findOne).not.toHaveBeenCalled();
+  });
+
+  describe('POST /user/phone-number', () => {
+    it('saves the phone from the verified token as verified', async () => {
+      rows = [me({ phone_number: '+233200000001', is_phone_verified: true })];
+      token({ phone_number: '+233200000002' });
+
+      const result = await service.updatePhoneFromFirebase('u1', 'token');
+
+      expect(rows[0]).toMatchObject({
+        phone_number: '+233200000002',
+        is_phone_verified: true,
+      });
+      expect(result.data.phone_number).toBe('+233200000002');
+      expect(firebase.verifyIdToken).toHaveBeenCalledWith('token', true);
+    });
+
+    it('rejects an invalid or revoked token without touching the profile', async () => {
+      rows = [me()];
+      firebase.verifyIdToken.mockRejectedValue(new Error('revoked'));
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        401,
+      );
+      expect(rows[0].phone_number).toBeNull();
+    });
+
+    it('rejects a token from a different Firebase account', async () => {
+      rows = [me()];
+      firebase.verifyIdToken.mockResolvedValue({
+        uid: 'fb-other',
+        phone_number: '+233200000002',
+      });
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        403,
+      );
+      expect(rows[0].phone_number).toBeNull();
+    });
+
+    it('rejects a user with no linked Firebase account', async () => {
+      rows = [me({ firebase_uid: null })];
+      token({ phone_number: '+233200000002' });
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        403,
+      );
+    });
+
+    it('rejects a token without a phone number', async () => {
+      rows = [me()];
+      token({});
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        400,
+      );
+    });
+
+    it('rejects a number another account has verified', async () => {
+      rows = [
+        me(),
+        { id: 'u2', phone_number: '+233200000002', is_phone_verified: true },
+      ];
+      token({ phone_number: '+233200000002' });
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        409,
+      );
+      expect(rows[0].phone_number).toBeNull();
+      expect(rows[1].phone_number).toBe('+233200000002');
+    });
+
+    it('takes a number another account only claimed', async () => {
+      rows = [
+        me(),
+        {
+          id: 'u2',
+          firebase_uid: 'fb-2',
+          phone_number: '+233200000002',
+          is_phone_verified: false,
+        },
+      ];
+      token({ phone_number: '+233200000002' });
+
+      await service.updatePhoneFromFirebase('u1', 't');
+
+      expect(rows[1].phone_number).toBeNull();
+      expect(rows[0]).toMatchObject({
+        phone_number: '+233200000002',
+        is_phone_verified: true,
+      });
+      expect(cache.del).toHaveBeenCalledWith('user:id:u2');
+      expect(cache.del).toHaveBeenCalledWith('user:firebase_uid:fb-2');
+    });
+
+    it('keeps a number verified since the claim was read', async () => {
+      rows = [
+        me(),
+        { id: 'u2', phone_number: '+233200000002', is_phone_verified: false },
+      ];
+      token({ phone_number: '+233200000002' });
+      // The holder verifies between the service's read and its write.
+      repo.findOne.mockImplementation(({ where }) => {
+        const found = matches(where);
+        if (found?.id === 'u2') rows[1].is_phone_verified = true;
+        return Promise.resolve(found);
+      });
+
+      expect(await statusOf(service.updatePhoneFromFirebase('u1', 't'))).toBe(
+        409,
+      );
+      expect(rows[1].phone_number).toBe('+233200000002');
+      expect(rows[0].phone_number).toBeNull();
+    });
+  });
+
+  describe('POST /user/email', () => {
+    it('saves the verified email from the token as verified, lowercased', async () => {
+      rows = [me({ phone_number: '+233201', is_phone_verified: true })];
+      token({ email: 'Ama@Gmail.com', email_verified: true });
+
+      const result = await service.updateEmailFromFirebase('u1', 'token');
+
+      // Through the real update(), which must not reset the flag it is given.
+      expect(rows[0]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+      expect(result.data.email).toBe('ama@gmail.com');
+    });
+
+    it('rejects an email the token has not verified', async () => {
+      rows = [me()];
+      token({ email: 'ama@gmail.com', email_verified: false });
+
+      expect(await statusOf(service.updateEmailFromFirebase('u1', 't'))).toBe(
+        400,
+      );
+      expect(rows[0].email).toBeNull();
+    });
+
+    it('rejects a token that does not say the email is verified', async () => {
+      rows = [me()];
+      token({ email: 'ama@gmail.com' });
+
+      expect(await statusOf(service.updateEmailFromFirebase('u1', 't'))).toBe(
+        400,
+      );
+    });
+
+    it('rejects a token from a different Firebase account', async () => {
+      rows = [me()];
+      firebase.verifyIdToken.mockResolvedValue({
+        uid: 'fb-other',
+        email: 'ama@gmail.com',
+        email_verified: true,
+      });
+
+      expect(await statusOf(service.updateEmailFromFirebase('u1', 't'))).toBe(
+        403,
+      );
+      expect(rows[0].email).toBeNull();
+    });
+
+    it('rejects an email another account has verified', async () => {
+      rows = [
+        me(),
+        { id: 'u2', email: 'ama@gmail.com', is_email_verified: true },
+      ];
+      token({ email: 'ama@gmail.com', email_verified: true });
+
+      expect(await statusOf(service.updateEmailFromFirebase('u1', 't'))).toBe(
+        409,
+      );
+      expect(rows[0].email).toBeNull();
+      expect(rows[1].email).toBe('ama@gmail.com');
+    });
+
+    it('takes an email another account only claimed', async () => {
+      rows = [
+        me(),
+        { id: 'u2', email: 'ama@gmail.com', is_email_verified: false },
+      ];
+      token({ email: 'ama@gmail.com', email_verified: true });
+
+      await service.updateEmailFromFirebase('u1', 't');
+
+      expect(rows[1].email).toBeNull();
+      expect(rows[0]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+    });
+
+    it('does not replace a verified email with a different one', async () => {
+      rows = [me({ email: 'ama@gmail.com', is_email_verified: true })];
+      token({ email: 'ama.work@gmail.com', email_verified: true });
+
+      expect(await statusOf(service.updateEmailFromFirebase('u1', 't'))).toBe(
+        409,
+      );
+      expect(rows[0].email).toBe('ama@gmail.com');
+    });
+
+    it('replaces an unverified email and clears its cached lookups', async () => {
+      rows = [me({ email: 'typo@gmail.com' })];
+      token({ email: 'ama@gmail.com', email_verified: true });
+
+      await service.updateEmailFromFirebase('u1', 't');
+
+      expect(rows[0]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+      expect(cache.del).toHaveBeenCalledWith('user:email:typo@gmail.com');
+      expect(cache.del).toHaveBeenCalledWith('user:email:ama@gmail.com');
+      expect(cache.del).toHaveBeenCalledWith('user:id:u1');
+    });
+
+    it('answers an email that is already linked without writing', async () => {
+      rows = [me({ email: 'ama@gmail.com', is_email_verified: true })];
+      token({ email: 'ama@gmail.com', email_verified: true });
+      const update = jest.spyOn(service, 'update');
+
+      const result = await service.updateEmailFromFirebase('u1', 't');
+
+      expect(result.message).toBe('Email is already up to date');
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 });

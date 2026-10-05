@@ -7,11 +7,13 @@ import {
   IsPhoneNumber,
 } from 'class-validator';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
+import { NormalizeEmail } from '../../common/email';
 
 export class RegisterDto {
   @ApiProperty()
   @IsEmail()
   @IsNotDisposableEmail()
+  @NormalizeEmail()
   email: string;
 
   @ApiProperty({ minLength: 6 })

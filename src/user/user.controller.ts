@@ -38,6 +38,7 @@ import { CreateUserResponseDto } from './dto/create-user-response.dto';
 import { FindUserDto } from './dto/find-user.dto';
 import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 import { UpdatePhoneNumberDto } from './dto/update-phone-number.dto';
+import { UpdateEmailDto } from './dto/update-email.dto';
 import { ErrorResponseDto } from 'src/common/dto/error-response.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -391,6 +392,54 @@ export class UserController {
     @Body() dto: UpdatePhoneNumberDto,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
     return this.userService.updatePhoneFromFirebase(userId, dto.idToken);
+  }
+
+  @Post('email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Link a verified email from a Firebase ID token',
+    description:
+      'Call after linking an email (Google, email link or email/password) to ' +
+      "the signed-in user's Firebase account and verifying it, with a " +
+      'refreshed Firebase ID token. The email is taken from the verified ' +
+      'token, not from the request, and is saved as verified, so later ' +
+      'sign-ins with that email reach this account instead of creating a new ' +
+      "one. The token must belong to the signed-in user's Firebase account. " +
+      'A verified email already on the account is never replaced here, ' +
+      'since it is also the password sign-in. ' +
+      'On any error the existing email is left unchanged.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Email updated',
+    type: UserResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'The Firebase account has no verified email',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Firebase ID token is invalid or expired',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'The token belongs to a different Firebase account',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Another account has verified this email, or this account already has a different verified email',
+    type: ErrorResponseDto,
+  })
+  async updateEmail(
+    @GetUser('userId') userId: string,
+    @Body() dto: UpdateEmailDto,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    return this.userService.updateEmailFromFirebase(userId, dto.idToken);
   }
 
   @Patch(':id')

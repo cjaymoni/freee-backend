@@ -2,11 +2,13 @@ import { IsFcmToken } from '../../notification/device-tokens';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
+import { NormalizeEmail } from '../../common/email';
 
 export class LoginDto {
   @ApiProperty()
   @IsEmail()
   @IsNotDisposableEmail()
+  @NormalizeEmail()
   email: string;
 
   @ApiProperty()

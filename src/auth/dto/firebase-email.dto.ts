@@ -1,5 +1,6 @@
 import { IsEmail, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { NormalizeEmail } from '../../common/email';
 
 export class FirebaseEmailDto {
   @ApiProperty({
@@ -8,5 +9,6 @@ export class FirebaseEmailDto {
   })
   @IsEmail()
   @IsNotEmpty()
+  @NormalizeEmail()
   email: string;
 }

@@ -60,6 +60,22 @@ Synchronizes the database schema with entities (not recommended for production):
 npm run schema:sync
 ```
 
+## Before Deploying 1798000000000-NormalizeUserEmails
+
+Production runs migrations on boot, and this one stops if two accounts share an email apart from letter case. Check first; this must return no rows:
+
+```sql
+SELECT lower(trim(email)) AS email, array_agg(id) AS ids
+FROM users
+WHERE email IS NOT NULL
+GROUP BY 1
+HAVING count(*) > 1;
+```
+
+Each row is one person with two accounts. Clear the email on the account they should give up, then deploy.
+
+Development databases are synchronised from the entities, which can't express this migration's `lower(email)` index. Run `npm run migration:run` against them as well.
+
 ## Best Practices
 
 1. **Never use `synchronize: true` in production** - Always use migrations

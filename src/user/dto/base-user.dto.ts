@@ -17,6 +17,7 @@ import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../entities/user.entity';
 import { IsNotDisposableEmail } from '../../common/decorators/is-not-disposable-email.decorator';
+import { NormalizeEmail } from '../../common/email';
 
 export class BaseUserDto {
   @ApiProperty({
@@ -39,6 +40,7 @@ export class BaseUserDto {
   @IsEmail()
   @IsNotDisposableEmail()
   @MaxLength(255)
+  @NormalizeEmail()
   email?: string;
 
   @ApiProperty({

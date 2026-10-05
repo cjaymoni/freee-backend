@@ -41,7 +41,7 @@ Mobile App                                  Backend
    New { access_token, refresh_token }
 ```
 
-> The backend automatically creates a new user account on first login. If a user already exists with the same email or phone, their account is linked to the Firebase UID.
+> The backend automatically creates a new user account on first login. If a user already exists with the same **verified** email or phone, the sign-in lands in that account instead. To make sure a user who signs up with one method can later sign in with the other, link both to the same account — see [Linking Phone and Email](#linking-phone-and-email).
 
 ---
 
@@ -243,6 +243,49 @@ Authorization: Bearer <access_token>
 
 ---
 
+## Linking Phone and Email
+
+A phone sign-in and a Google / email sign-in are two different Firebase accounts unless the app links them. If they aren't linked, and the backend account doesn't already hold the other identifier as verified, signing in with the other method creates a **second account**.
+
+To prevent that, offer "Add email" / "Add phone number" once the user is signed in (for example at the end of onboarding or in profile settings):
+
+1. **Link the credential to the current Firebase user** — don't sign in with it:
+
+   ```kotlin
+   // Android — Google shown; for phone use the PhoneAuthCredential from verifyPhoneNumber
+   val credential = GoogleAuthProvider.getCredential(googleIdToken, null)
+   FirebaseAuth.getInstance().currentUser!!.linkWithCredential(credential).await()
+   ```
+
+   ```swift
+   // iOS
+   let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+   try await Auth.auth().currentUser!.link(with: credential)
+   ```
+
+   For email/password, link `EmailAuthProvider.getCredential(email, password)` and then call `sendEmailVerification()`; the email only counts once it is verified.
+
+2. **Tell the backend**, with a force-refreshed ID token (`getIdToken(true)`), so the new identifier is in it:
+
+   | Linked | Call                      | Body                   |
+   | ------ | ------------------------- | ---------------------- |
+   | Email  | `POST /user/email`        | `{ "idToken": "..." }` |
+   | Phone  | `POST /user/phone-number` | `{ "idToken": "..." }` |
+
+   Both need `Authorization: Bearer <access_token>`. The backend reads the value from the verified token, never from the request body, and saves it as verified. If another account had only typed the same email or number in without verifying it, that claim is removed and this account gets it.
+
+After this, the user's Firebase account has both providers, so either sign-in method returns the same Firebase UID and the same backend account. (If the app skips step 2, the next `POST /firebase-auth/authenticate` fills in the missing identifier anyway, as long as no other account holds it.)
+
+| Response | Meaning                                                                                                         | What to do                                                                                                                               |
+| -------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`    | The token has no verified email / phone                                                                         | Finish verification in Firebase, refresh the token, retry                                                                                |
+| `403`    | The token is from a different Firebase account                                                                  | Use the signed-in user's own token                                                                                                       |
+| `409`    | Another backend account has already verified it, or (email) this account already has a different verified email | Another account: ask the user to sign in with it instead. Own email: it can't be swapped here, because it is also their password sign-in |
+
+If `linkWithCredential` fails with a credential-already-in-use error (`FirebaseAuthUserCollisionException` / `.credentialAlreadyInUse`), that phone or email already has its own account. The app can't merge the two; tell the user to sign in with that method instead.
+
+---
+
 ## Optional Auth Status (Browse First)
 
 Use this when the app allows anonymous browsing and only requires auth on interaction.
@@ -343,5 +386,6 @@ Refresh and re-send the FCM token whenever `FirebaseMessaging.getInstance().toke
 - [ ] After any Firebase sign-in, call `getIdToken()` and `POST /firebase-auth/authenticate`
 - [ ] Store `access_token` in memory, `refresh_token` in secure storage (Keystore / Keychain)
 - [ ] Attach `Authorization: Bearer <access_token>` to all API requests
+- [ ] Offer "Add email" / "Add phone number": link with `linkWithCredential`, then call `POST /user/email` or `POST /user/phone-number`
 - [ ] On `401`, call `POST /auth/refresh` to get a new token pair
 - [ ] After login, send the FCM device token via `PATCH /user/fcm-token`
