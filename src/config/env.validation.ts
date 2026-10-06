@@ -44,6 +44,9 @@ export const envValidationSchema = Joi.object({
   LOCKOUT_DURATION_MINUTES: Joi.number().default(30),
   PASSWORD_MIN_LENGTH: Joi.number().default(8),
 
+  // Pre-launch Founding Freers sign-up; close it at launch.
+  FOUNDING_FREERS_OPEN: Joi.boolean().default(false),
+
   // Logging
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug', 'verbose')

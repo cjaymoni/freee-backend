@@ -87,6 +87,15 @@ export class AdminItemQueryDto extends AdminPaginationDto {
   area?: string;
 
   @ApiPropertyOptional({
+    description:
+      'true: only Founding Freer listings waiting for pre-launch review; false: everything else',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  awaiting_review?: boolean;
+
+  @ApiPropertyOptional({
     description: 'true: only listings with requests; false: only without',
   })
   @IsOptional()

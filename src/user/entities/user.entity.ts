@@ -151,6 +151,13 @@ export class UserEntity {
   @Column({ type: 'boolean', default: true })
   notification_enabled: boolean;
 
+  /** Signed up through the pre-launch Founding Freers form; shown as a badge. */
+  @Column({ type: 'boolean', default: false })
+  is_founding_freer: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  founding_freer_since: Date | null;
+
   @Column({ type: 'int', default: 0 })
   failed_login_attempts: number;
 

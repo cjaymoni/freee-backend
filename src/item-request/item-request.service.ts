@@ -179,6 +179,7 @@ export class ItemRequestService {
       phone_number: user.phone_number ?? null,
       items_count:
         (user as unknown as { items_count?: number }).items_count ?? 0,
+      is_founding_freer: user.is_founding_freer ?? false,
     };
   }
 

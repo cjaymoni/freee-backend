@@ -1,5 +1,6 @@
 import { NotificationService } from '../notification/notification.service';
 import {
+  listingApprovedNotice,
   listingHiddenNotice,
   listingRestoredNotice,
 } from '../notification/notices';
@@ -23,6 +24,7 @@ import { escapeLike } from '../common/text-fold';
 import { AdminAuditService, StaffActor } from './admin-audit.service';
 import { AdminItem, toAdminItem, toUserRef } from './admin-views';
 import { AdminItemQueryDto } from './dto/admin-query.dto';
+import { FOUNDING_REVIEW_REASON } from '../founding-freer/founding-freer.constants';
 
 export const ITEM_HIDDEN = 'hidden';
 export const ITEM_FLAGGED = 'flagged';
@@ -90,6 +92,13 @@ export class AdminItemsService {
     if (query.moderation_status) {
       qb.andWhere('item.moderation_status = :moderation', {
         moderation: query.moderation_status,
+      });
+    }
+    if (query.awaiting_review !== undefined) {
+      const awaiting =
+        "(item.moderation_status = 'hidden' AND item.moderation_reason = :reviewReason)";
+      qb.andWhere(query.awaiting_review ? awaiting : `NOT ${awaiting}`, {
+        reviewReason: FOUNDING_REVIEW_REASON,
       });
     }
     if (query.city) {
@@ -252,7 +261,12 @@ export class AdminItemsService {
         listingHiddenNotice(item, reason),
       );
     } else if (item.moderation_status === ModerationStatus.HIDDEN) {
-      void this.notifications.notify(item.user_id, listingRestoredNotice(item));
+      void this.notifications.notify(
+        item.user_id,
+        item.moderation_reason === FOUNDING_REVIEW_REASON
+          ? listingApprovedNotice(item)
+          : listingRestoredNotice(item),
+      );
     }
 
     return this.detail(itemId);
