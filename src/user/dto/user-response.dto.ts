@@ -1,4 +1,4 @@
-import { OmitType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Exclude } from 'class-transformer';
 import { BaseUserDto } from './base-user.dto';
 
@@ -13,4 +13,11 @@ export class UserResponseDto extends OmitType(BaseUserDto, [
    */
   @Exclude()
   fcm_token?: string;
+
+  // Response only: not on BaseUserDto, so profile updates can't set them.
+  @ApiProperty({ description: 'Show the Founding Freer badge' })
+  is_founding_freer: boolean;
+
+  @ApiPropertyOptional({ nullable: true, type: Date })
+  founding_freer_since: Date | null;
 }

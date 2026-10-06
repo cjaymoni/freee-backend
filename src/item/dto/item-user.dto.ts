@@ -18,4 +18,7 @@ export class ItemUserDto {
 
   @ApiProperty()
   items_count: number;
+
+  @ApiProperty({ description: 'Show the Founding Freer badge' })
+  is_founding_freer: boolean;
 }

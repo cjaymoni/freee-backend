@@ -452,10 +452,18 @@ export class ItemService {
   /**
    * Create a new item
    */
+  /**
+   * `moderation` starts the listing in a moderation state other than
+   * visible, set before the first save so it is never briefly public.
+   */
   async create(
     userId: string,
     createDto: CreateItemDto,
     files?: Express.Multer.File[],
+    moderation?: {
+      moderation_status: ModerationStatus;
+      moderation_reason: string;
+    },
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     // Validate price logic
     if (createDto.is_free && createDto.price && createDto.price > 0) {
@@ -481,6 +489,7 @@ export class ItemService {
       // Left unset, the column defaults to true - so an item posted with a
       // price and no is_free would be listed as free.
       is_free: createDto.is_free ?? !(createDto.price && createDto.price > 0),
+      ...moderation,
     });
 
     if (latitude !== undefined && longitude !== undefined) {

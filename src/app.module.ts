@@ -29,6 +29,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { ChatModule } from './chat/chat.module';
 import { AdminModule } from './admin/admin.module';
 import { LocationsModule } from './locations/locations.module';
+import { FoundingFreerModule } from './founding-freer/founding-freer.module';
 
 import { envValidationSchema } from './config/env.validation';
 
@@ -114,6 +115,7 @@ import { envValidationSchema } from './config/env.validation';
     ChatModule,
     AdminModule,
     LocationsModule,
+    FoundingFreerModule,
     HealthModule,
     CommonModule,
     FirebaseModule,

@@ -24,6 +24,7 @@ export function toAdminUser(user: UserEntity) {
     is_email_verified: user.is_email_verified,
     is_phone_verified: user.is_phone_verified,
     is_onboarded: user.is_onboarded,
+    is_founding_freer: user.is_founding_freer ?? false,
     member_since: user.member_since ?? null,
     last_active: user.last_active ?? null,
     created_at: user.created_at,

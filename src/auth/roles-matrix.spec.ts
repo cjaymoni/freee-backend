@@ -11,6 +11,7 @@ import { AuthController } from './auth.controller';
 import { FirebaseAuthController } from './firebase-auth.controller';
 import { CategoryController } from '../category/category.controller';
 import { ChatController } from '../chat/chat.controller';
+import { FoundingFreerController } from '../founding-freer/founding-freer.controller';
 import { HealthController } from '../health/health.controller';
 import { ItemRequestController } from '../item-request/item-request.controller';
 import { ItemViewController } from '../item-view/item-view.controller';
@@ -80,6 +81,7 @@ const CONTROLLERS = [
   ItemImageController,
   ItemController,
   LocationsController,
+  FoundingFreerController,
   ModerationController,
   SavedItemController,
   SearchController,

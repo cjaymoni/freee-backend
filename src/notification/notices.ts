@@ -95,6 +95,19 @@ export function listingRestoredNotice(item: {
   };
 }
 
+/** A Founding Freer listing passing its pre-launch review. */
+export function listingApprovedNotice(item: {
+  id: string;
+  title: string;
+}): Notice {
+  return {
+    category: NotificationCategory.LISTINGS,
+    title: 'Your listing was approved',
+    body: `"${item.title}" is live on Freeee.`,
+    data: { type: 'listing_moderation', status: 'visible', item_id: item.id },
+  };
+}
+
 export function listingRemovedNotice(
   item: { id: string; title: string },
   reason?: string | null,

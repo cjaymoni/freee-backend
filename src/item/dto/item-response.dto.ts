@@ -177,6 +177,7 @@ export class ItemResponseDto {
         joined_date: u.member_since,
         phone_number: u.phone_number ?? null,
         items_count: (u as any).items_count ?? 0,
+        is_founding_freer: u.is_founding_freer ?? false,
       } as any;
     }
 
