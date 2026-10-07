@@ -164,7 +164,12 @@ export class ItemController {
   @Get()
   // A repeated filter is refused before any pipe reads it.
   @UseGuards(OptionalJwtAuthGuard, SingleValueQuery(ITEM_LIST_PARAMS))
-  @ApiOperation({ summary: 'Get all items with optional filters' })
+  @ApiOperation({
+    summary: 'Get all items with optional filters',
+    description:
+      'Ordered nearest first when lat & lng are sent, then featured items ' +
+      'first, then newest first.',
+  })
   @ApiQuery({
     name: 'user_id',
     required: false,
@@ -199,22 +204,24 @@ export class ItemController {
     required: false,
     type: Number,
     description:
-      'Requester latitude for proximity filtering (-90 to 90). Send with lng.',
+      'Requester latitude (-90 to 90). Send with lng to rank items nearest ' +
+      'first; items without coordinates come after every located one.',
   })
   @ApiQuery({
     name: 'lng',
     required: false,
     type: Number,
     description:
-      'Requester longitude for proximity filtering (-180 to 180). Send with lat.',
+      'Requester longitude (-180 to 180). Send with lat to rank items nearest first.',
   })
   @ApiQuery({
     name: 'radius',
     required: false,
     type: Number,
     description:
-      'Radius in km, greater than 0 (default: 10). Only applied when lat & lng ' +
-      'are provided. Items without coordinates are always included.',
+      'Radius in km, greater than 0. Optional: when sent with lat & lng, only ' +
+      'items within it are returned; otherwise every item is. Items without ' +
+      'coordinates are always included.',
   })
   @ApiQuery({
     name: 'query',

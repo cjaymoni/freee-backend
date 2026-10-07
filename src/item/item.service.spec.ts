@@ -108,6 +108,7 @@ const buildQueryBuilder = (
   groupBy: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
   addOrderBy: jest.fn().mockReturnThis(),
+  setParameters: jest.fn().mockReturnThis(),
   skip: jest.fn().mockReturnThis(),
   take: jest.fn().mockReturnThis(),
   getRawAndEntities: jest.fn().mockResolvedValue({ entities, raw }),
@@ -1381,11 +1382,11 @@ describe('ItemService', () => {
 
         await service.findAll({ page: 1 });
 
-        expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
+        expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
           'item.created_at',
           'DESC',
         );
-        expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
+        expect(mockQueryBuilder.addOrderBy).toHaveBeenLastCalledWith(
           'item.id',
           'DESC',
         );
@@ -1531,8 +1532,13 @@ describe('ItemService', () => {
         expect(radiusFilter()).toBeUndefined();
       });
 
-      it('filters in SQL within a default 10km radius', async () => {
+      it('does not filter by distance when no radius is sent', async () => {
         await service.findAll({ lat: 5.6037, lng: -0.187 });
+        expect(radiusFilter()).toBeUndefined();
+      });
+
+      it('filters in SQL within the requested radius', async () => {
+        await service.findAll({ lat: 5.6037, lng: -0.187, radius: 10 });
         const [sql, params] = radiusFilter()!;
         expect(sql).toContain('asin(');
         expect(params).toMatchObject({ lat: 5.6037, lng: -0.187, radius: 10 });
@@ -1550,7 +1556,7 @@ describe('ItemService', () => {
       });
 
       it('searches from 0,0 rather than ignoring it', async () => {
-        await service.findAll({ lat: 0, lng: 0 });
+        await service.findAll({ lat: 0, lng: 0, radius: 10 });
         expect(radiusFilter()![1]).toMatchObject({ lat: 0, lng: 0 });
       });
 
@@ -1563,10 +1569,61 @@ describe('ItemService', () => {
       });
 
       it('keeps items without coordinates', async () => {
-        await service.findAll({ lat: 5.6037, lng: -0.187 });
+        await service.findAll({ lat: 5.6037, lng: -0.187, radius: 10 });
         const [sql] = radiusFilter()!;
         expect(sql).toContain('item.location_id IS NULL');
         expect(sql).toContain('l.latitude IS NULL OR l.longitude IS NULL');
+      });
+    });
+
+    describe('ranking', () => {
+      const orderKeys = () =>
+        (
+          mockQueryBuilder.addOrderBy.mock.calls as [string, string, string?][]
+        ).map(([key, order, nulls]) =>
+          [key, order, nulls].filter(Boolean).join(' '),
+        );
+
+      beforeEach(() => {
+        mockQueryBuilder = buildQueryBuilder([], []);
+        mockItemRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      });
+
+      it('ranks nearest first, then featured, then newest', async () => {
+        await service.findAll({ lat: 5.6037, lng: -0.187 });
+        expect(orderKeys()).toEqual([
+          'rank_distance_km ASC NULLS LAST',
+          'rank_featured DESC',
+          'item.created_at DESC',
+          'item.id DESC',
+        ]);
+        expect(mockQueryBuilder.setParameters).toHaveBeenCalledWith({
+          lat: 5.6037,
+          lng: -0.187,
+        });
+      });
+
+      it('ranks featured, then newest, without a location', async () => {
+        await service.findAll();
+        expect(orderKeys()).toEqual([
+          'rank_featured DESC',
+          'item.created_at DESC',
+          'item.id DESC',
+        ]);
+      });
+
+      it('counts a feature only until it ends', async () => {
+        await service.findAll();
+        const featured = (
+          mockQueryBuilder.addSelect.mock.calls as [string, string][]
+        ).find(([, alias]) => alias === 'rank_featured');
+        expect(featured?.[0]).toContain('item.featured_until > :featured_now');
+        const params = (
+          mockQueryBuilder.setParameters.mock.calls as [
+            Record<string, unknown>,
+          ][]
+        ).find(([p]) => 'featured_now' in p);
+        expect(params?.[0].featured_now).toBeInstanceOf(Date);
       });
     });
   });

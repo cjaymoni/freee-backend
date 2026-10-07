@@ -65,12 +65,15 @@ function boundingBox(
 
 /**
  * Great-circle (haversine) distance in km from :lat/:lng to the location
- * aliased `l`. least() keeps rounding from pushing asin() past its domain.
+ * aliased `alias`; NULL when it has no coordinates. least() keeps rounding
+ * from pushing asin() past its domain.
  */
-const HAVERSINE_KM = `${EARTH_RADIUS_KM} * 2 * asin(least(1, sqrt(
-  power(sin(radians(l.latitude - CAST(:lat AS double precision)) / 2), 2) +
-  cos(radians(CAST(:lat AS double precision))) * cos(radians(l.latitude)) *
-  power(sin(radians(l.longitude - CAST(:lng AS double precision)) / 2), 2)
+const haversineKm = (
+  alias: string,
+) => `${EARTH_RADIUS_KM} * 2 * asin(least(1, sqrt(
+  power(sin(radians(${alias}.latitude - CAST(:lat AS double precision)) / 2), 2) +
+  cos(radians(CAST(:lat AS double precision))) * cos(radians(${alias}.latitude)) *
+  power(sin(radians(${alias}.longitude - CAST(:lng AS double precision)) / 2), 2)
 )))`;
 
 @Injectable()
@@ -578,16 +581,18 @@ export class ItemService {
       query.andWhere('item.status = :status', { status: filters.status });
     }
 
+    // featured_until ends a feature on its own; nothing clears the flag.
+    // Compared with a bound JS date, not now(): the column has no time zone
+    // and is written from JS dates, so both sides are serialised alike
+    // whatever the server's zone.
+    const featured =
+      'item.is_featured = true AND (item.featured_until IS NULL OR item.featured_until > :featured_now)';
+    const featured_now = new Date();
+
     if (filters?.is_featured !== undefined) {
-      // featured_until ends a feature on its own; nothing clears the flag.
-      // Compared with a bound JS date, not now(): the column has no time zone
-      // and is written from JS dates, so both sides are serialised alike
-      // whatever the server's zone.
-      const featured =
-        'item.is_featured = true AND (item.featured_until IS NULL OR item.featured_until > :featured_now)';
       query.andWhere(
         filters.is_featured ? `(${featured})` : `NOT (${featured})`,
-        { featured_now: new Date() },
+        { featured_now },
       );
     }
 
@@ -609,8 +614,10 @@ export class ItemService {
       }
     }
 
-    const { lat, lng, radius = 10 } = filters ?? {};
-    if (lat !== undefined && lng !== undefined) {
+    // Every item is listed; a radius only narrows the list when one is sent.
+    const { lat, lng, radius } = filters ?? {};
+    const located = lat !== undefined && lng !== undefined;
+    if (located && radius !== undefined) {
       const box = boundingBox(lat, lng, radius);
       const inBox =
         box.min_lng === undefined
@@ -630,10 +637,25 @@ export class ItemService {
       query.andWhere(
         `(item.location_id IS NULL
           OR item.location_id IN ${locations('l.latitude IS NULL OR l.longitude IS NULL')}
-          OR item.location_id IN ${locations(`${inBox} AND ${HAVERSINE_KM} <= :radius`)})`,
+          OR item.location_id IN ${locations(`${inBox} AND ${haversineKm('l')} <= :radius`)})`,
         { lat, lng, radius, ...box },
       );
     }
+
+    // Ranked nearest first when the requester sends a location, with items
+    // lacking coordinates after every located one; then featured items, then
+    // newest. The rank keys are selected under their own aliases because
+    // TypeORM's paging (below) can only order by selected columns.
+    if (located) {
+      query
+        .addSelect(haversineKm('location'), 'rank_distance_km')
+        .setParameters({ lat, lng })
+        .addOrderBy('rank_distance_km', 'ASC', 'NULLS LAST');
+    }
+    query
+      .addSelect(`CASE WHEN ${featured} THEN 1 ELSE 0 END`, 'rank_featured')
+      .setParameters({ featured_now })
+      .addOrderBy('rank_featured', 'DESC');
 
     // Paged in SQL, after every filter, so total and each page only count
     // matching items. skip/take rather than offset/limit: TypeORM then pages
@@ -643,7 +665,7 @@ export class ItemService {
       filters?.page !== undefined || filters?.limit !== undefined;
     const page = filters?.page ?? 1;
     const limit = filters?.limit ?? 20;
-    query.orderBy('item.created_at', 'DESC').addOrderBy('item.id', 'DESC');
+    query.addOrderBy('item.created_at', 'DESC').addOrderBy('item.id', 'DESC');
     if (paginate) query.skip((page - 1) * limit).take(limit);
 
     const [pageItems, total] = await query.getManyAndCount();

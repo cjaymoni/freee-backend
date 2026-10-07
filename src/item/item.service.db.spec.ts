@@ -290,7 +290,7 @@ describeDb('ItemService.findAll on Postgres', () => {
   });
 
   it.each([
-    ['Accra, default 10 km', ACCRA, undefined],
+    ['Accra, 10 km', ACCRA, 10],
     ['Accra, 300 km', ACCRA, 300],
     ['Accra, 1 km', ACCRA, 1],
     ['0,0, 1 km', PLACES.nullIsland, 1],
@@ -309,18 +309,104 @@ describeDb('ItemService.findAll on Postgres', () => {
     const expected = VISIBLE.filter((key) => {
       const at = coords[key];
       // Items without coordinates (no location, or a blank one) are kept.
-      return (
-        !at || haversineKm(from.lat, from.lng, at.lat, at.lng) <= (radius ?? 10)
-      );
+      return !at || haversineKm(from.lat, from.lng, at.lat, at.lng) <= radius;
     });
     expect(keysOf(result.data).sort()).toEqual(expected.sort());
     expect(result.total).toBe(expected.length);
   });
 
   it('keeps the radius when paging', async () => {
-    const result = await service.findAll({ ...ACCRA, page: 1, limit: 2 });
+    const result = await service.findAll({
+      ...ACCRA,
+      radius: 10,
+      page: 1,
+      limit: 2,
+    });
     expect(result.total).toBe(4); // accraChair, noLocation, osuLamp, blankCoords
-    expect(keysOf(result.data)).toEqual(['accraChair', 'noLocation']);
+    expect(keysOf(result.data)).toEqual(['accraChair', 'osuLamp']);
+  });
+
+  // Located items nearest first, then those without coordinates (newest
+  // first: noLocation, then blankCoords).
+  const BY_DISTANCE_FROM_ACCRA = () =>
+    VISIBLE.filter((key) => coords[key])
+      .sort(
+        (a, b) =>
+          haversineKm(ACCRA.lat, ACCRA.lng, coords[a]!.lat, coords[a]!.lng) -
+          haversineKm(ACCRA.lat, ACCRA.lng, coords[b]!.lat, coords[b]!.lng),
+      )
+      .concat(['noLocation', 'blankCoords']);
+
+  it('returns every item, nearest first, when given a location', async () => {
+    const result = await service.findAll(ACCRA);
+    expect(result.total).toBe(VISIBLE.length);
+    expect(keysOf(result.data)).toEqual(BY_DISTANCE_FROM_ACCRA());
+  });
+
+  it('keeps the distance order across pages', async () => {
+    const seen: string[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const result = await service.findAll({ ...ACCRA, page, limit: 2 });
+      seen.push(...(keysOf(result.data) as string[]));
+    }
+    expect(seen).toEqual(BY_DISTANCE_FROM_ACCRA());
+  });
+
+  describe('with featured items', () => {
+    beforeAll(() =>
+      ds.query('UPDATE items SET is_featured = true WHERE id = ANY($1)', [
+        [ids.blankCoords, ids.noLocation, ids.sweden],
+      ]),
+    );
+    afterAll(() => ds.query('UPDATE items SET is_featured = false'));
+
+    it('ranks by distance before featured', async () => {
+      // Featured Sweden stays behind every nearer item, and the featured
+      // coordinate-less items stay after every located one.
+      const result = await service.findAll({ ...ACCRA, page: 1, limit: 20 });
+      expect(keysOf(result.data)).toEqual(BY_DISTANCE_FROM_ACCRA());
+    });
+
+    it('puts featured items first among equally near ones', async () => {
+      await ds.query('UPDATE items SET is_featured = false WHERE id = $1', [
+        ids.noLocation,
+      ]);
+      try {
+        const result = await service.findAll(ACCRA);
+        expect(keysOf(result.data).slice(-2)).toEqual([
+          'blankCoords',
+          'noLocation',
+        ]);
+      } finally {
+        await ds.query('UPDATE items SET is_featured = true WHERE id = $1', [
+          ids.noLocation,
+        ]);
+      }
+    });
+
+    it('puts featured items first when no location is sent', async () => {
+      const result = await service.findAll({ page: 1, limit: 3 });
+      expect(keysOf(result.data)).toEqual([
+        'noLocation',
+        'sweden',
+        'blankCoords',
+      ]);
+    });
+
+    it('ignores a feature that has ended', async () => {
+      await ds.query(
+        "UPDATE items SET featured_until = now() - interval '1 day' WHERE id = $1",
+        [ids.noLocation],
+      );
+      try {
+        const result = await service.findAll({ page: 1, limit: 2 });
+        expect(keysOf(result.data)).toEqual(['sweden', 'blankCoords']);
+      } finally {
+        await ds.query('UPDATE items SET featured_until = NULL WHERE id = $1', [
+          ids.noLocation,
+        ]);
+      }
+    });
   });
 
   it.each([
