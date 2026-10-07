@@ -111,6 +111,14 @@ export class AdminItemsService {
         area: escapeLike(query.area.trim()),
       });
     }
+    if (query.created_from) {
+      qb.andWhere('item.created_at >= :from', {
+        from: new Date(query.created_from),
+      });
+    }
+    if (query.created_to) {
+      qb.andWhere('item.created_at < :to', { to: new Date(query.created_to) });
+    }
     if (query.has_requests !== undefined) {
       const exists =
         'EXISTS (SELECT 1 FROM item_requests ir WHERE ir.item_id = item.id)';

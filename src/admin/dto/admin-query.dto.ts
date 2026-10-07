@@ -103,6 +103,16 @@ export class AdminItemQueryDto extends AdminPaginationDto {
   @IsBoolean()
   has_requests?: boolean;
 
+  @ApiPropertyOptional({ description: 'Listed on or after (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  created_from?: string;
+
+  @ApiPropertyOptional({ description: 'Listed before (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  created_to?: string;
+
   @ApiPropertyOptional({ description: 'Include removed listings' })
   @IsOptional()
   @Transform(toBoolean)
@@ -123,4 +133,44 @@ export class AdminUserRequestsQueryDto extends AdminPaginationDto {
   @IsOptional()
   @IsEnum(RequestStatus)
   status?: RequestStatus;
+}
+
+export class AdminRequestQueryDto extends AdminPaginationDto {
+  @ApiPropertyOptional({
+    description: 'Listing title, or the name or email of either party',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @ApiPropertyOptional({ enum: RequestStatus })
+  @IsOptional()
+  @IsEnum(RequestStatus)
+  status?: RequestStatus;
+
+  @ApiPropertyOptional({ description: 'Listing ID' })
+  @IsOptional()
+  @IsUUID()
+  item_id?: string;
+
+  @ApiPropertyOptional({ description: 'Requester user ID' })
+  @IsOptional()
+  @IsUUID()
+  requester_id?: string;
+
+  @ApiPropertyOptional({ description: 'Sharer (listing owner) user ID' })
+  @IsOptional()
+  @IsUUID()
+  owner_id?: string;
+
+  @ApiPropertyOptional({ description: 'Requested on or after (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  created_from?: string;
+
+  @ApiPropertyOptional({ description: 'Requested before (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  created_to?: string;
 }

@@ -179,6 +179,22 @@ describe('AdminItemsService.list filters', () => {
     expect(calls.map(([s]) => s)).toContain(sql);
   });
 
+  it('filters on the listed date range', async () => {
+    const { service, calls } = setup();
+    await service.list({
+      created_from: '2026-10-01T00:00:00.000Z',
+      created_to: '2026-10-08T00:00:00.000Z',
+    });
+    expect(calls).toContainEqual([
+      'item.created_at >= :from',
+      { from: new Date('2026-10-01T00:00:00.000Z') },
+    ]);
+    expect(calls).toContainEqual([
+      'item.created_at < :to',
+      { to: new Date('2026-10-08T00:00:00.000Z') },
+    ]);
+  });
+
   it('filters on moderation status and sharer', async () => {
     const { service, calls } = setup();
     await service.list({

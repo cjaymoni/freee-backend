@@ -5,6 +5,8 @@ import { ChatModule } from '../chat/chat.module';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminItemsController } from './admin-items.controller';
 import { AdminItemsService } from './admin-items.service';
+import { AdminRequestsController } from './admin-requests.controller';
+import { AdminRequestsService } from './admin-requests.service';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminUsersService } from './admin-users.service';
 
@@ -15,7 +17,16 @@ import { AdminUsersService } from './admin-users.service';
  */
 @Module({
   imports: [UserModule, ChatModule, NotificationModule],
-  controllers: [AdminUsersController, AdminItemsController],
-  providers: [AdminAuditService, AdminUsersService, AdminItemsService],
+  controllers: [
+    AdminUsersController,
+    AdminItemsController,
+    AdminRequestsController,
+  ],
+  providers: [
+    AdminAuditService,
+    AdminUsersService,
+    AdminItemsService,
+    AdminRequestsService,
+  ],
 })
 export class AdminModule {}
