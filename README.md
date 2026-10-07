@@ -31,6 +31,13 @@
 $ npm install
 ```
 
+`npm install` also runs `scripts/build-locations.js`, which builds the
+countries, states and cities served under `/locations` (with each place's max
+search radius) into `data/`. City radii come from populations in the committed
+`data/city-populations.json`; after upgrading `country-state-city`, refresh it
+with `node scripts/fetch-city-populations.js`. Population data © [GeoNames](https://www.geonames.org),
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Compile and run the project
 
 ```bash

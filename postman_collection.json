@@ -753,7 +753,8 @@
                   "value": "{{accessToken}}"
                 }
               ]
-            }
+            },
+            "description": "The user's primary location. 404 when none is set."
           }
         },
         {
@@ -769,7 +770,8 @@
                   "value": "{{accessToken}}"
                 }
               ]
-            }
+            },
+            "description": "The user's current location. 404 when none is set."
           }
         },
         {
@@ -898,7 +900,30 @@
                 "countries"
               ]
             },
-            "description": "Every country, with alpha-2 `code` and alpha-3 `code3`. Save `code3` as a user location's `country_code`."
+            "description": "Every country, with alpha-2 `code`, alpha-3 `code3` and `max_radius_km`. Save `code3` as a user location's `country_code`."
+          }
+        },
+        {
+          "name": "Get Countries with States",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/locations/countries?include=states",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "locations",
+                "countries"
+              ],
+              "query": [
+                {
+                  "key": "include",
+                  "value": "states"
+                }
+              ]
+            },
+            "description": "Every country with its states nested under `states`, for filling both pickers in one call. Cities still come from the cities request."
           }
         },
         {
@@ -917,7 +942,7 @@
                 "states"
               ]
             },
-            "description": "States of a country. 404 for an unknown country."
+            "description": "States of a country, each with `max_radius_km` around its `latitude`/`longitude`. 404 for an unknown country."
           }
         },
         {
@@ -938,7 +963,7 @@
                 "cities"
               ]
             },
-            "description": "Cities of a state; the state code comes from the states request. 404 for an unknown country or state."
+            "description": "Cities of a state, each with `max_radius_km` (estimated from population); the state code comes from the states request. 404 for an unknown country or state."
           }
         }
       ]

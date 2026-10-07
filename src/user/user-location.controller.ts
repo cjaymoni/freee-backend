@@ -179,7 +179,7 @@ export class UserLocationController {
   @ApiResponse({ status: 404, description: 'Primary location not found' })
   async findPrimary(
     @GetUser('userId') userId: string,
-  ): Promise<UserLocationResponseDto | null> {
+  ): Promise<UserLocationResponseDto> {
     return this.locationService.findPrimaryLocation(userId);
   }
 
@@ -196,7 +196,7 @@ export class UserLocationController {
   @ApiResponse({ status: 404, description: 'Current location not found' })
   async findCurrent(
     @GetUser('userId') userId: string,
-  ): Promise<UserLocationResponseDto | null> {
+  ): Promise<UserLocationResponseDto> {
     return this.locationService.findCurrentLocation(userId);
   }
 

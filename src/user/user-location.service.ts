@@ -143,29 +143,33 @@ export class UserLocationService {
   }
 
   /**
-   * Get the primary location for a user
+   * Get the primary location for a user. Throws rather than returning null,
+   * which Express sends as a 200 with an empty body.
    */
-  async findPrimaryLocation(
-    userId: string,
-  ): Promise<UserLocationResponseDto | null> {
+  async findPrimaryLocation(userId: string): Promise<UserLocationResponseDto> {
     const location = await this.locationRepository.findOne({
       where: { user_id: userId, is_primary: true, is_deleted: false },
     });
 
-    return location ? UserLocationResponseDto.fromEntity(location) : null;
+    if (!location) {
+      throw new NotFoundException('No primary location set for user');
+    }
+    return UserLocationResponseDto.fromEntity(location);
   }
 
   /**
-   * Get the current location for a user
+   * Get the current location for a user. Throws rather than returning null,
+   * which Express sends as a 200 with an empty body.
    */
-  async findCurrentLocation(
-    userId: string,
-  ): Promise<UserLocationResponseDto | null> {
+  async findCurrentLocation(userId: string): Promise<UserLocationResponseDto> {
     const location = await this.locationRepository.findOne({
       where: { user_id: userId, is_current: true, is_deleted: false },
     });
 
-    return location ? UserLocationResponseDto.fromEntity(location) : null;
+    if (!location) {
+      throw new NotFoundException('No current location set for user');
+    }
+    return UserLocationResponseDto.fromEntity(location);
   }
 
   /**

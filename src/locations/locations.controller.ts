@@ -1,22 +1,40 @@
-import { Controller, Get, Header, Param } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Header,
+  Param,
+  Query,
+} from '@nestjs/common';
 import {
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
   getSchemaPath,
   ApiExtraModels,
 } from '@nestjs/swagger';
 import { LocationsService } from './locations.service';
-import { CityDto, CountryDto, StateDto } from './dto/location-directory.dto';
+import {
+  CityDto,
+  CountryDto,
+  CountryWithStatesDto,
+  StateDto,
+} from './dto/location-directory.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
+import { AppError } from '../common/app-error';
 
 // The directory only changes when the package is upgraded, so clients and
 // CDNs may keep a copy for a day.
 const CACHE_FOR_A_DAY = 'public, max-age=86400';
 
 function listResponse(
-  model: typeof CountryDto | typeof StateDto | typeof CityDto,
+  model:
+    | typeof CountryDto
+    | typeof CountryWithStatesDto
+    | typeof StateDto
+    | typeof CityDto,
   message: string,
 ) {
   return {
@@ -34,17 +52,42 @@ function listResponse(
 }
 
 @ApiTags('Locations')
-@ApiExtraModels(CountryDto, StateDto, CityDto)
+@ApiExtraModels(CountryDto, CountryWithStatesDto, StateDto, CityDto)
 @Controller('locations')
 export class LocationsController {
   constructor(private readonly locationsService: LocationsService) {}
 
   @Get('countries')
   @Header('Cache-Control', CACHE_FOR_A_DAY)
-  @ApiOperation({ summary: 'List every country' })
-  @ApiResponse(listResponse(CountryDto, 'Countries retrieved successfully'))
-  getCountries(): ServiceResponseDto<CountryDto[]> {
-    return this.locationsService.getCountries();
+  @ApiOperation({
+    summary: 'List every country, optionally with its states',
+    description:
+      'With include=states each country carries its states, so one call ' +
+      'fills both pickers (about 640 KB, 130 KB gzipped). Cities come ' +
+      'from the cities endpoint.',
+  })
+  @ApiQuery({
+    name: 'include',
+    required: false,
+    enum: ['states'],
+    description: 'Send "states" to nest each country\'s states in it',
+  })
+  @ApiResponse(
+    listResponse(
+      CountryWithStatesDto,
+      'Countries retrieved successfully; states only with include=states',
+    ),
+  )
+  @ApiResponse({ status: 400, description: 'Unknown include value' })
+  getCountries(
+    @Query('include') include?: string,
+  ): ServiceResponseDto<CountryDto[]> {
+    if (include !== undefined && include !== 'states') {
+      throw new AppError(
+        new BadRequestException('include must be "states" when sent'),
+      );
+    }
+    return this.locationsService.getCountries(include === 'states');
   }
 
   @Get('countries/:countryCode/states')

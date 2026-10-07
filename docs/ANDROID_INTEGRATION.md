@@ -404,15 +404,26 @@ defaulting to 1 and 20.
 | `GET` | `/items/my-items` | The signed-in user's listings. |
 | `POST` | `/items/{itemId}/images` | Takes Cloudinary metadata as JSON, not a file. Edit photos through `PUT /items/{id}` instead. |
 | `GET` | `/categories` | Seeded and stable — cache it locally. |
-| `GET` | `/locations/countries` | Public. Every country, for the location picker. Cache it. |
-| `GET` | `/locations/countries/{code}/states` | Public. States of one country. |
-| `GET` | `/locations/countries/{code}/states/{stateCode}/cities` | Public. Cities of one state. |
+| `GET` | `/locations/countries` | Public. Every country, for the location picker. Cache it. Add `?include=states` to get every country with its states nested in one call (~130 KB gzipped). |
+| `GET` | `/locations/countries/{code}/states` | Public. States of one country. Empty for the few territories with no states. |
+| `GET` | `/locations/countries/{code}/states/{stateCode}/cities` | Public. Cities of one state. Empty for states the dataset has no cities for. |
+| `GET` | `/user/locations/primary` | The user's primary location. **404** when none is set — treat that as "no location", not an error. Same for `/user/locations/current`. |
 | `POST` | `/saved-items` | Save an item. |
 | `DELETE` | `/saved-items/{itemId}` | Unsave. |
 | `GET` | `/auth/me` | The signed-in user's own profile. |
 | `POST` | `/auth/logout` | Deactivates the current session. |
 | `POST` | `/moderation/users/block` | Block a user. Reporting lives under the same prefix. |
 | `GET` | `/health` | Unauthenticated. Useful as a connectivity probe. |
+
+### Location radius
+
+Every country, state and city from `/locations` carries `max_radius_km`: the
+widest radius around its `latitude`/`longitude` that stays within that place.
+When the user picks a place, search `/items` with that place's coordinates as
+`lat`/`lng` and cap the radius slider at `max_radius_km`. A city's radius is
+estimated from its population (3–50 km, e.g. Accra 16); a state or country's
+covers its cities. A few states have `null` coordinates and radius because their
+source location was wrong — fall back to the country's.
 
 There are 129 routes in total. The live Swagger UI at `/api` is
 authoritative — generate your client from `/api-json` if you would

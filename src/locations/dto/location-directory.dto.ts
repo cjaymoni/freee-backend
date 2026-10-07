@@ -26,11 +26,26 @@ export class CountryDto {
   @ApiProperty({ example: 'GHS' })
   currency: string;
 
-  @ApiProperty({ example: 8, nullable: true, type: Number })
+  @ApiProperty({
+    description: 'Centre of the country that max_radius_km is measured from',
+    example: 7.96401,
+    nullable: true,
+    type: Number,
+  })
   latitude: number | null;
 
-  @ApiProperty({ example: -2, nullable: true, type: Number })
+  @ApiProperty({ example: -1.07145, nullable: true, type: Number })
   longitude: number | null;
+
+  @ApiProperty({
+    description:
+      'Widest radius in km around latitude/longitude that stays within the country, ' +
+      'ignoring far-flung territories. Use it as the most the items radius filter allows.',
+    example: 358,
+    nullable: true,
+    type: Number,
+  })
+  max_radius_km: number | null;
 }
 
 export class StateDto {
@@ -49,11 +64,28 @@ export class StateDto {
   })
   country_code: string;
 
-  @ApiProperty({ example: 5.8142836, nullable: true, type: Number })
+  @ApiProperty({
+    description:
+      'Centre of the state that max_radius_km is measured from; null when the ' +
+      'state has no known location',
+    example: 5.62689,
+    nullable: true,
+    type: Number,
+  })
   latitude: number | null;
 
-  @ApiProperty({ example: 0.0746767, nullable: true, type: Number })
+  @ApiProperty({ example: -0.17241, nullable: true, type: Number })
   longitude: number | null;
+
+  @ApiProperty({
+    description:
+      'Widest radius in km around latitude/longitude that stays within the state. ' +
+      'Use it as the most the items radius filter allows.',
+    example: 39,
+    nullable: true,
+    type: Number,
+  })
+  max_radius_km: number | null;
 }
 
 export class CityDto {
@@ -65,4 +97,18 @@ export class CityDto {
 
   @ApiProperty({ example: -0.1969, nullable: true, type: Number })
   longitude: number | null;
+
+  @ApiProperty({
+    description:
+      'Radius in km around latitude/longitude that the city covers, estimated ' +
+      'from its population (3 to 50 km). Use it as the most the items radius ' +
+      'filter allows.',
+    example: 16,
+  })
+  max_radius_km: number;
+}
+
+export class CountryWithStatesDto extends CountryDto {
+  @ApiProperty({ type: () => [StateDto] })
+  states: StateDto[];
 }
