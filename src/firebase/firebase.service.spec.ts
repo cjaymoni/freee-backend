@@ -39,7 +39,7 @@ describe('FirebaseService.sendToTokens', () => {
         body: 'There',
         data: { type: 'chat_message' },
       }),
-    ).resolves.toEqual({ invalidTokens: [] });
+    ).resolves.toEqual({ sentCount: 2, invalidTokens: [] });
     expect(send).toHaveBeenCalledWith({
       tokens: ['a', 'b'],
       notification: { title: 'Hi', body: 'There' },
@@ -60,7 +60,7 @@ describe('FirebaseService.sendToTokens', () => {
         title: 't',
         body: 'b',
       }),
-    ).resolves.toEqual({ invalidTokens: ['gone', 'bad'] });
+    ).resolves.toEqual({ sentCount: 1, invalidTokens: ['gone', 'bad'] });
   });
 
   it('counts a rejected token as dead when another one got through', async () => {
@@ -88,12 +88,12 @@ describe('FirebaseService.sendToTokens', () => {
   it('sends nothing for no tokens, or without Firebase configured', async () => {
     await expect(
       service.sendToTokens([], { title: 't', body: 'b' }),
-    ).resolves.toEqual({ invalidTokens: [] });
+    ).resolves.toEqual({ sentCount: 0, invalidTokens: [] });
 
     const unconfigured = new FirebaseService({} as ConfigService);
     await expect(
       unconfigured.sendToTokens(['a'], { title: 't', body: 'b' }),
-    ).resolves.toEqual({ invalidTokens: [] });
+    ).resolves.toEqual({ sentCount: 0, invalidTokens: [] });
     expect(send).not.toHaveBeenCalled();
   });
 });

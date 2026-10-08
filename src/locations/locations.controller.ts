@@ -5,7 +5,9 @@ import {
   Header,
   Param,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiOperation,
   ApiParam,
@@ -28,6 +30,9 @@ import { AppError } from '../common/app-error';
 // The directory only changes when the package is upgraded, so clients and
 // CDNs may keep a copy for a day.
 const CACHE_FOR_A_DAY = 'public, max-age=86400';
+// A cities list missing its OpenStreetMap places, which should be filled in
+// by the next request.
+const CACHE_FOR_A_MINUTE = 'public, max-age=60';
 
 function listResponse(
   model:
@@ -107,8 +112,14 @@ export class LocationsController {
   }
 
   @Get('countries/:countryCode/states/:stateCode/cities')
-  @Header('Cache-Control', CACHE_FOR_A_DAY)
-  @ApiOperation({ summary: 'List the cities of a state' })
+  @ApiOperation({
+    summary: 'List the cities of a state',
+    description:
+      'The larger cities from the bundled dataset plus the towns, villages ' +
+      'and neighbourhoods OpenStreetMap has in the state, sorted by name. ' +
+      'The first request for a state can take a few seconds; if OpenStreetMap ' +
+      'is slow it answers with the dataset alone, cached for a minute only.',
+  })
   @ApiParam({
     name: 'countryCode',
     description: 'ISO 3166-1 alpha-2 or alpha-3 country code, any case',
@@ -121,10 +132,19 @@ export class LocationsController {
   })
   @ApiResponse(listResponse(CityDto, 'Cities retrieved successfully'))
   @ApiResponse({ status: 404, description: 'Country or state not found' })
-  getCities(
+  async getCities(
     @Param('countryCode') countryCode: string,
     @Param('stateCode') stateCode: string,
-  ): ServiceResponseDto<CityDto[]> {
-    return this.locationsService.getCities(countryCode, stateCode);
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<ServiceResponseDto<CityDto[]>> {
+    const { response, complete } = await this.locationsService.getCities(
+      countryCode,
+      stateCode,
+    );
+    res.setHeader(
+      'Cache-Control',
+      complete ? CACHE_FOR_A_DAY : CACHE_FOR_A_MINUTE,
+    );
+    return response;
   }
 }

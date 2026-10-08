@@ -25,6 +25,9 @@ export const envValidationSchema = Joi.object({
   UPSTASH_REDIS_REST_URL: Joi.string().optional(),
   UPSTASH_REDIS_REST_TOKEN: Joi.string().optional(),
 
+  // OpenStreetMap places merged into the cities list
+  OVERPASS_URL: Joi.string().uri().optional(),
+
   // JWT
   JWT_SECRET: Joi.string().required(),
 

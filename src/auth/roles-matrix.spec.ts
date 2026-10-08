@@ -3,7 +3,12 @@ import { ROLES_KEY } from './decorators/roles.decorator';
 import { UserRole } from '../user/entities/user.entity';
 import { readdirSync } from 'fs';
 import { join } from 'path';
+import { AdminAnnouncementsController } from '../admin/admin-announcements.controller';
+import { AdminInboxController } from '../admin/admin-inbox.controller';
+import { AnnouncementController } from '../announcement/announcement.controller';
 import { AdminItemsController } from '../admin/admin-items.controller';
+import { AdminNotificationsController } from '../admin/admin-notifications.controller';
+import { AdminRequestsController } from '../admin/admin-requests.controller';
 import { AdminUsersController } from '../admin/admin-users.controller';
 import { AppController } from '../app.controller';
 import { AuditController } from '../audit/audit.controller';
@@ -35,11 +40,24 @@ const STAFF = [ADMIN, MODERATOR];
  * their own controller specs.
  */
 const MATRIX: Record<string, UserRole[]> = {
+  'AdminAnnouncementsController.list': [ADMIN],
+  'AdminAnnouncementsController.create': [ADMIN],
+  'AdminAnnouncementsController.update': [ADMIN],
+  'AdminAnnouncementsController.remove': [ADMIN],
+  'AdminInboxController.list': STAFF,
+  'AdminInboxController.unreadCount': STAFF,
+  'AdminInboxController.markAllRead': STAFF,
+  'AdminInboxController.markRead': STAFF,
   'AdminItemsController.list': STAFF,
   'AdminItemsController.detail': STAFF,
   'AdminItemsController.hide': STAFF,
   'AdminItemsController.flag': STAFF,
   'AdminItemsController.restore': STAFF,
+  'AdminNotificationsController.list': [ADMIN],
+  'AdminNotificationsController.countAudience': [ADMIN],
+  'AdminNotificationsController.send': [ADMIN],
+  'AdminRequestsController.list': STAFF,
+  'AdminRequestsController.detail': STAFF,
   'AdminUsersController.list': STAFF,
   'AdminUsersController.detail': STAFF,
   'AdminUsersController.requests': STAFF,
@@ -67,8 +85,13 @@ const MATRIX: Record<string, UserRole[]> = {
 };
 
 const CONTROLLERS = [
+  AdminAnnouncementsController,
+  AdminInboxController,
   AdminItemsController,
+  AdminNotificationsController,
+  AdminRequestsController,
   AdminUsersController,
+  AnnouncementController,
   AppController,
   AuditController,
   AuthController,

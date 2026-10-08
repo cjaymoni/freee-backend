@@ -8,6 +8,8 @@ export enum NotificationCategory {
   ITEM_REQUESTS = 'item_requests',
   LISTINGS = 'listings',
   ACCOUNT = 'account',
+  /** Sent by staff from the back office. */
+  ANNOUNCEMENTS = 'announcements',
 }
 
 export interface Notice {

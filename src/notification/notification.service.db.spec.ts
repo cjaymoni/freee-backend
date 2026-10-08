@@ -23,7 +23,7 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
   let service: NotificationService;
   const firebase = {
     sendToTokens: jest.fn<
-      Promise<{ invalidTokens: string[] }>,
+      Promise<{ sentCount: number; invalidTokens: string[] }>,
       [string[], unknown]
     >(),
   };
@@ -84,7 +84,10 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
   });
 
   beforeEach(() => {
-    firebase.sendToTokens.mockResolvedValue({ invalidTokens: [] });
+    firebase.sendToTokens.mockResolvedValue({
+      sentCount: 1,
+      invalidTokens: [],
+    });
   });
 
   afterAll(async () => {
@@ -184,6 +187,7 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
 
   it('forgets a token FCM reports dead, on every session holding it', async () => {
     firebase.sendToTokens.mockResolvedValueOnce({
+      sentCount: 1,
       invalidTokens: ['fcm-tablet'],
     });
 

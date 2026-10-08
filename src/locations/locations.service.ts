@@ -9,6 +9,7 @@ import State from 'country-state-city/lib/cjs/state';
 import * as isoCountries from 'i18n-iso-countries';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { CityDto, CountryDto, StateDto } from './dto/location-directory.dto';
+import { OsmPlacesService } from './osm-places.service';
 
 /**
  * Read-only directory of countries, states and cities for pickers. The data
@@ -28,6 +29,8 @@ export class LocationsService {
   private regions?: Regions;
   // Most recently used last, so the first key is the one to evict.
   private readonly citiesByCountry = new Map<string, CountryCities>();
+
+  constructor(private readonly osmPlaces: OsmPlacesService) {}
 
   /** Every country, each with its states when includeStates is set. */
   getCountries(includeStates = false): ServiceResponseDto<CountryDto[]> {
@@ -68,10 +71,16 @@ export class LocationsService {
     };
   }
 
-  getCities(
+  /**
+   * The state's cities from the dataset, joined by the towns, villages and
+   * neighbourhoods OpenStreetMap has in it, by name. complete is false when
+   * the OSM places were not to hand in time, so the answer should not be
+   * cached for long.
+   */
+  async getCities(
     countryCode: string,
     stateCode: string,
-  ): ServiceResponseDto<CityDto[]> {
+  ): Promise<{ response: ServiceResponseDto<CityDto[]>; complete: boolean }> {
     const country = this.resolveCountry(countryCode);
     const state = State.getStatesOfCountry(country).find(
       (candidate) =>
@@ -83,20 +92,35 @@ export class LocationsService {
       );
     }
 
-    const cities = (this.loadCities(country)[state.isoCode] ?? []).map(
-      ([name, latitude, longitude, km]) => ({
-        name,
-        latitude: toCoordinate(latitude),
-        longitude: toCoordinate(longitude),
-        max_radius_km: km,
-      }),
-    );
+    const cities: CityDto[] = (
+      this.loadCities(country)[state.isoCode] ?? []
+    ).map(([name, latitude, longitude, km]) => ({
+      name,
+      latitude: toCoordinate(latitude),
+      longitude: toCoordinate(longitude),
+      max_radius_km: km,
+    }));
+
+    const osmPlaces = await this.osmPlaces.getPlaces(country, state.isoCode);
+    const known = new Set(cities.map((city) => city.name.toLowerCase()));
+    for (const place of osmPlaces ?? []) {
+      const key = place.name.toLowerCase();
+      // OSM often has two places of one name in a state; the dataset's
+      // city, or else the larger place, comes first and stays.
+      if (known.has(key)) continue;
+      known.add(key);
+      cities.push(place);
+    }
+    cities.sort((a, b) => a.name.localeCompare(b.name));
 
     return {
-      message: 'Cities retrieved successfully',
-      data: cities,
-      state: true,
-      statusCode: 200,
+      response: {
+        message: 'Cities retrieved successfully',
+        data: cities,
+        state: true,
+        statusCode: 200,
+      },
+      complete: osmPlaces !== null,
     };
   }
 

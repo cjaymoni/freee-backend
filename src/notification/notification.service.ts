@@ -19,6 +19,20 @@ export interface NotifyOptions {
   skipDevicesOf?: string[];
 }
 
+/**
+ * What happened on one channel: `skipped` when it wasn't attempted (the
+ * user's settings, no device or no email address), `failed` when it was and
+ * didn't go through.
+ */
+export type DeliveryOutcome = 'sent' | 'skipped' | 'failed';
+
+export interface NotifyResult {
+  push: DeliveryOutcome;
+  email: DeliveryOutcome;
+}
+
+const NOT_SENT: NotifyResult = { push: 'skipped', email: 'skipped' };
+
 class SessionNotLive extends Error {}
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -56,13 +70,13 @@ export class NotificationService {
    * as far as their settings allow.
    *
    * Best-effort: it never throws, so a notification can't undo or fail the
-   * action it reports.
+   * action it reports. The result says what went out, for callers that count.
    */
   async notify(
     userId: string,
     notice: Notice,
     options: NotifyOptions = {},
-  ): Promise<void> {
+  ): Promise<NotifyResult> {
     try {
       const user = await this.users.findOne({
         where: { id: userId },
@@ -74,7 +88,7 @@ export class NotificationService {
           is_deleted: true,
         },
       });
-      if (!user || user.is_deleted) return;
+      if (!user || user.is_deleted) return NOT_SENT;
 
       const settings = await this.settingsFor(userId);
       const wantsCategory = settings[notice.category] !== false;
@@ -91,21 +105,29 @@ export class NotificationService {
         (notice.email.transactional === true ||
           (wantsNotifications && wantsCategory && settings.email !== false));
 
-      const results = await Promise.allSettled([
-        push ? this.push(userId, notice, options) : Promise.resolve(),
+      const [pushed, emailed] = await Promise.allSettled([
+        push ? this.push(userId, notice, options) : Promise.resolve(false),
         email
-          ? this.mail.sendNotice(user.email!, {
-              subject: notice.email!.subject,
-              title: notice.title,
-              paragraphs: notice.email!.paragraphs,
-            })
-          : Promise.resolve(),
+          ? this.mail
+              .sendNotice(user.email!, {
+                subject: notice.email!.subject,
+                title: notice.title,
+                paragraphs: notice.email!.paragraphs,
+              })
+              .then(() => true)
+          : Promise.resolve(false),
       ]);
-      for (const result of results) {
-        if (result.status === 'rejected') this.logFailure(result.reason);
-      }
+      const outcome = (result: PromiseSettledResult<boolean>) => {
+        if (result.status === 'rejected') {
+          this.logFailure(result.reason);
+          return 'failed';
+        }
+        return result.value ? 'sent' : 'skipped';
+      };
+      return { push: outcome(pushed), email: outcome(emailed) };
     } catch (error) {
       this.logFailure(error);
+      return { push: 'failed', email: 'failed' };
     }
   }
 
@@ -156,16 +178,20 @@ export class NotificationService {
     userId: string,
     notice: Notice,
     { skipDevicesOf = [] }: NotifyOptions,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const tokens = await this.deviceTokens(userId, skipDevicesOf);
-    if (!tokens.length) return;
+    if (!tokens.length) return false;
 
-    const { invalidTokens } = await this.firebase.sendToTokens(tokens, {
-      title: notice.title,
-      body: notice.body,
-      data: { ...notice.data, category: notice.category },
-    });
+    const { sentCount, invalidTokens } = await this.firebase.sendToTokens(
+      tokens,
+      {
+        title: notice.title,
+        body: notice.body,
+        data: { ...notice.data, category: notice.category },
+      },
+    );
     if (invalidTokens.length) await this.forget(invalidTokens);
+    return sentCount > 0;
   }
 
   /**

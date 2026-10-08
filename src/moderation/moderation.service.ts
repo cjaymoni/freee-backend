@@ -25,6 +25,13 @@ import { CreateReportedUserDto } from './dto/create-reported-user.dto';
 import { CreateBlockedUserDto } from './dto/create-blocked-user.dto';
 import { ActionTaken, ResolveReportDto } from './dto/resolve-report.dto';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
+import { StaffInboxService } from '../notification/staff-inbox.service';
+import {
+  complaintReceivedEntry,
+  itemReportedEntry,
+  takenOverEntry,
+  userReportedEntry,
+} from '../notification/staff-notices';
 import {
   ComplaintStatus,
   ResolveComplaintDto,
@@ -78,6 +85,27 @@ function assertNotOwnReport(reporterId: string, reviewerId: string) {
   }
 }
 
+/**
+ * The staff member who had this report or complaint in review, when someone
+ * else is now closing it; they get an inbox entry saying so.
+ */
+function reviewerTakenOver(
+  current: { status: string; reviewedBy?: string | null },
+  nextStatus: string,
+  reviewerId: string,
+): string | null {
+  const inReview = ['in_review', 'under_review'].includes(current.status);
+  const closing = !['pending', 'in_review', 'under_review'].includes(
+    nextStatus,
+  );
+  return inReview &&
+    closing &&
+    current.reviewedBy &&
+    current.reviewedBy !== reviewerId
+    ? current.reviewedBy
+    : null;
+}
+
 /** Complaint outcomes the user is told about. */
 const FINAL_COMPLAINT_STATUSES: string[] = ['resolved', 'rejected'];
 
@@ -97,6 +125,7 @@ export class ModerationService {
     @Inject(forwardRef(() => UserService))
     private userService: UserService,
     private notifications: NotificationService,
+    private staffInbox: StaffInboxService,
   ) {}
 
   async reportItem(dto: CreateReportedItemDto, reporterId: string) {
@@ -105,7 +134,12 @@ export class ModerationService {
       reporterId,
       priority: dto.priority || 'medium',
     });
-    return saveOr404(this.reportedItemRepo.save(report), 'Item not found');
+    const saved = await saveOr404(
+      this.reportedItemRepo.save(report),
+      'Item not found',
+    );
+    void this.staffInbox.toAllStaff(itemReportedEntry(dto.reason), reporterId);
+    return saved;
   }
 
   async reportUser(dto: CreateReportedUserDto, reporterId: string) {
@@ -117,7 +151,12 @@ export class ModerationService {
       reporterId,
       priority: dto.priority || 'medium',
     });
-    return saveOr404(this.reportedUserRepo.save(report), 'User not found');
+    const saved = await saveOr404(
+      this.reportedUserRepo.save(report),
+      'User not found',
+    );
+    void this.staffInbox.toAllStaff(userReportedEntry(dto.reason), reporterId);
+    return saved;
   }
 
   async blockUser(dto: CreateBlockedUserDto, blockerId: string) {
@@ -185,6 +224,7 @@ export class ModerationService {
       throw new NotFoundException('Report not found');
     }
     assertNotOwnReport(report.reporterId, reviewerId);
+    const holder = reviewerTakenOver(report, dto.status, reviewerId);
     Object.assign(report, {
       ...dto,
       reviewedBy: reviewerId,
@@ -210,7 +250,14 @@ export class ModerationService {
       }
     }
 
-    return this.reportedItemRepo.save(report);
+    const saved = await this.reportedItemRepo.save(report);
+    if (holder) {
+      void this.staffInbox.toUser(
+        holder,
+        takenOverEntry('listing report', dto.status),
+      );
+    }
+    return saved;
   }
 
   async resolveUserReport(
@@ -226,6 +273,7 @@ export class ModerationService {
       throw new NotFoundException('Report not found');
     }
     assertNotOwnReport(report.reporterId, reviewerId);
+    const holder = reviewerTakenOver(report, dto.status, reviewerId);
     Object.assign(report, {
       ...dto,
       reviewedBy: reviewerId,
@@ -273,6 +321,12 @@ export class ModerationService {
     }
 
     const saved = await this.reportedUserRepo.save(report);
+    if (holder) {
+      void this.staffInbox.toUser(
+        holder,
+        takenOverEntry('user report', dto.status),
+      );
+    }
     if (suspended) {
       void this.notifications.notify(
         suspended.userId,
@@ -326,7 +380,12 @@ export class ModerationService {
 
   async createComplaint(dto: CreateComplaintDto, userId: string) {
     const complaint = this.complaintRepo.create({ ...dto, userId });
-    return this.complaintRepo.save(complaint);
+    const saved = await this.complaintRepo.save(complaint);
+    void this.staffInbox.toAllStaff(
+      complaintReceivedEntry(dto.subject),
+      userId,
+    );
+    return saved;
   }
 
   async resolveComplaint(
@@ -343,6 +402,7 @@ export class ModerationService {
       status: complaint.status as ComplaintStatus,
       response: complaint.adminResponse,
     };
+    const holder = reviewerTakenOver(complaint, dto.status, reviewerId);
     Object.assign(complaint, {
       ...dto,
       reviewedBy: reviewerId,
@@ -352,6 +412,12 @@ export class ModerationService {
         : null,
     });
     const saved = await this.complaintRepo.save(complaint);
+    if (holder) {
+      void this.staffInbox.toUser(
+        holder,
+        takenOverEntry('support message', dto.status),
+      );
+    }
     // Only a final answer reaches the user, and only once: taking it under
     // review, or saving the same answer again, stays between staff.
     const final = FINAL_COMPLAINT_STATUSES.includes(dto.status);

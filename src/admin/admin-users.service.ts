@@ -1,3 +1,5 @@
+import { StaffInboxService } from '../notification/staff-inbox.service';
+import { roleChangedEntry } from '../notification/staff-notices';
 import { NotificationService } from '../notification/notification.service';
 import {
   accountBannedNotice,
@@ -77,6 +79,7 @@ export class AdminUsersService {
     private readonly firebase: FirebaseService,
     private readonly chatRealtime: ChatRealtimeService,
     private readonly notifications: NotificationService,
+    private readonly staffInbox: StaffInboxService,
   ) {}
 
   async list(
@@ -637,6 +640,7 @@ export class AdminUsersService {
       reason,
       request,
     });
+    void this.staffInbox.toUser(userId, roleChangedEntry(role));
 
     return { ...result, message: 'Role updated; the user must sign in again' };
   }

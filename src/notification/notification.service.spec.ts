@@ -62,7 +62,7 @@ const setup = ({
     update: jest.fn().mockResolvedValue({}),
   };
   const firebase = {
-    sendToTokens: jest.fn().mockResolvedValue({ invalidTokens }),
+    sendToTokens: jest.fn().mockResolvedValue({ sentCount: 1, invalidTokens }),
   };
   const mail = { sendNotice: jest.fn().mockResolvedValue(undefined) };
   const service = new NotificationService(
@@ -227,7 +227,7 @@ describe('NotificationService.notify', () => {
 
     await expect(
       service.notify(USER, { ...suspension, evenIfInactive: true }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ push: 'failed', email: 'sent' });
     expect(mail.sendNotice).toHaveBeenCalled();
   });
 });

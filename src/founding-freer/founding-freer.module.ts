@@ -1,3 +1,4 @@
+import { NotificationModule } from '../notification/notification.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserEntity } from '../user/entities/user.entity';
@@ -7,7 +8,12 @@ import { FoundingFreerController } from './founding-freer.controller';
 import { FoundingFreerService } from './founding-freer.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity]), UserModule, ItemModule],
+  imports: [
+    TypeOrmModule.forFeature([UserEntity]),
+    UserModule,
+    ItemModule,
+    NotificationModule,
+  ],
   controllers: [FoundingFreerController],
   providers: [FoundingFreerService],
 })

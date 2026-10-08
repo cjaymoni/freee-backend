@@ -1,3 +1,5 @@
+import { StaffInboxService } from '../notification/staff-inbox.service';
+import { listingAwaitingReviewEntry } from '../notification/staff-notices';
 import {
   BadRequestException,
   ForbiddenException,
@@ -25,6 +27,7 @@ export class FoundingFreerService {
     private readonly userService: UserService,
     private readonly itemService: ItemService,
     private readonly config: ConfigService,
+    private readonly staffInbox: StaffInboxService,
   ) {}
 
   isOpen(): boolean {
@@ -78,10 +81,15 @@ export class FoundingFreerService {
       throw new BadRequestException('Add at least one photo of the item');
     }
 
-    return this.itemService.create(userId, dto, files, {
+    const created = await this.itemService.create(userId, dto, files, {
       moderation_status: ModerationStatus.HIDDEN,
       moderation_reason: FOUNDING_REVIEW_REASON,
     });
+    void this.staffInbox.toAllStaff(
+      listingAwaitingReviewEntry(created.data.id, created.data.title),
+      userId,
+    );
+    return created;
   }
 
   private assertOpen() {

@@ -17,6 +17,8 @@ export enum AuditEntityType {
   CONVERSATIONS = 'conversations',
   REVIEWS = 'reviews',
   REPORTS = 'reports',
+  NOTIFICATIONS = 'notifications',
+  ANNOUNCEMENTS = 'announcements',
 }
 
 /**

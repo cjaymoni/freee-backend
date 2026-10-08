@@ -1,3 +1,4 @@
+import { StaffInboxService } from '../notification/staff-inbox.service';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError, Repository } from 'typeorm';
 import { ModerationService } from './moderation.service';
@@ -23,6 +24,7 @@ const build = (repos: {
   itemService?: object;
   userService?: object;
   notifications?: object;
+  staffInbox?: object;
 }) =>
   new ModerationService(
     (repos.reportedItem ?? {}) as Repository<ReportedItem>,
@@ -34,6 +36,10 @@ const build = (repos: {
     (repos.notifications ?? {
       notify: jest.fn(),
     }) as unknown as NotificationService,
+    (repos.staffInbox ?? {
+      toAllStaff: jest.fn(),
+      toUser: jest.fn(),
+    }) as unknown as StaffInboxService,
   );
 
 describe('ModerationService.getBlockedUsers', () => {
@@ -441,5 +447,106 @@ describe('ModerationService.resolveComplaint', () => {
     );
 
     expect(notify.mock.calls[0][1].body).toBe('Open the app to see the reply.');
+  });
+});
+
+describe('ModerationService staff inbox', () => {
+  const inbox = () => ({ toAllStaff: jest.fn(), toUser: jest.fn() });
+
+  it('tells other staff about a new listing report', async () => {
+    const staffInbox = inbox();
+    const service = build({
+      reportedItem: {
+        create: jest.fn((r: object) => r),
+        save: jest.fn((r: object) => Promise.resolve(r)),
+      },
+      staffInbox,
+    });
+    await service.reportItem(
+      { itemId: 'item-1', reason: 'Counterfeit' } as never,
+      'reporter-1',
+    );
+    expect(staffInbox.toAllStaff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'item_reported',
+        body: 'Counterfeit',
+        link: '/reports/listings',
+      }),
+      'reporter-1',
+    );
+  });
+
+  it('tells other staff about a new support message', async () => {
+    const staffInbox = inbox();
+    const service = build({
+      complaint: {
+        create: jest.fn((c: object) => c),
+        save: jest.fn((c: object) => Promise.resolve(c)),
+      },
+      staffInbox,
+    });
+    await service.createComplaint(
+      { subject: 'Please lift my suspension' } as never,
+      'user-1',
+    );
+    expect(staffInbox.toAllStaff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'complaint_received',
+        body: 'Please lift my suspension',
+      }),
+      'user-1',
+    );
+  });
+
+  const resolveItem = async (
+    existing: { status: string; reviewedBy: string | null },
+    status: string,
+    reviewer: string,
+  ) => {
+    const staffInbox = inbox();
+    const service = build({
+      reportedItem: {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ id: 'r-1', reporterId: 'someone', ...existing }),
+        save: jest.fn((r: object) => Promise.resolve(r)),
+      },
+      staffInbox,
+    });
+    await service.resolveItemReport(
+      'r-1',
+      { status } as never,
+      reviewer,
+      UserRole.ADMIN,
+    );
+    return staffInbox.toUser;
+  };
+
+  it('tells the reviewer when someone else closes a report they had in review', async () => {
+    const toUser = await resolveItem(
+      { status: 'in_review', reviewedBy: 'mod-1' },
+      'resolved',
+      'admin-1',
+    );
+    expect(toUser).toHaveBeenCalledWith(
+      'mod-1',
+      expect.objectContaining({
+        type: 'taken_over',
+        title: 'A listing report you were reviewing was resolved',
+      }),
+    );
+  });
+
+  it.each([
+    ['they close it themselves', 'in_review', 'mod-1', 'resolved'],
+    ['nobody had it in review', 'pending', null, 'resolved'],
+    ['it only moves to in review', 'in_review', 'mod-1', 'in_review'],
+  ])('stays quiet when %s', async (_, status, reviewedBy, next) => {
+    const toUser = await resolveItem(
+      { status, reviewedBy },
+      next,
+      _ === 'they close it themselves' ? 'mod-1' : 'admin-1',
+    );
+    expect(toUser).not.toHaveBeenCalled();
   });
 });

@@ -1,12 +1,22 @@
 import { NotFoundException } from '@nestjs/common';
 import { LocationsService } from './locations.service';
-import { CountryWithStatesDto } from './dto/location-directory.dto';
+import { CityDto, CountryWithStatesDto } from './dto/location-directory.dto';
+import { OsmPlacesService } from './osm-places.service';
 
 describe('LocationsService', () => {
   let service: LocationsService;
+  let osmPlaces: CityDto[] | null;
+  let getPlaces: jest.Mock;
+
+  const cities = async (country: string, state: string) =>
+    (await service.getCities(country, state)).response.data;
 
   beforeEach(() => {
-    service = new LocationsService();
+    osmPlaces = [];
+    getPlaces = jest.fn(() => Promise.resolve(osmPlaces));
+    service = new LocationsService({
+      getPlaces,
+    } as unknown as OsmPlacesService);
   });
 
   it('lists countries with both alpha-2 and alpha-3 codes', () => {
@@ -32,22 +42,22 @@ describe('LocationsService', () => {
     },
   );
 
-  it('lists the cities of a state, whatever the case of the codes', () => {
-    const { data } = service.getCities('gha', 'aa');
+  it('lists the cities of a state, whatever the case of the codes', async () => {
+    const data = await cities('gha', 'aa');
 
     const accra = data.find((city) => city.name === 'Accra');
     expect(accra?.latitude).toEqual(expect.any(Number));
   });
 
-  it('gives every level a max radius sized to the place', () => {
+  it('gives every level a max radius sized to the place', async () => {
     const ghana = service
       .getCountries()
       .data.find((country) => country.code === 'GH');
     const accraRegion = service
       .getStates('GH')
       .data.find((state) => state.code === 'AA');
-    const cities = service.getCities('GH', 'AA').data;
-    const city = (name: string) => cities.find((c) => c.name === name);
+    const accraCities = await cities('GH', 'AA');
+    const city = (name: string) => accraCities.find((c) => c.name === name);
 
     expect(ghana?.max_radius_km).toBeGreaterThan(300);
     expect(ghana?.max_radius_km).toBeLessThan(500);
@@ -58,7 +68,7 @@ describe('LocationsService', () => {
     expect(city('Tema')?.max_radius_km).toBeLessThan(
       city('Accra')!.max_radius_km,
     );
-    for (const { max_radius_km } of cities) {
+    for (const { max_radius_km } of accraCities) {
       expect(max_radius_km).toBeGreaterThanOrEqual(3);
       expect(max_radius_km).toBeLessThanOrEqual(50);
     }
@@ -98,9 +108,39 @@ describe('LocationsService', () => {
     );
   });
 
-  it('rejects unknown countries and states', () => {
+  it('rejects unknown countries and states', async () => {
     expect(() => service.getStates('ZZZ')).toThrow(NotFoundException);
     expect(() => service.getStates('ZZ')).toThrow(NotFoundException);
-    expect(() => service.getCities('GH', 'NOPE')).toThrow(NotFoundException);
+    await expect(service.getCities('GH', 'NOPE')).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('adds the OpenStreetMap places of the state, sorted by name', async () => {
+    osmPlaces = [
+      { name: 'Osu', latitude: 5.56, longitude: -0.18, max_radius_km: 3 },
+      { name: 'accra', latitude: 5.6, longitude: -0.2, max_radius_km: 10 },
+    ];
+
+    const { response, complete } = await service.getCities('GHA', 'aa');
+    const names = response.data.map((city) => city.name);
+
+    expect(getPlaces).toHaveBeenCalledWith('GH', 'AA');
+    expect(complete).toBe(true);
+    expect(names).toContain('Osu');
+    // The dataset's Accra stays and OSM's is dropped.
+    expect(names.filter((name) => name.toLowerCase() === 'accra')).toEqual([
+      'Accra',
+    ]);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it('falls back to the dataset when OpenStreetMap is not to hand', async () => {
+    osmPlaces = null;
+
+    const { response, complete } = await service.getCities('GH', 'AA');
+
+    expect(complete).toBe(false);
+    expect(response.data.map((city) => city.name)).toContain('Accra');
   });
 });

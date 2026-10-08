@@ -1,3 +1,4 @@
+import { StaffInboxService } from '../notification/staff-inbox.service';
 import { DataSource } from 'typeorm';
 import {
   AccountStatus,
@@ -68,6 +69,7 @@ const setup = (user: UserEntity | null, lifted: object[] = []) => {
       .fn<Promise<void>, [string, Notice]>()
       .mockResolvedValue(undefined),
   };
+  const staffInbox = { toUser: jest.fn() };
   const service = new AdminUsersService(
     dataSource as unknown as DataSource,
     userService as unknown as UserService,
@@ -75,6 +77,7 @@ const setup = (user: UserEntity | null, lifted: object[] = []) => {
     firebase as unknown as FirebaseService,
     chat as unknown as ChatRealtimeService,
     notifications as unknown as NotificationService,
+    staffInbox as unknown as StaffInboxService,
   );
   // detail() runs a dozen counts; the actions only need to reach it.
   jest.spyOn(service, 'detail').mockResolvedValue({ data: {} } as never);
@@ -88,12 +91,25 @@ const setup = (user: UserEntity | null, lifted: object[] = []) => {
     userRepo,
     liftQuery,
     notifications,
+    staffInbox,
   };
 };
 
 const ends = { user: { id: 'u-1' }, is_active: true };
 
 describe('AdminUsersService.changeRole', () => {
+  it('tells the user in their back office inbox', async () => {
+    const { service, staffInbox } = setup(member());
+    await service.changeRole(admin, 'u-1', UserRole.MODERATOR);
+    expect(staffInbox.toUser).toHaveBeenCalledWith(
+      'u-1',
+      expect.objectContaining({
+        type: 'role_changed',
+        body: 'You are now a moderator.',
+      }),
+    );
+  });
+
   it('changes the role, ends sessions and audits the change', async () => {
     const { service, manager, userService, audit } = setup(member());
 

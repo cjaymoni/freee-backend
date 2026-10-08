@@ -143,19 +143,20 @@ export class FirebaseService implements OnModuleInit {
   /**
    * Send one notification to each of `tokens` (a user's devices).
    *
-   * @returns the tokens FCM reported as no longer valid: the app was
-   * uninstalled or the token rotated. The caller should forget them; they
-   * will never work again. Any other failure is logged and not returned,
-   * since the token may work next time.
+   * @returns how many devices FCM accepted it for, and the tokens it
+   * reported as no longer valid: the app was uninstalled or the token
+   * rotated. The caller should forget them; they will never work again. Any
+   * other failure is logged and not returned, since the token may work next
+   * time.
    */
   async sendToTokens(
     tokens: string[],
     payload: { title: string; body: string; data?: Record<string, string> },
-  ): Promise<{ invalidTokens: string[] }> {
-    if (!tokens.length) return { invalidTokens: [] };
+  ): Promise<{ sentCount: number; invalidTokens: string[] }> {
+    if (!tokens.length) return { sentCount: 0, invalidTokens: [] };
     if (!this.firebaseApp) {
       this.logger.warn('Firebase NOT initialized. Skipping notification');
-      return { invalidTokens: [] };
+      return { sentCount: 0, invalidTokens: [] };
     }
 
     const response = await admin.messaging().sendEachForMulticast({
@@ -184,6 +185,6 @@ export class FirebaseService implements OnModuleInit {
       `FCM sent ${response.successCount}/${tokens.length}` +
         (invalidTokens.length ? `, ${invalidTokens.length} dead token(s)` : ''),
     );
-    return { invalidTokens };
+    return { sentCount: response.successCount, invalidTokens };
   }
 }
