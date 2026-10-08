@@ -14,6 +14,7 @@ import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewModule } from '../item-view/item-view.module';
 import { SearchModule } from '../search/search.module';
+import { LocationsModule } from '../locations/locations.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { SearchModule } from '../search/search.module';
     ItemViewModule,
     SearchModule,
     NotificationModule,
+    LocationsModule,
   ],
   controllers: [ItemController, ItemImageController],
   providers: [ItemService, ItemImageService],

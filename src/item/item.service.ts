@@ -16,6 +16,7 @@ import {
 import { ItemImageEntity } from './entities/item-image.entity';
 import { CategoryEntity } from '../category/entities/category.entity';
 import { LocationEntity } from '../user/entities/location.entity';
+import { LocationNamesService } from '../locations/location-names.service';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemResponseDto } from './dto/item-response.dto';
@@ -92,6 +93,7 @@ export class ItemService {
     private readonly dataSource: DataSource,
     private readonly searchService: SearchService,
     private readonly notifications: NotificationService,
+    private readonly locationNames: LocationNamesService,
   ) {}
 
   /** Live listings per sharer, shown as items_count on each item's card. */
@@ -239,6 +241,15 @@ export class ItemService {
       if (location && location.user_id === null && !shared) {
         location.latitude = latitude;
         location.longitude = longitude;
+        // The old names no longer apply; LocationNamesService fills new ones.
+        Object.assign(location, {
+          country_code: null,
+          country_name: null,
+          region: null,
+          city: null,
+          area: null,
+          address: null,
+        });
         const updated = await this.locationRepository.save(location);
         return updated.id;
       }
@@ -506,6 +517,9 @@ export class ItemService {
       undefined,
       files,
     );
+    if (latitude !== undefined && longitude !== undefined) {
+      void this.locationNames.fill(saved.location_id);
+    }
 
     return {
       ...this.describeFailedUploads(
@@ -869,6 +883,9 @@ export class ItemService {
       remove_image_ids,
       files,
     );
+    if (latitude !== undefined && longitude !== undefined) {
+      void this.locationNames.fill(updated.location_id);
+    }
     return {
       ...this.describeFailedUploads(
         'Item updated successfully',

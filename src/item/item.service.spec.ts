@@ -22,6 +22,7 @@ import { SavedItemEntity } from '../saved-item/entities/saved-item.entity';
 import { LocationEntity } from '../user/entities/location.entity';
 import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
+import { LocationNamesService } from '../locations/location-names.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationCategory } from '../notification/notification.types';
 
@@ -330,6 +331,10 @@ describe('ItemService', () => {
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
         { provide: NotificationService, useValue: mockNotifications },
+        {
+          provide: LocationNamesService,
+          useValue: { fill: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 

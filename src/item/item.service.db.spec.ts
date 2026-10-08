@@ -20,6 +20,7 @@ import {
   describeWithDatabase,
   testDatabaseFor,
 } from '../common/testing/test-database';
+import { LocationNamesService } from '../locations/location-names.service';
 import { NotificationService } from '../notification/notification.service';
 
 /**
@@ -86,6 +87,10 @@ describeDb('ItemService.findAll on Postgres', () => {
           useValue: { record: () => Promise.resolve() },
         },
         { provide: NotificationService, useValue: { notify: jest.fn() } },
+        {
+          provide: LocationNamesService,
+          useValue: { fill: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = module.get(ItemService);

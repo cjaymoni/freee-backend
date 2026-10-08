@@ -87,6 +87,15 @@ export function toAdminItem(
           area: item.location.area ?? null,
           region: item.location.region ?? null,
           country_code: item.location.country_code ?? null,
+          // Decimal columns come back from Postgres as strings.
+          latitude:
+            item.location.latitude == null
+              ? null
+              : Number(item.location.latitude),
+          longitude:
+            item.location.longitude == null
+              ? null
+              : Number(item.location.longitude),
         }
       : null,
     owner: toUserRef(item.user),

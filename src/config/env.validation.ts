@@ -27,6 +27,8 @@ export const envValidationSchema = Joi.object({
 
   // OpenStreetMap places merged into the cities list
   OVERPASS_URL: Joi.string().uri().optional(),
+  // Names item locations posted as bare coordinates
+  NOMINATIM_URL: Joi.string().uri().optional(),
 
   // JWT
   JWT_SECRET: Joi.string().required(),
