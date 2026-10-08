@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -27,6 +28,7 @@ import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { STAFF_ROLES, UserRole } from '../user/entities/user.entity';
 import { AdminItemsService } from './admin-items.service';
 import { AdminItemQueryDto } from './dto/admin-query.dto';
+import { AdminUpdateItemDto } from './dto/admin-update-item.dto';
 import { OptionalReasonDto, ReasonDto } from './dto/moderation-action.dto';
 
 /**
@@ -55,6 +57,28 @@ export class AdminItemsController {
   @ApiParam({ name: 'id', description: 'Listing ID' })
   detail(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminItemsService.detail(id);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: "Edit someone else's listing (admin)",
+    description:
+      "Title, description, category, condition, quantity, status (available/unavailable), pickup details, and removing photos. The same rules as the owner's edit apply; the owner is notified and the change is audited.",
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'A status the request flow controls',
+    type: ErrorResponseDto,
+  })
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateItemDto,
+    @GetUser('userId') userId: string,
+    @GetUser('role') role: UserRole,
+    @Req() request: Request,
+  ) {
+    return this.adminItemsService.edit({ userId, role }, id, dto, request);
   }
 
   @Post(':id/hide')

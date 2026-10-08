@@ -769,11 +769,17 @@ export class ItemService {
   /**
    * Update an item
    */
+  /**
+   * Edit a listing. With `asAdmin` the caller needn't own it (the back
+   * office's admin edit); every other rule still applies, and locations are
+   * checked against the owner's, since the listing stays theirs.
+   */
   async update(
     userId: string,
     itemId: string,
     updateDto: UpdateItemDto,
     files?: Express.Multer.File[],
+    { asAdmin = false }: { asAdmin?: boolean } = {},
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     const item = await this.itemRepository.findOne({
       where: { id: itemId, is_deleted: false },
@@ -784,7 +790,7 @@ export class ItemService {
     }
 
     // Check ownership
-    if (item.user_id !== userId) {
+    if (!asAdmin && item.user_id !== userId) {
       throw new ForbiddenException('You can only update your own items');
     }
 
@@ -800,7 +806,11 @@ export class ItemService {
       await this.assertCategoryUsable(updateDto.category_id);
     }
     if (updateDto.location_id && updateDto.location_id !== item.location_id) {
-      await this.assertLocationUsable(userId, updateDto.location_id, item.id);
+      await this.assertLocationUsable(
+        item.user_id,
+        updateDto.location_id,
+        item.id,
+      );
     }
 
     // reserved / picked_up are owned by the request flow, which holds the item

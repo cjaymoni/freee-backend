@@ -83,6 +83,18 @@ export function listingHiddenNotice(
   };
 }
 
+export function listingEditedNotice(
+  item: { id: string; title: string },
+  reason?: string | null,
+): Notice {
+  return {
+    category: NotificationCategory.LISTINGS,
+    title: 'Your listing was edited',
+    body: `A moderator edited "${item.title}"${reason ? `: ${reason}` : '.'}`,
+    data: { type: 'listing_moderation', status: 'edited', item_id: item.id },
+  };
+}
+
 export function listingRestoredNotice(item: {
   id: string;
   title: string;

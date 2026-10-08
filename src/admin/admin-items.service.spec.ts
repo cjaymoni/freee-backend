@@ -1,3 +1,4 @@
+import { ItemService } from '../item/item.service';
 import { DataSource } from 'typeorm';
 import { ModerationStatus } from '../item/entities/item.entity';
 import { UserRole } from '../user/entities/user.entity';
@@ -7,6 +8,7 @@ import {
   AdminItemsService,
   ITEM_FLAGGED,
   ITEM_HIDDEN,
+  ITEM_EDITED,
   ITEM_RESTORED,
 } from './admin-items.service';
 
@@ -19,13 +21,15 @@ const setup = (item: object | null) => {
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const notifications = { notify: jest.fn().mockResolvedValue(undefined) };
+  const itemService = { update: jest.fn().mockResolvedValue({}) };
   const service = new AdminItemsService(
     { getRepository: () => repo } as unknown as DataSource,
     audit as unknown as AdminAuditService,
     notifications as unknown as NotificationService,
+    itemService as unknown as ItemService,
   );
   jest.spyOn(service, 'detail').mockResolvedValue({ data: {} } as never);
-  return { service, repo, audit, notifications };
+  return { service, repo, audit, notifications, itemService };
 };
 
 const listing = (moderation_status: ModerationStatus) => ({
@@ -127,6 +131,7 @@ describe('AdminItemsService.list filters', () => {
       } as unknown as DataSource,
       {} as AdminAuditService,
       {} as NotificationService,
+      {} as ItemService,
     );
     return { service, calls };
   };
@@ -248,6 +253,74 @@ describe('AdminItemsService owner notices', () => {
 
     await service[action](moderator, 'item-1', 'x');
 
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminItemsService.edit', () => {
+  const admin = { userId: 'admin-1', role: UserRole.ADMIN };
+  const owned = {
+    id: 'item-1',
+    user_id: 'owner-1',
+    title: 'Blue sofa',
+    quantity: 1,
+    is_deleted: false,
+  };
+
+  it('edits through the owner rules as admin, audits and tells the owner', async () => {
+    const { service, audit, notifications, itemService } = setup(owned);
+
+    await service.edit(admin, 'item-1', {
+      title: 'Blue sofa (2 seats)',
+      quantity: 2,
+      remove_image_ids: ['img-1'],
+      reason: 'Fixed the title',
+    });
+
+    expect(itemService.update).toHaveBeenCalledWith(
+      'admin-1',
+      'item-1',
+      {
+        title: 'Blue sofa (2 seats)',
+        quantity: 2,
+        remove_image_ids: ['img-1'],
+      },
+      undefined,
+      { asAdmin: true },
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: ITEM_EDITED,
+        oldValues: { title: 'Blue sofa', quantity: 1 },
+        newValues: {
+          title: 'Blue sofa (2 seats)',
+          quantity: 2,
+          removed_image_ids: ['img-1'],
+        },
+        reason: 'Fixed the title',
+      }),
+    );
+    expect(notifications.notify).toHaveBeenCalledWith(
+      'owner-1',
+      expect.objectContaining({ title: 'Your listing was edited' }),
+    );
+  });
+
+  it('refuses an edit that changes nothing', async () => {
+    const { service, itemService } = setup(owned);
+    await expect(
+      service.edit(admin, 'item-1', { reason: 'Just because' }),
+    ).rejects.toThrow('Nothing to change');
+    expect(itemService.update).not.toHaveBeenCalled();
+  });
+
+  it('does not audit or notify when the edit is refused', async () => {
+    const { service, audit, notifications, itemService } = setup(owned);
+    itemService.update.mockRejectedValueOnce(new Error('Status can only be'));
+    await expect(
+      service.edit(admin, 'item-1', { status: 'reserved' as never }),
+    ).rejects.toThrow('Status can only be');
+    expect(audit.record).not.toHaveBeenCalled();
     expect(notifications.notify).not.toHaveBeenCalled();
   });
 });

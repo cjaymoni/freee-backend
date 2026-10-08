@@ -1,14 +1,18 @@
 import { NotificationService } from '../notification/notification.service';
 import {
   listingApprovedNotice,
+  listingEditedNotice,
   listingHiddenNotice,
   listingRestoredNotice,
 } from '../notification/notices';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ItemService } from '../item/item.service';
+import { AdminUpdateItemDto } from './dto/admin-update-item.dto';
 import type { Request } from 'express';
 import { Brackets, DataSource, SelectQueryBuilder } from 'typeorm';
 import { ItemEntity, ModerationStatus } from '../item/entities/item.entity';
@@ -29,6 +33,7 @@ import { FOUNDING_REVIEW_REASON } from '../founding-freer/founding-freer.constan
 export const ITEM_HIDDEN = 'hidden';
 export const ITEM_FLAGGED = 'flagged';
 export const ITEM_RESTORED = 'restored';
+export const ITEM_EDITED = 'edited';
 
 /** Which moderation states each action may start from. */
 const TRANSITIONS: Record<
@@ -55,6 +60,7 @@ export class AdminItemsService {
     private readonly dataSource: DataSource,
     private readonly adminAudit: AdminAuditService,
     private readonly notifications: NotificationService,
+    private readonly itemService: ItemService,
   ) {}
 
   async list(
@@ -200,6 +206,60 @@ export class AdminItemsService {
       state: true,
       statusCode: 200,
     };
+  }
+
+  /**
+   * Edit someone else's listing (admin). Goes through the same rules as the
+   * owner's edit; the audit log keeps what changed, and the owner is told.
+   */
+  async edit(
+    actor: StaffActor,
+    itemId: string,
+    dto: AdminUpdateItemDto,
+    request?: Request,
+  ) {
+    const { reason, ...changes } = dto;
+    const fields = Object.fromEntries(
+      Object.entries(changes).filter(([, v]) => v !== undefined),
+    ) as Omit<AdminUpdateItemDto, 'reason'>;
+    if (!Object.keys(fields).length) {
+      throw new AppError(new BadRequestException('Nothing to change'));
+    }
+
+    const before = await this.dataSource
+      .getRepository(ItemEntity)
+      .findOne({ where: { id: itemId, is_deleted: false } });
+    if (!before) throw new AppError(new NotFoundException('Listing not found'));
+
+    await this.itemService.update(actor.userId, itemId, fields, undefined, {
+      asAdmin: true,
+    });
+
+    const { remove_image_ids, ...edited } = fields;
+    const old = before as unknown as Record<string, unknown>;
+    await this.adminAudit.record({
+      actor,
+      entityType: AuditEntityType.ITEMS,
+      entityId: itemId,
+      action: ITEM_EDITED,
+      oldValues: Object.fromEntries(
+        Object.keys(edited).map((key) => [key, old[key]]),
+      ),
+      newValues: {
+        ...edited,
+        ...(remove_image_ids?.length && {
+          removed_image_ids: remove_image_ids,
+        }),
+      },
+      reason,
+      request,
+    });
+    void this.notifications.notify(
+      before.user_id,
+      listingEditedNotice(before, reason),
+    );
+
+    return this.detail(itemId);
   }
 
   hide(actor: StaffActor, itemId: string, reason: string, request?: Request) {

@@ -50,6 +50,7 @@ const MATRIX: Record<string, UserRole[]> = {
   'AdminInboxController.markRead': STAFF,
   'AdminItemsController.list': STAFF,
   'AdminItemsController.detail': STAFF,
+  'AdminItemsController.update': [ADMIN],
   'AdminItemsController.hide': STAFF,
   'AdminItemsController.flag': STAFF,
   'AdminItemsController.restore': STAFF,
