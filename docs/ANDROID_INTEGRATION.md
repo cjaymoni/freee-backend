@@ -377,16 +377,50 @@ Four states, and each transition is a different endpoint with a different caller
 | Method | Endpoint | Who calls it | Effect |
 | --- | --- | --- | --- |
 | `POST` | `/item-requests` | Requester | Creates a `pending` request. One active request per person per item. |
-| `PATCH` | `/item-requests/{id}/confirm` | Owner | Becomes `confirmed`, item becomes `reserved`, a 6-character pickup code is generated. |
-| `PATCH` | `/item-requests/{id}/pickup` | Requester | Requires the pickup code. Becomes `completed`, item becomes `picked_up`. |
+| `PATCH` | `/item-requests/{id}/confirm` | Owner | The owner picks who gets the item. Becomes `confirmed`, item becomes `reserved`, a 6-character pickup code is generated. |
+| `PATCH` | `/item-requests/{id}/pickup` | Requester | Body `{"confirmation_code": "…"}`. Becomes `completed`, item becomes `picked_up`, and every other request on the item is cancelled. |
+| `PATCH` | `/item-requests/{id}/pickup-code` | Owner | Issues a new pickup code and unlocks a locked-out requester. The old code stops working. |
+| `PATCH` | `/item-requests/{id}/pickup-code/request` | Requester | Only while locked out. Asks the owner for a new code by chat card and push. Returns no code. |
 | `PATCH` | `/item-requests/{id}/cancel` | Either party | Becomes `cancelled`. `cancellation_reason` is optional. A confirmed request releases the item back to `available`. |
 | `GET` | `/item-requests/my-requests` | Requester | Requests this user has made. |
 | `GET` | `/item-requests/received` | Owner | Requests on this user's items. |
-| `GET` | `/item-requests/{id}` | Either party | 403 for anyone else. Carries the pickup code. |
+| `GET` | `/item-requests/{id}` | Either party | 403 for anyone else. Carries the pickup code for the owner only. |
 
 Only one request per item can be confirmed at a time — a second confirm returns
 **409**. Once confirmed, the item is reserved until that request is completed or
 cancelled.
+
+### The pickup code
+
+The code is how both sides know the hand-off happened, so **only the owner
+ever sees it**. `confirmation_code` is filled in on the owner's copy of a
+request and is always `null` on the requester's, on every endpoint.
+
+1. **Owner's screen:** once a request is `confirmed`, show `confirmation_code`
+   so the owner can read it out or show it at the hand-off.
+2. **Requester's screen:** show a code input, not a code. Submit it to
+   `PATCH /item-requests/{id}/pickup`. Case and surrounding spaces are
+   ignored, and codes never contain `0`, `O`, `1` or `I`.
+
+**Wrong codes are capped at 5 per code.**
+
+| Response | Meaning | What to show |
+| --- | --- | --- |
+| **400** `"Invalid confirmation code. 2 attempts left"` | Wrong code. | The message as-is. |
+| **400** `"Invalid confirmation code. No attempts left: …"` | That was the fifth wrong code. | The locked state below. |
+| **429** `"Too many wrong codes. …"` | Locked. Even the right code is refused. | The locked state below. |
+
+Every request carries `pickup_locked`. When it is `true`:
+
+- **Requester:** hide the code input and show **"Ask for a new code"**, which
+  calls `PATCH /item-requests/{id}/pickup-code/request`. That posts a
+  `pickup_code_requested` card in the chat and pushes the owner. It can be
+  repeated once an hour; sooner returns **429** with the wait in the message.
+  A **400** means the requester isn't locked out.
+- **Owner:** show **"Issue new code"**, which calls
+  `PATCH /item-requests/{id}/pickup-code`. The response carries the new code
+  and `pickup_locked: false`. The owner can also do this at any time, for
+  example if they think someone else saw the code.
 
 ---
 

@@ -1938,7 +1938,44 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"confirmation_code\": \"ABC123\"\n}"
-            }
+            },
+            "description": "Requester submits the pickup code the owner hands over in person. Case and surrounding spaces are ignored. 400 with attempts left on a wrong code; 429 after 5 wrong codes."
+          }
+        },
+        {
+          "name": "Issue New Pickup Code (Owner)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/item-requests/{{requestId}}/pickup-code",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "header": [],
+            "description": "Owner only, confirmed requests only. Replaces the pickup code and resets wrong attempts, unlocking the requester. The old code stops working."
+          }
+        },
+        {
+          "name": "Ask for New Pickup Code (Requester)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/item-requests/{{requestId}}/pickup-code/request",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}"
+                }
+              ]
+            },
+            "header": [],
+            "description": "Requester only, and only once locked out by 5 wrong codes. Posts a pickup_code_requested chat card and pushes the owner. Once an hour; 429 sooner."
           }
         }
       ]

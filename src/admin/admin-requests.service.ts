@@ -10,8 +10,12 @@ import { escapeLike } from '../common/text-fold';
 import { toUserRef } from './admin-views';
 import { AdminRequestQueryDto } from './dto/admin-query.dto';
 
-/** The status each request system message records the request moving to. */
-const EVENT_STATUS: Record<SystemEvent, RequestStatus> = {
+/**
+ * The status each request system message records the request moving to.
+ * Events that don't move it (a new pickup code being asked for) are absent
+ * and left out of the history.
+ */
+const EVENT_STATUS: Partial<Record<SystemEvent, RequestStatus>> = {
   [SystemEvent.ITEM_REQUESTED]: RequestStatus.PENDING,
   [SystemEvent.REQUEST_CONFIRMED]: RequestStatus.CONFIRMED,
   [SystemEvent.REQUEST_CANCELLED]: RequestStatus.CANCELLED,
@@ -264,15 +268,20 @@ export function statusHistory(
     note: string | null;
     /** Where an event with no recorded time sorts. */
     sortAt: Date;
-  }[] = messages
-    .filter((m) => m.system_event && EVENT_STATUS[m.system_event])
-    .map((m) => ({
-      status: EVENT_STATUS[m.system_event!],
-      at: m.created_at,
-      actor: party(m.sender_id),
-      note: null,
-      sortAt: m.created_at,
-    }));
+  }[] = messages.flatMap((m) => {
+    const status = m.system_event ? EVENT_STATUS[m.system_event] : undefined;
+    return status
+      ? [
+          {
+            status,
+            at: m.created_at,
+            actor: party(m.sender_id),
+            note: null,
+            sortAt: m.created_at,
+          },
+        ]
+      : [];
+  });
 
   const has = (status: RequestStatus) =>
     events.some((e) => e.status === status);

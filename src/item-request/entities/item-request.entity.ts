@@ -57,6 +57,14 @@ export class ItemRequestEntity {
   @Column({ type: 'varchar', length: 10, nullable: true })
   confirmation_code: string | null;
 
+  /** Wrong pickup codes submitted against the current code. */
+  @Column({ type: 'int', default: 0 })
+  pickup_attempts: number;
+
+  /** When the locked-out requester last asked the owner for a new code. */
+  @Column({ type: 'timestamp', nullable: true })
+  pickup_code_requested_at: Date | null;
+
   @Column({ type: 'boolean', default: false })
   is_picked_up: boolean;
 

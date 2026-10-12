@@ -77,7 +77,8 @@ export class ItemRequestController {
   @Patch(':requestId/confirm')
   @ApiOperation({
     summary: 'Confirm a request (owner only)',
-    description: 'Item owner confirms the request and sets pickup details',
+    description:
+      'Item owner picks which requester gets the item. Reserves the item and generates a pickup code, returned to the owner only.',
   })
   @ApiParam({ name: 'requestId', description: 'ID of the request' })
   @ApiResponse({
@@ -150,7 +151,7 @@ export class ItemRequestController {
   @ApiOperation({
     summary: 'Confirm pickup with confirmation code',
     description:
-      'Requester confirms item pickup using the code provided by owner',
+      'Requester confirms collection with the pickup code the owner hands over in person. Completes the request and closes any other requests for the item.',
   })
   @ApiParam({ name: 'requestId', description: 'ID of the request' })
   @ApiResponse({
@@ -170,7 +171,16 @@ export class ItemRequestController {
       ],
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid confirmation code' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid confirmation code; the message says how many attempts are left',
+  })
+  @ApiResponse({
+    status: 429,
+    description:
+      'Too many wrong codes. The owner must issue a new code via PATCH :requestId/pickup-code',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Request not found' })
   async confirmPickup(
@@ -184,6 +194,85 @@ export class ItemRequestController {
       requestId,
       confirmPickupDto.confirmation_code,
     );
+  }
+
+  @Patch(':requestId/pickup-code')
+  @ApiOperation({
+    summary: 'Issue a new pickup code (owner only)',
+    description:
+      'Replaces the pickup code on a confirmed request and resets wrong attempts, unlocking a requester who entered too many wrong codes. The old code stops working.',
+  })
+  @ApiParam({ name: 'requestId', description: 'ID of the request' })
+  @ApiResponse({
+    status: 200,
+    description: 'New pickup code issued',
+    schema: {
+      allOf: [
+        { $ref: getSchemaPath(ServiceResponseDto) },
+        {
+          properties: {
+            data: { $ref: getSchemaPath(ItemRequestResponseDto) },
+            message: { example: 'New pickup code issued' },
+            state: { example: true },
+            statusCode: { example: 200 },
+          },
+        },
+      ],
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Request is not confirmed' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Request not found' })
+  async regeneratePickupCode(
+    @Request() req,
+    @Param('requestId') requestId: string,
+  ) {
+    const ownerId = req.user.userId;
+    return this.itemRequestService.regeneratePickupCode(ownerId, requestId);
+  }
+
+  @Patch(':requestId/pickup-code/request')
+  @ApiOperation({
+    summary: 'Ask the owner for a new pickup code (requester only)',
+    description:
+      'For a requester locked out by too many wrong codes. Posts a card in the chat and pushes the owner, who then issues a code via PATCH :requestId/pickup-code. No code is returned to the requester. Can be repeated once an hour.',
+  })
+  @ApiParam({ name: 'requestId', description: 'ID of the request' })
+  @ApiResponse({
+    status: 200,
+    description: 'Owner notified',
+    schema: {
+      allOf: [
+        { $ref: getSchemaPath(ServiceResponseDto) },
+        {
+          properties: {
+            data: { $ref: getSchemaPath(ItemRequestResponseDto) },
+            message: {
+              example: 'The owner has been asked for a new pickup code',
+            },
+            state: { example: true },
+            statusCode: { example: 200 },
+          },
+        },
+      ],
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Request is not confirmed, or pickup is not locked',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Request not found' })
+  @ApiResponse({
+    status: 429,
+    description: 'Already asked within the last hour',
+  })
+  async requestNewPickupCode(
+    @Request() req,
+    @Param('requestId') requestId: string,
+  ) {
+    const requesterId = req.user.userId;
+    return this.itemRequestService.requestNewPickupCode(requesterId, requestId);
   }
 
   @Get('my-requests')

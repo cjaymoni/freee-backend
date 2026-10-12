@@ -1,13 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { ItemRequestService } from './item-request.service';
+import {
+  ItemRequestService,
+  MAX_PICKUP_ATTEMPTS,
+  PICKUP_CODE_REQUEST_COOLDOWN_MS,
+} from './item-request.service';
 import {
   ItemRequestEntity,
   RequestStatus,
 } from './entities/item-request.entity';
 import { ItemEntity, ModerationStatus } from '../item/entities/item.entity';
 import { ChatService } from '../chat/chat.service';
+import { SystemEvent } from '../chat/entities/message.entity';
 
 const buildQueryBuilder = (data: unknown[], total: number) => ({
   leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -318,6 +323,244 @@ describe('ItemRequestService', () => {
           cancellation_reason: 'Item was picked up by another requester',
         }),
       );
+    });
+  });
+
+  describe('pickup code visibility', () => {
+    const confirmed = {
+      id: 'req-1',
+      item_id: 'item-1',
+      requester_id: 'requester',
+      owner_id: 'owner',
+      status: RequestStatus.CONFIRMED,
+      confirmation_code: 'ABC234',
+      is_picked_up: false,
+    };
+
+    it('returns the code to the owner', async () => {
+      mockRequestRepo.createQueryBuilder.mockReturnValue(
+        buildQueryBuilder([confirmed], 1),
+      );
+
+      const result = await service.getItemRequests('owner');
+
+      expect(result.data[0].confirmation_code).toBe('ABC234');
+    });
+
+    it('withholds the code from the requester', async () => {
+      mockRequestRepo.createQueryBuilder.mockReturnValue(
+        buildQueryBuilder([confirmed], 1),
+      );
+
+      const result = await service.getUserRequests('requester');
+
+      expect(result.data[0].confirmation_code).toBeNull();
+    });
+
+    it('withholds the code from the requester on the detail view', async () => {
+      (
+        service as unknown as { itemRequestRepository: object }
+      ).itemRequestRepository = {
+        findOne: jest.fn().mockResolvedValue(confirmed),
+      };
+
+      const asRequester = await service.getRequestById('req-1', 'requester');
+      const asOwner = await service.getRequestById('req-1', 'owner');
+
+      expect(asRequester.data.confirmation_code).toBeNull();
+      expect(asOwner.data.confirmation_code).toBe('ABC234');
+    });
+  });
+
+  describe('pickup attempt cap', () => {
+    const setup = (requestOverrides: object = {}) => {
+      const request = {
+        id: 'req-1',
+        item_id: 'item-1',
+        requester_id: 'requester',
+        owner_id: 'owner',
+        status: RequestStatus.CONFIRMED,
+        confirmation_code: 'ABC234',
+        pickup_attempts: 0,
+        pickup_code_requested_at: null as Date | null,
+        ...requestOverrides,
+      };
+      const manager = {
+        findOne: jest.fn((entity: unknown) =>
+          Promise.resolve(
+            entity === ItemEntity
+              ? { id: 'item-1', is_deleted: false, status: 'reserved' }
+              : request,
+          ),
+        ),
+        find: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+        save: jest.fn((row: object) => Promise.resolve(row)),
+        query: jest.fn(),
+      };
+      (service as unknown as { dataSource: object }).dataSource = {
+        transaction: (work: (m: typeof manager) => unknown) => work(manager),
+      };
+      (service as unknown as { chatService: object }).chatService = {
+        createSystemMessage: jest.fn(),
+      };
+      return { request, manager };
+    };
+
+    it('counts a wrong code and says how many attempts are left', async () => {
+      const { request, manager } = setup({ pickup_attempts: 2 });
+
+      await expect(
+        service.confirmPickup('requester', 'req-1', 'WRONG1'),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: 'Invalid confirmation code. 2 attempts left',
+      });
+      expect(request.pickup_attempts).toBe(3);
+      expect(manager.save).toHaveBeenCalledWith(request);
+      expect(manager.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses even the right code once the cap is reached', async () => {
+      const { manager } = setup({ pickup_attempts: MAX_PICKUP_ATTEMPTS });
+
+      await expect(
+        service.confirmPickup('requester', 'req-1', 'ABC234'),
+      ).rejects.toMatchObject({ status: 429 });
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('accepts the right code on the last allowed attempt', async () => {
+      setup({ pickup_attempts: MAX_PICKUP_ATTEMPTS - 1 });
+
+      const result = await service.confirmPickup(
+        'requester',
+        'req-1',
+        'ABC234',
+      );
+
+      expect(result.data.status).toBe(RequestStatus.COMPLETED);
+    });
+
+    it('lets the owner issue a new code, which resets the attempts', async () => {
+      setup({ pickup_attempts: MAX_PICKUP_ATTEMPTS });
+
+      const result = await service.regeneratePickupCode('owner', 'req-1');
+
+      expect(result.data.pickup_locked).toBe(false);
+      expect(result.data.confirmation_code).toMatch(/^[A-Z2-9]{6}$/);
+      expect(result.data.confirmation_code).not.toBe('ABC234');
+    });
+
+    it('clears an earlier ask for a new code when the owner issues one', async () => {
+      const { request } = setup({
+        pickup_attempts: MAX_PICKUP_ATTEMPTS,
+        pickup_code_requested_at: new Date(),
+      });
+
+      await service.regeneratePickupCode('owner', 'req-1');
+
+      expect(request.pickup_code_requested_at).toBeNull();
+    });
+
+    it('refuses a new code to anyone but the owner', async () => {
+      setup();
+
+      await expect(
+        service.regeneratePickupCode('requester', 'req-1'),
+      ).rejects.toMatchObject({ status: 403 });
+    });
+  });
+
+  describe('requestNewPickupCode', () => {
+    const setup = (requestOverrides: object = {}) => {
+      const request = {
+        id: 'req-1',
+        item_id: 'item-1',
+        requester_id: 'requester',
+        owner_id: 'owner',
+        status: RequestStatus.CONFIRMED,
+        confirmation_code: 'ABC234',
+        pickup_attempts: MAX_PICKUP_ATTEMPTS,
+        pickup_code_requested_at: null as Date | null,
+        ...requestOverrides,
+      };
+      const manager = {
+        findOne: jest.fn((entity: unknown) =>
+          Promise.resolve(
+            entity === ItemEntity
+              ? { id: 'item-1', is_deleted: false, status: 'reserved' }
+              : request,
+          ),
+        ),
+        save: jest.fn((row: object) => Promise.resolve(row)),
+      };
+      const chat = { createSystemMessage: jest.fn() };
+      (service as unknown as { dataSource: object }).dataSource = {
+        transaction: (work: (m: typeof manager) => unknown) => work(manager),
+      };
+      (service as unknown as { chatService: object }).chatService = chat;
+      return { request, chat };
+    };
+
+    it('nudges the owner in chat without revealing the code', async () => {
+      const { request, chat } = setup();
+
+      const result = await service.requestNewPickupCode('requester', 'req-1');
+
+      expect(request.pickup_code_requested_at).toBeInstanceOf(Date);
+      expect(chat.createSystemMessage).toHaveBeenCalledWith({
+        actorId: 'requester',
+        otherUserId: 'owner',
+        event: SystemEvent.PICKUP_CODE_REQUESTED,
+        itemId: 'item-1',
+        requestId: 'req-1',
+      });
+      expect(result.data.confirmation_code).toBeNull();
+    });
+
+    it('refuses while the requester can still enter a code', async () => {
+      const { chat } = setup({ pickup_attempts: MAX_PICKUP_ATTEMPTS - 1 });
+
+      await expect(
+        service.requestNewPickupCode('requester', 'req-1'),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(chat.createSystemMessage).not.toHaveBeenCalled();
+    });
+
+    it('refuses a repeat ask within the cooldown', async () => {
+      const { chat } = setup({
+        pickup_code_requested_at: new Date(Date.now() - 10 * 60 * 1000),
+      });
+
+      await expect(
+        service.requestNewPickupCode('requester', 'req-1'),
+      ).rejects.toMatchObject({
+        status: 429,
+        message:
+          'The owner has already been asked. You can ask again in 50 minutes',
+      });
+      expect(chat.createSystemMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows asking again once the cooldown has passed', async () => {
+      const { chat } = setup({
+        pickup_code_requested_at: new Date(
+          Date.now() - PICKUP_CODE_REQUEST_COOLDOWN_MS - 1000,
+        ),
+      });
+
+      await service.requestNewPickupCode('requester', 'req-1');
+
+      expect(chat.createSystemMessage).toHaveBeenCalled();
+    });
+
+    it('refuses anyone but the requester', async () => {
+      setup();
+
+      await expect(
+        service.requestNewPickupCode('owner', 'req-1'),
+      ).rejects.toMatchObject({ status: 403 });
     });
   });
 });

@@ -55,9 +55,10 @@ This document outlines the three new features that have been implemented:
 **Key Features:**
 
 - Create pickup requests with preferred date/time
-- Owner can confirm requests with a confirmation code
+- Owner picks which requester gets the item by confirming their request
 - Cancel requests with reason (by requester or owner)
-- Confirm pickup using confirmation code
+- Confirm pickup with a code only the owner can see, handed over in person
+- Wrong codes capped at 5; the owner can issue a new code, and a locked-out requester can ask for one
 - Track request status (pending, confirmed, cancelled, completed, expired)
 - View sent and received requests
 
@@ -67,6 +68,8 @@ This document outlines the three new features that have been implemented:
 - `PATCH /item-requests/:requestId/confirm` - Confirm request (owner)
 - `PATCH /item-requests/:requestId/cancel` - Cancel request
 - `PATCH /item-requests/:requestId/pickup` - Confirm pickup (requester)
+- `PATCH /item-requests/:requestId/pickup-code` - Issue a new pickup code (owner)
+- `PATCH /item-requests/:requestId/pickup-code/request` - Ask the owner for a new code (requester, only when locked out)
 - `GET /item-requests/my-requests` - Get sent requests
 - `GET /item-requests/received` - Get received requests
 - `GET /item-requests/:requestId` - Get request details
@@ -74,12 +77,15 @@ This document outlines the three new features that have been implemented:
 **Workflow:**
 
 1. Requester creates a request for an item
-2. Owner receives notification and confirms with pickup details
-3. System generates a confirmation code
+2. Owner receives notification and confirms one request, choosing who gets the item
+3. System generates a pickup code, visible to the owner only
 4. Item status changes to "reserved"
-5. At pickup, requester enters confirmation code
-6. Item status changes to "picked_up"
+5. At the hand-off, the owner gives the requester the code and the requester enters it
+6. Item status changes to "picked_up" and the other requests on the item are cancelled
 7. Request marked as completed
+
+After 5 wrong codes, pickup is locked. The requester can ask the owner for a
+new code (at most once an hour), and the owner issues one, which unlocks it.
 
 ## Installation & Setup
 
@@ -129,7 +135,8 @@ The following modules have been registered in `app.module.ts`:
 
 - Manages item pickup requests
 - Tracks full request lifecycle with status changes
-- Includes confirmation codes for secure pickup
+- Includes the pickup code (`confirmation_code`), shown to the owner only
+- Counts wrong codes (`pickup_attempts`) and when a new code was last asked for (`pickup_code_requested_at`)
 - Stores cancellation reasons and metadata
 
 ## Testing

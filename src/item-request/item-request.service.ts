@@ -4,6 +4,8 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -37,6 +39,18 @@ import { ChatService } from '../chat/chat.service';
 import { SystemEvent } from '../chat/entities/message.entity';
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { closeActiveRequests } from './close-active-requests';
+
+/**
+ * Wrong pickup codes allowed per issued code. Generous enough for typos at the
+ * hand-off, far too few to guess one of 32^6 codes.
+ */
+export const MAX_PICKUP_ATTEMPTS = 5;
+
+/**
+ * How often a locked-out requester can ask the owner for a new code. Each ask
+ * is a chat card and a push to the owner, so repeats are spaced out.
+ */
+export const PICKUP_CODE_REQUEST_COOLDOWN_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class ItemRequestService {
@@ -130,8 +144,16 @@ export class ItemRequestService {
    * `requester` / `owner` relations are full UserEntity rows, and assigning
    * them wholesale put every user column - password_hash included - on the
    * wire, and would silently do so again for any column added later.
+   *
+   * The pickup code goes to the owner only. The owner hands it over in person
+   * at collection and the requester submits it, which is what makes a
+   * completed request evidence of a real hand-off; a requester who could read
+   * their own code could mark the item collected without ever meeting.
    */
-  private toResponseDto(entity: ItemRequestEntity): ItemRequestResponseDto {
+  private toResponseDto(
+    entity: ItemRequestEntity,
+    viewerId: string,
+  ): ItemRequestResponseDto {
     const dto = new ItemRequestResponseDto();
     dto.id = entity.id;
     dto.item_id = entity.item_id;
@@ -139,7 +161,9 @@ export class ItemRequestService {
     dto.owner_id = entity.owner_id;
     dto.status = entity.status;
     dto.pickup_date = entity.pickup_date ?? null;
-    dto.confirmation_code = entity.confirmation_code ?? null;
+    dto.confirmation_code =
+      viewerId === entity.owner_id ? (entity.confirmation_code ?? null) : null;
+    dto.pickup_locked = (entity.pickup_attempts ?? 0) >= MAX_PICKUP_ATTEMPTS;
     dto.is_picked_up = entity.is_picked_up;
     dto.picked_up_at = entity.picked_up_at ?? null;
     dto.cancelled_at = entity.cancelled_at ?? null;
@@ -187,9 +211,12 @@ export class ItemRequestService {
    * Generate a pickup confirmation code from the CSPRNG. Math.random would let
    * anyone who has seen a few codes recover the PRNG state and predict the
    * code for someone else's pickup; randomInt is unbiased over the alphabet.
+   *
+   * The code is read out or shown at the hand-off, so 0/O and 1/I are left
+   * out to avoid misreads.
    */
   private generateConfirmationCode(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 6; i++) {
       code += chars.charAt(randomInt(chars.length));
@@ -292,7 +319,7 @@ export class ItemRequestService {
 
       return {
         message: 'Request created successfully',
-        data: this.toResponseDto(result),
+        data: this.toResponseDto(result, requesterId),
         state: true,
         statusCode: 201,
       };
@@ -391,7 +418,7 @@ export class ItemRequestService {
 
       return {
         message: 'Request confirmed successfully',
-        data: this.toResponseDto(result),
+        data: this.toResponseDto(result, ownerId),
         state: true,
         statusCode: 200,
       };
@@ -477,7 +504,7 @@ export class ItemRequestService {
 
       return {
         message: 'Request cancelled successfully',
-        data: this.toResponseDto(result),
+        data: this.toResponseDto(result, userId),
         state: true,
         statusCode: 200,
       };
@@ -498,7 +525,7 @@ export class ItemRequestService {
     confirmationCode: string,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
-      const result = await this.dataSource.transaction(async (manager) => {
+      const outcome = await this.dataSource.transaction(async (manager) => {
         const itemId = await this.findRequestItemId(manager, requestId);
         const item = await this.lockItem(manager, itemId);
         const request = await this.loadRequestUnderLock(manager, requestId);
@@ -521,8 +548,19 @@ export class ItemRequestService {
           throw new BadRequestException('Request must be confirmed first');
         }
 
+        if (request.pickup_attempts >= MAX_PICKUP_ATTEMPTS) {
+          throw new HttpException(
+            'Too many wrong codes. Ask the owner for a new pickup code',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+
         if (request.confirmation_code !== confirmationCode) {
-          throw new BadRequestException('Invalid confirmation code');
+          // Counted here and refused after the commit: throwing inside the
+          // transaction would roll the count back with it.
+          request.pickup_attempts += 1;
+          await manager.save(request);
+          return { wrongCode: true as const, request };
         }
 
         // Update request
@@ -548,8 +586,18 @@ export class ItemRequestService {
           'Item was picked up by another requester',
         );
 
-        return completed;
+        return { wrongCode: false as const, request: completed };
       });
+
+      if (outcome.wrongCode) {
+        const remaining = MAX_PICKUP_ATTEMPTS - outcome.request.pickup_attempts;
+        throw new BadRequestException(
+          remaining > 0
+            ? `Invalid confirmation code. ${remaining} attempt${remaining === 1 ? '' : 's'} left`
+            : 'Invalid confirmation code. No attempts left: ask the owner for a new pickup code',
+        );
+      }
+      const result = outcome.request;
 
       this.logger.log(`Pickup confirmed`);
 
@@ -563,7 +611,7 @@ export class ItemRequestService {
 
       return {
         message: 'Pickup confirmed successfully',
-        data: this.toResponseDto(result),
+        data: this.toResponseDto(result, requesterId),
         state: true,
         statusCode: 200,
       };
@@ -571,6 +619,141 @@ export class ItemRequestService {
       if (error instanceof Error) {
         this.logger.error(
           `Error confirming pickup: ${error.message}`,
+          error.stack,
+        );
+      }
+      throw new AppError(error);
+    }
+  }
+
+  /**
+   * Replace a confirmed request's pickup code and clear its wrong attempts.
+   * This is how a requester locked out by {@link MAX_PICKUP_ATTEMPTS} gets
+   * another go, and lets an owner retire a code they think was seen by
+   * someone else. The old code stops working immediately.
+   */
+  async regeneratePickupCode(
+    ownerId: string,
+    requestId: string,
+  ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
+    try {
+      const result = await this.dataSource.transaction(async (manager) => {
+        const itemId = await this.findRequestItemId(manager, requestId);
+        await this.lockItem(manager, itemId);
+        const request = await this.loadRequestUnderLock(manager, requestId);
+
+        if (request.owner_id !== ownerId) {
+          throw new ForbiddenException(
+            'Only the item owner can issue a new pickup code',
+          );
+        }
+
+        if (request.status !== RequestStatus.CONFIRMED) {
+          throw new BadRequestException(
+            'Only confirmed requests have a pickup code',
+          );
+        }
+
+        request.confirmation_code = this.generateConfirmationCode();
+        request.pickup_attempts = 0;
+        // A later lockout is a new problem; the requester can ask straight away.
+        request.pickup_code_requested_at = null;
+
+        return manager.save(request);
+      });
+
+      this.logger.log(`Pickup code regenerated`);
+
+      return {
+        message: 'New pickup code issued',
+        data: this.toResponseDto(result, ownerId),
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(
+          `Error regenerating pickup code: ${error.message}`,
+          error.stack,
+        );
+      }
+      throw new AppError(error);
+    }
+  }
+
+  /**
+   * Requester side of {@link regeneratePickupCode}: ask the owner for a new
+   * code after being locked out. Only nudges the owner with a chat card (and
+   * its push); the code itself is still only ever issued to the owner.
+   */
+  async requestNewPickupCode(
+    requesterId: string,
+    requestId: string,
+  ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
+    try {
+      const result = await this.dataSource.transaction(async (manager) => {
+        const itemId = await this.findRequestItemId(manager, requestId);
+        await this.lockItem(manager, itemId);
+        const request = await this.loadRequestUnderLock(manager, requestId);
+
+        if (request.requester_id !== requesterId) {
+          throw new ForbiddenException(
+            'Only the requester can ask for a new pickup code',
+          );
+        }
+
+        if (request.status !== RequestStatus.CONFIRMED) {
+          throw new BadRequestException(
+            'Only confirmed requests have a pickup code',
+          );
+        }
+
+        if (request.pickup_attempts < MAX_PICKUP_ATTEMPTS) {
+          throw new BadRequestException(
+            'You can still enter the pickup code the owner gives you',
+          );
+        }
+
+        const now = Date.now();
+        const lastAsked = request.pickup_code_requested_at?.getTime();
+        if (
+          lastAsked !== undefined &&
+          now - lastAsked < PICKUP_CODE_REQUEST_COOLDOWN_MS
+        ) {
+          const minutes = Math.ceil(
+            (lastAsked + PICKUP_CODE_REQUEST_COOLDOWN_MS - now) / 60_000,
+          );
+          throw new HttpException(
+            `The owner has already been asked. You can ask again in ${minutes} minute${minutes === 1 ? '' : 's'}`,
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+
+        request.pickup_code_requested_at = new Date(now);
+
+        return manager.save(request);
+      });
+
+      this.logger.log(`New pickup code requested`);
+
+      await this.chatService.createSystemMessage({
+        actorId: result.requester_id,
+        otherUserId: result.owner_id,
+        event: SystemEvent.PICKUP_CODE_REQUESTED,
+        itemId: result.item_id,
+        requestId: result.id,
+      });
+
+      return {
+        message: 'The owner has been asked for a new pickup code',
+        data: this.toResponseDto(result, requesterId),
+        state: true,
+        statusCode: 200,
+      };
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error(
+          `Error requesting new pickup code: ${error.message}`,
           error.stack,
         );
       }
@@ -617,7 +800,7 @@ export class ItemRequestService {
 
       return {
         message: 'User requests retrieved successfully',
-        data: data.map((item) => this.toResponseDto(item)),
+        data: data.map((item) => this.toResponseDto(item, userId)),
         total,
         page,
         limit,
@@ -665,7 +848,7 @@ export class ItemRequestService {
 
       return {
         message: 'Item requests retrieved successfully',
-        data: data.map((item) => this.toResponseDto(item)),
+        data: data.map((item) => this.toResponseDto(item, ownerId)),
         total,
         page,
         limit,
@@ -697,15 +880,15 @@ export class ItemRequestService {
         throw new NotFoundException('Request not found');
       }
 
-      // The response carries the pickup confirmation code and both parties'
-      // details, so it is restricted to the two people involved.
+      // The response carries both parties' details (and, for the owner, the
+      // pickup code), so it is restricted to the two people involved.
       if (request.requester_id !== userId && request.owner_id !== userId) {
         throw new ForbiddenException('You can only view your own requests');
       }
 
       return {
         message: 'Request retrieved successfully',
-        data: this.toResponseDto(request),
+        data: this.toResponseDto(request, userId),
         state: true,
         statusCode: 200,
       };

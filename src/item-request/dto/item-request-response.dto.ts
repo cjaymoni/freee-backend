@@ -32,9 +32,15 @@ export class ItemRequestResponseDto {
 
   @ApiPropertyOptional({
     description:
-      'Confirmation code for pickup (only visible to requester and owner)',
+      'Pickup code. Returned to the item owner only (null for the requester): the owner hands it over at collection and the requester submits it to confirm pickup.',
   })
   confirmation_code?: string | null;
+
+  @ApiProperty({
+    description:
+      'True once too many wrong pickup codes were entered. Pickup is refused until the owner issues a new code.',
+  })
+  pickup_locked: boolean;
 
   @ApiProperty({ description: 'Whether the item has been picked up' })
   is_picked_up: boolean;

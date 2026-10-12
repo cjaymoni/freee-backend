@@ -99,6 +99,7 @@ snapshot of the item.
 | `request_confirmed` | The owner confirms the request |
 | `request_cancelled` | Either party cancels |
 | `pickup_confirmed` | The requester confirms pickup |
+| `pickup_code_requested` | A requester locked out by wrong pickup codes asks the owner for a new one |
 
 **One row renders two ways.** `sender_id` is whoever caused the event, so use
 `is_mine` to pick the wording. For `item_requested`:
@@ -111,8 +112,14 @@ It is a **snapshot** taken when the event happened, so the card still renders
 correctly after the item is edited or deleted — use it rather than re-fetching
 the item.
 
+For `pickup_code_requested`, the owner's side (`is_mine: false`) is the one
+that needs an action: offer **"Issue new code"**, which calls
+`PATCH /item-requests/:requestId/pickup-code` with `metadata.request_id`. The
+card never carries the code.
+
 System messages count toward unread like any other message, and cannot be
-deleted.
+deleted. Each one also sends the other party a push, under the item-requests
+notification setting.
 
 ---
 

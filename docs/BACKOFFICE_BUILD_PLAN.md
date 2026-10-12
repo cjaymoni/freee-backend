@@ -34,7 +34,7 @@ The back office sends every call through `/api/backend/*` to this API. It alread
 - **Suspend and ban.** The only account control is the `is_active` flag, set through `PATCH /user/:id`. There's no difference between suspended and banned, no reason or end date, and sessions aren't revoked.
 - **Hiding listings.** The only way to take a listing down is soft delete (`is_deleted`), so there's no reversible hide or flag.
 - **Requests.** Statuses are `pending / confirmed / cancelled / completed / expired`. "Selected" means `confirmed`, and the request order is `created_at`. Nothing records status history. As far as I can see nothing ever sets `expired`: no cron job does it.
-- **Pickup confirmation is one-sided.** The owner confirms a request, then the requester confirms pickup with a code. The spec's separate "Sharer confirmed" and "Requester confirmed" stages don't exist.
+- **Pickup confirmation is one action.** The owner confirms a request, then the requester confirms pickup with a code only the owner can see, so a completed request means they met. The spec's separate "Sharer confirmed" and "Requester confirmed" stages don't exist as separate steps.
 - **Reports.** Statuses are `pending / resolved / dismissed`, with one `resolution_notes` field. There's no "Reviewing" status, no notes history and no assignee.
 - **Categories.** `display_order` exists but there's no endpoint to reorder.
 - **Locations.** `region / city / area` exist on locations, and listings reference `location_id`. That's enough for per-area totals.

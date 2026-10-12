@@ -276,6 +276,8 @@ export class ChatService {
           return 'Request cancelled';
         case SystemEvent.PICKUP_CONFIRMED:
           return 'Item picked up';
+        case SystemEvent.PICKUP_CODE_REQUESTED:
+          return 'New pickup code requested';
         default:
           return 'Update';
       }

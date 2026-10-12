@@ -29,6 +29,8 @@ export enum SystemEvent {
   REQUEST_CONFIRMED = 'request_confirmed',
   REQUEST_CANCELLED = 'request_cancelled',
   PICKUP_CONFIRMED = 'pickup_confirmed',
+  /** Requester locked out by wrong codes, asking the owner for a new one. */
+  PICKUP_CODE_REQUESTED = 'pickup_code_requested',
 }
 
 /**
