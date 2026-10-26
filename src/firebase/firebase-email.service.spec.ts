@@ -87,52 +87,6 @@ describe('FirebaseService.createProvenEmailUser', () => {
   });
 });
 
-describe('FirebaseService.lockOutForAdoption', () => {
-  it('replaces the password, removes every other way in and revokes sessions', async () => {
-    auth.getUser.mockResolvedValue({
-      uid: 'u1',
-      phoneNumber: '+233200000000',
-      providerData: [
-        { providerId: 'password' },
-        { providerId: 'phone' },
-        { providerId: 'google.com' },
-      ],
-    });
-    await service().lockOutForAdoption('u1');
-    const [uid, changes] = auth.updateUser.mock.calls[0] as [
-      string,
-      Record<string, unknown>,
-    ];
-    expect(uid).toBe('u1');
-    expect((changes.password as string).length).toBeGreaterThanOrEqual(32);
-    expect(changes.phoneNumber).toBeNull();
-    expect(changes.providersToUnlink).toEqual(['google.com']);
-    // Not yet verified: that is the last step, so a retry redoes this.
-    expect(changes).not.toHaveProperty('emailVerified');
-    expect(auth.revokeRefreshTokens).toHaveBeenCalledWith('u1');
-    expect(auth.updateUser.mock.invocationCallOrder[0]).toBeLessThan(
-      auth.revokeRefreshTokens.mock.invocationCallOrder[0],
-    );
-  });
-
-  it('reads the account afresh, and adds no password where there was none', async () => {
-    auth.getUser.mockResolvedValue({ uid: 'u2', providerData: [] });
-    await service().lockOutForAdoption('u2');
-    expect(auth.getUser).toHaveBeenCalledWith('u2');
-    expect(auth.updateUser).toHaveBeenCalledWith('u2', {});
-    expect(auth.revokeRefreshTokens).toHaveBeenCalledWith('u2');
-  });
-});
-
-describe('FirebaseService.markEmailVerified', () => {
-  it('marks only the email verified', async () => {
-    await service().markEmailVerified('u1');
-    expect(auth.updateUser).toHaveBeenCalledWith('u1', {
-      emailVerified: true,
-    });
-  });
-});
-
 describe('FirebaseService.deleteUser', () => {
   it('treats an already-deleted user as done (concurrent delete)', async () => {
     auth.deleteUser.mockRejectedValue(fbError('auth/user-not-found'));

@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
-import { randomBytes } from 'crypto';
 
 const isNotFound = (error: unknown) =>
   (error as { code?: string }).code === 'auth/user-not-found';
@@ -228,43 +227,6 @@ export class FirebaseService implements OnModuleInit {
       if (!other.emailVerified) throw error;
       return other;
     }
-  }
-
-  /**
-   * First step of handing over an account that held a proven email
-   * unverified (see EmailAuthService): shut out whoever created it. Its
-   * password, if any, becomes a random one (the owner can reset it), every
-   * other sign-in method is removed, and its sessions are revoked. Reads the
-   * account afresh, so a method linked since the caller looked is removed
-   * too. Safe to repeat.
-   */
-  async lockOutForAdoption(uid: string): Promise<void> {
-    this.assertReady();
-    const auth = admin.auth();
-    const user = await auth.getUser(uid);
-    const providers = user.providerData.map((p) => p.providerId);
-    const others = providers.filter((p) => p !== 'password' && p !== 'phone');
-    await auth.updateUser(uid, {
-      ...(providers.includes('password') && {
-        password: randomBytes(32).toString('base64url'),
-      }),
-      ...(user.phoneNumber && { phoneNumber: null }),
-      ...(others.length && { providersToUnlink: others }),
-    });
-    await auth.revokeRefreshTokens(uid);
-  }
-
-  /**
-   * Last step of a handover: the email counts as verified. Last because it
-   * is what tells a retry the handover is done; anything that failed before
-   * it is simply redone.
-   */
-  async markEmailVerified(uid: string): Promise<void> {
-    this.assertReady();
-    await admin.auth().updateUser(uid, { emailVerified: true });
-    this.logger.warn(
-      'Handed over a Firebase account that held a proven email unverified',
-    );
   }
 
   /** Delete a Firebase user; one already gone (a concurrent delete) is fine. */

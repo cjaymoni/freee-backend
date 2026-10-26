@@ -20,7 +20,6 @@ import { SmsAuthService } from './sms/sms-auth.service';
 import { TwilioVerifyClient } from './sms/twilio-verify.client';
 import { EmailAuthController } from './email/email-auth.controller';
 import { EmailAuthService } from './email/email-auth.service';
-import { ChatRealtimeModule } from '../chat/chat-realtime.module';
 
 @Module({
   imports: [
@@ -32,8 +31,6 @@ import { ChatRealtimeModule } from '../chat/chat-realtime.module';
     ]),
     UserModule,
     MailModule,
-    // To drop the sockets of an account adopted on email sign-in.
-    ChatRealtimeModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

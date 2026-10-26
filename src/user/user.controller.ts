@@ -142,7 +142,6 @@ export class UserController {
   @UseInterceptors(FileInterceptor('file', avatarUploadOptions))
   async create(
     @GetUser('userId') userId: string,
-    @GetUser('sessionToken') sessionToken: string,
     @Body() createUserDto: CreateUserDto,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -156,7 +155,6 @@ export class UserController {
       source: 'user.controller.create',
       markOnboardedOnCreate: true,
       actingUserId: userId,
-      sessionToken,
     });
   }
 
@@ -391,14 +389,9 @@ export class UserController {
   })
   async updatePhoneNumber(
     @GetUser('userId') userId: string,
-    @GetUser('sessionToken') sessionToken: string,
     @Body() dto: UpdatePhoneNumberDto,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    return this.userService.updatePhoneFromFirebase(
-      userId,
-      dto.idToken,
-      sessionToken,
-    );
+    return this.userService.updatePhoneFromFirebase(userId, dto.idToken);
   }
 
   @Post('email')
@@ -444,14 +437,9 @@ export class UserController {
   })
   async updateEmail(
     @GetUser('userId') userId: string,
-    @GetUser('sessionToken') sessionToken: string,
     @Body() dto: UpdateEmailDto,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    return this.userService.updateEmailFromFirebase(
-      userId,
-      dto.idToken,
-      sessionToken,
-    );
+    return this.userService.updateEmailFromFirebase(userId, dto.idToken);
   }
 
   @Patch(':id')
@@ -539,11 +527,7 @@ export class UserController {
         );
       }
 
-      // Only while this session is live: see UserService.withLiveSession.
-      const result = await this.userService.withLiveSession(
-        sessionToken,
-        (manager) => this.userService.update(id, allowed, manager),
-      );
+      const result = await this.userService.update(id, allowed);
       if (warnings.length) {
         result.warnings = warnings;
       }

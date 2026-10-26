@@ -13,12 +13,10 @@ import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
 import { In, IsNull, LessThan, MoreThan, Raw, Repository } from 'typeorm';
 import type { auth as firebaseAuth } from 'firebase-admin';
-import { ChatRealtimeService } from '../../chat/chat-realtime.service';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
-import { AccountStatus, UserEntity } from '../../user/entities/user.entity';
+import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
-import { UserSessionEntity } from '../entities/user-session.entity';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
 
 export type EmailProvider = 'firebase' | 'server';
@@ -80,12 +78,9 @@ export class EmailAuthService {
     private readonly codes: Repository<VerificationCodeEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
-    @InjectRepository(UserSessionEntity)
-    private readonly sessions: Repository<UserSessionEntity>,
     private readonly mail: MailService,
     private readonly firebase: FirebaseService,
     private readonly users: UserService,
-    private readonly chatRealtime: ChatRealtimeService,
   ) {}
 
   getConfig(): EmailConfig {
@@ -116,10 +111,9 @@ export class EmailAuthService {
    * 1. The one bound to the backend account that already has the email
    *    verified, so one person isn't split across two Firebase accounts.
    * 2. Otherwise the Firebase account holding the email verified.
-   * 3. Otherwise one holding it unverified, which anyone could have created
-   *    with someone else's address: handed over or deleted, see
-   *    unverifiedHolderFate.
-   * 4. Otherwise a new Firebase account with the email verified.
+   * 3. Otherwise a new Firebase account with the email verified. One that
+   *    held the email unverified is deleted first (see
+   *    deleteUnverifiedHolder), never handed over.
    */
   private async firebaseTokenFor(email: string): Promise<string> {
     const owner = await this.userRepo.findOne({
@@ -145,107 +139,37 @@ export class EmailAuthService {
 
     let holder = await this.firebase.findUserByEmail(email);
     if (holder && !holder.emailVerified) {
-      const fate = await this.unverifiedHolderFate(holder, email);
-      if (fate.handOver) {
-        await this.handOver(holder.uid, fate.account, email);
-      } else {
-        await this.firebase.deleteUser(holder.uid);
-        holder = null;
-      }
+      await this.deleteUnverifiedHolder(holder);
+      holder = null;
     }
     holder ??= await this.firebase.createProvenEmailUser(email);
     return this.firebase.createCustomToken(holder.uid);
   }
 
   /**
-   * What happens to a Firebase account holding a proven email unverified.
-   * Anyone could have created it with someone else's address, set a
-   * password, linked their own Google or phone, and built a backend account
-   * behind it. It is handed over to the prover only when its backend
-   * account is plainly that email's: it has the email, and no verified
-   * phone. Otherwise the prover gets a fresh account and it is deleted
-   * (Firebase can't take an email off an account):
+   * Delete a Firebase account that holds an email unverified, to free the
+   * email for whoever proved it. Anyone could have created it with someone
+   * else's address, set a password, linked their own phone or Google, and
+   * built a backend account behind it, so it is never handed over: taking
+   * over an account someone else could use until a moment ago can't be done
+   * safely. Firebase can't take an email off an account, so it is deleted.
    *
-   * - no backend account: nothing to keep;
-   * - a verified phone: its owner signs back in with it and lands in their
-   *   backend account again (resolveFirebaseLink);
-   * - a different email, or none: that account isn't this email's, whatever
-   *   it holds. Handing it over would leave its creator a way back in
-   *   through that other email (a password reset), and it is never another
-   *   account's that has this email verified;
-   * - suspended or banned: the prover would inherit that status.
-   *
-   * Firebase sign-in methods don't count as a way back: after a delete they
-   * would start a new account, not reach the old one.
+   * Its backend account, if any, keeps its data, phone and sessions, and
+   * loses the unverified email to the verified sign-in (resolveFirebaseLink).
+   * If it was the prover's own (a sign-up whose email was never verified),
+   * the prover now has a second account; the log line lets support find the
+   * old one and merge them.
    */
-  private async unverifiedHolderFate(
-    holder: firebaseAuth.UserRecord,
-    email: string,
-  ): Promise<{ handOver: true; account: UserEntity } | { handOver: false }> {
+  private async deleteUnverifiedHolder(holder: firebaseAuth.UserRecord) {
     const account = await this.userRepo.findOne({
       where: { firebase_uid: holder.uid, is_deleted: false },
     });
-    if (!account || account.is_phone_verified || account.email !== email) {
-      return { handOver: false };
-    }
-    // A banned or suspended account would pass its status to the person who
-    // proved the email, and tie the email to it for good. Deleting instead
-    // lets that person start a clean account, which is also how a banned
-    // user who never verified their email could start over: logged, so
-    // staff can see it.
-    if (account.account_status !== AccountStatus.ACTIVE) {
+    if (account) {
       this.logger.warn(
-        `Email-code sign-in for ${account.account_status} account ${account.id}'s unverified email: its Firebase account is deleted, not handed over`,
-      );
-      return { handOver: false };
-    }
-    return { handOver: true, account };
-  }
-
-  /**
-   * Hand a Firebase account and its backend account to whoever proved the
-   * email, leaving whoever created them nothing: Firebase password, other
-   * sign-in methods and sessions; then the backend password, sessions and
-   * open sockets; and only then the email marked verified, which is what
-   * makes a retry treat it as done. If any step fails, the code is given
-   * back and a retry redoes them all.
-   */
-  private async handOver(
-    firebaseUid: string,
-    account: UserEntity,
-    email: string,
-  ) {
-    await this.firebase.lockOutForAdoption(firebaseUid);
-    // Sessions first, so whoever created it can't change the account (say,
-    // to another email they could reset) while it is handed over.
-    await this.endSessions(account);
-    // The password could have been set during onboarding; the reset channel
-    // is now the proven email alone. Only while the account still has that
-    // email: if it changed since it was checked, stop. The code is given
-    // back, and the retry sees the new email and deletes instead.
-    const claimed = await this.userRepo.update(
-      { id: account.id, email },
-      { password_hash: null as unknown as string, is_email_verified: true },
-    );
-    if (!claimed.affected) {
-      throw new ConflictException(
-        'This account changed while signing in. Please try again.',
+        `Proven email freed from an unverified Firebase account bound to backend account ${account.id} (${account.account_status}); a second account may follow for the same person`,
       );
     }
-    await this.firebase.markEmailVerified(firebaseUid);
-    // Again, for a sign-in that was already past its token check when the
-    // Firebase sessions were revoked and saved its session since.
-    await this.endSessions(account);
-  }
-
-  private async endSessions(account: UserEntity) {
-    await this.sessions.update(
-      { user: { id: account.id }, is_active: true },
-      { is_active: false },
-    );
-    await this.users.clearUserCache(account);
-    // Sockets are only checked when they connect.
-    this.chatRealtime.disconnectUser(account.id);
+    await this.firebase.deleteUser(holder.uid);
   }
 
   async sendAddEmailCode(userId: string, email: string, ip: string) {
@@ -254,20 +178,11 @@ export class EmailAuthService {
     await this.issue(ADD_EMAIL, email, ip, userId);
   }
 
-  async verifyAddEmailCode(
-    userId: string,
-    email: string,
-    code: string,
-    sessionToken?: string,
-  ) {
+  async verifyAddEmailCode(userId: string, email: string, code: string) {
     return this.consume(ADD_EMAIL, email, code, userId, async () => {
       const user = await this.users.assertCanLinkEmail(userId, email);
       await this.freeOnFirebase(user, email);
-      const saved = await this.users.linkProvenEmail(
-        userId,
-        email,
-        sessionToken,
-      );
+      const saved = await this.users.linkProvenEmail(userId, email);
       // After the commit, so a failed commit can't leave the email on
       // Firebase only. If this fails the backend already has it verified,
       // and the next email-code sign-in puts it on this Firebase account.
@@ -294,9 +209,7 @@ export class EmailAuthService {
    *   finished): kept for a user without a Firebase account yet, whose next
    *   email sign-in links to it; otherwise deleted, so the email can go on
    *   the user's own Firebase account;
-   * - held unverified: deleted when unverifiedHolderFate says so; refused
-   *   when it would be handed over, since it is that email's own account and
-   *   signing in with an email code hands it over.
+   * - held unverified: deleted, as on sign-in (deleteUnverifiedHolder).
    *
    * Deletes happen before the email is saved and can't be undone; if saving
    * then fails (another account claimed the email meanwhile), the deleted
@@ -309,21 +222,21 @@ export class EmailAuthService {
   ) {
     const holder = await this.firebase.findUserByEmail(email);
     if (!holder || holder.uid === user.firebase_uid) return;
-    const refuse = () =>
-      new ConflictException(
+    if (!holder.emailVerified) {
+      if (!checkOnly) await this.deleteUnverifiedHolder(holder);
+      return;
+    }
+    const bound = await this.userRepo.exists({
+      where: { firebase_uid: holder.uid, is_deleted: false },
+    });
+    if (bound) {
+      throw new ConflictException(
         'This email already has its own account. Sign in with it using an email code instead.',
       );
-
-    if (holder.emailVerified) {
-      const bound = await this.userRepo.exists({
-        where: { firebase_uid: holder.uid, is_deleted: false },
-      });
-      if (bound) throw refuse();
-      if (!user.firebase_uid) return;
-    } else if ((await this.unverifiedHolderFate(holder, email)).handOver) {
-      throw refuse();
     }
-    if (!checkOnly) await this.firebase.deleteUser(holder.uid);
+    if (user.firebase_uid && !checkOnly) {
+      await this.firebase.deleteUser(holder.uid);
+    }
   }
 
   private assertSignInCodesOn() {

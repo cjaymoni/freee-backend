@@ -47,7 +47,6 @@ describe('UserController authorization', () => {
     remove: jest.Mock;
     findOne: jest.Mock;
     findOneEntityWithPassword: jest.Mock;
-    withLiveSession: jest.Mock;
   };
   let notifications: {
     registerDevice: jest.Mock;
@@ -56,8 +55,6 @@ describe('UserController authorization', () => {
 
   const USER_ID = '11111111-1111-1111-1111-111111111111';
   const OTHER_ID = '22222222-2222-2222-2222-222222222222';
-  /** The transaction withLiveSession hands the edit. */
-  const MANAGER = { tx: 'live-session' };
 
   beforeEach(async () => {
     userService = {
@@ -67,10 +64,6 @@ describe('UserController authorization', () => {
       findOneEntityWithPassword: jest
         .fn()
         .mockResolvedValue({ id: USER_ID, password_hash: null }),
-      // Runs the edit as if the session were live, in a stand-in transaction.
-      withLiveSession: jest.fn(
-        (_token: string, work: (manager: unknown) => unknown) => work(MANAGER),
-      ),
     };
     notifications = {
       registerDevice: jest.fn().mockResolvedValue(true),
@@ -132,13 +125,9 @@ describe('UserController authorization', () => {
         SESSION,
         'fcm-2',
       );
-      expect(userService.update).toHaveBeenCalledWith(
-        USER_ID,
-        {
-          first_name: 'Ama',
-        },
-        MANAGER,
-      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+        first_name: 'Ama',
+      });
     });
 
     it("never stores a token an admin sends for someone else's profile", async () => {
@@ -164,14 +153,10 @@ describe('UserController authorization', () => {
         UserRole.USER,
         SESSION,
       );
-      expect(userService.update).toHaveBeenCalledWith(
-        USER_ID,
-        {
-          first_name: 'Ama',
-          bio: 'hi',
-        },
-        MANAGER,
-      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+        first_name: 'Ama',
+        bio: 'hi',
+      });
     });
 
     it("rejects a user editing someone else's profile", async () => {
@@ -200,12 +185,7 @@ describe('UserController authorization', () => {
         UserRole.USER,
         SESSION,
       );
-      expect(userService.update).toHaveBeenCalledWith(USER_ID, body, MANAGER);
-      // Only while the request's own session is live.
-      expect(userService.withLiveSession).toHaveBeenCalledWith(
-        SESSION,
-        expect.any(Function),
-      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, body);
       expect(result.warnings).toBeUndefined();
     });
 
@@ -232,13 +212,9 @@ describe('UserController authorization', () => {
           UserRole.USER,
           SESSION,
         );
-        expect(userService.update).toHaveBeenCalledWith(
-          USER_ID,
-          {
-            first_name: 'Ama',
-          },
-          MANAGER,
-        );
+        expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+          first_name: 'Ama',
+        });
         expect(result.warnings?.[0]).toContain(field);
       },
     );
@@ -255,13 +231,9 @@ describe('UserController authorization', () => {
         UserRole.USER,
         SESSION,
       );
-      expect(userService.update).toHaveBeenCalledWith(
-        USER_ID,
-        {
-          first_name: 'Ama',
-        },
-        MANAGER,
-      );
+      expect(userService.update).toHaveBeenCalledWith(USER_ID, {
+        first_name: 'Ama',
+      });
       expect(result.warnings?.[0]).toContain('/auth/change-password');
     });
 

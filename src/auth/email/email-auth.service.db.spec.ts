@@ -1,7 +1,6 @@
 import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
-import { ChatRealtimeService } from '../../chat/chat-realtime.service';
 import {
   describeWithDatabase,
   testDatabaseFor,
@@ -10,7 +9,6 @@ import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
-import { UserSessionEntity } from '../entities/user-session.entity';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
 import { EmailAuthService } from './email-auth.service';
 
@@ -64,11 +62,9 @@ describeWithDatabase('EmailAuthService codes on Postgres', () => {
       { get: (_: string, fallback?: unknown) => fallback } as ConfigService,
       ds.getRepository(VerificationCodeEntity),
       ds.getRepository(UserEntity),
-      ds.getRepository(UserSessionEntity),
       mail as unknown as MailService,
       firebase as unknown as FirebaseService,
       { clearUserCache: jest.fn() } as unknown as UserService,
-      { disconnectUser: jest.fn() } as unknown as ChatRealtimeService,
     );
   });
 

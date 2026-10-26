@@ -33,22 +33,14 @@ Time windows are measured by the database clock, the same clock that stamps the 
 
 1. If a backend account already has this email **verified**, its Firebase account, so one person isn't split across two Firebase accounts. The email is filled in on that Firebase account only if it has none, or has this one unverified; a different email there is its password sign-in and is left alone.
 2. Otherwise the Firebase account holding the email **verified**, untouched.
-3. Otherwise a Firebase account holding the email **unverified**. Anyone can create one with someone else's address, set a password, link their own phone or Google, and build a backend account behind it. It is **handed over** only when its backend account is plainly that email's: the backend account has this email and no verified phone. In every other case it is **deleted** and the person who proved the email gets a fresh account (Firebase can't take an email off an account):
-   - no backend account behind it: nothing to keep;
-   - a verified phone on the backend account: its owner signs back in with the phone and reaches it again;
-   - a different email on the backend account, or none: it isn't this email's account. Handing it over would leave its creator a way back in through that other email (a password reset), and it is never the account that already has this email verified.
-   - a suspended or banned backend account: the prover would inherit that status, and the email would be tied to it for good. The flip side: a banned user who never verified their email can start a clean account this way. Each such delete is logged with the account id for staff to review.
+3. Otherwise a **new** Firebase account, created with the email verified.
 
-   Sign-in methods on Firebase (Google, Apple) don't count as a way back: after a delete they start a new account rather than reach the old one.
-4. Otherwise a new Firebase account, created with the email verified.
+A Firebase account holding the email **unverified** is always **deleted** first, never handed over. Anyone can create one with someone else's address, set a password, link their own phone or Google, and build a backend account behind it. Taking over an account that someone else could use until a moment ago can't be done safely: every way of signing in, refreshing or editing would race the takeover. Firebase can't take an email off an account, so deleting it is the only way to free the email.
 
-**Handing over** leaves whoever created the account nothing, in this order: its Firebase password becomes random, every other Firebase sign-in method is removed, and its Firebase sessions are revoked; then its backend sessions are ended and its open chat sockets dropped; then the backend account's password is cleared and its email marked verified, only if it still has this email (if it changed, the handover stops, the code is given back, and the retry deletes instead); then the Firebase email is marked verified; then sessions are swept once more.
-
-Edits a user makes to their own account (`PATCH /user/:id`, `POST /user`, `POST /user/email`, `POST /user/phone-number`, `POST /auth/change-password`, `POST /auth/email/link/verify-code`) run in a transaction that holds the request's session (`UserService.withLiveSession`). Ending the sessions waits for any such edit, so an edit already under way either commits first, and the handover then clears what it set, or finds its session ended and is refused (401). Nobody can slip a password, email or phone in while an account is handed over.
-
-One narrow race remains: a `POST /auth/firebase-login` by the creator whose ID token was checked just before the Firebase revoke, and whose session is saved only after the last sweep, keeps that session (15-minute access, 7-day refresh). It gets no password, email or phone onto the account, and closing it would cost every sign-in an extra Firebase call.
-
-A deleted Firebase account's devices are signed out and have to sign in again. Two sign-ins racing to delete the same account both succeed.
+- Its backend account, if any, keeps its data, phone and sessions. It loses only the unverified email, to the verified sign-in (`resolveFirebaseLink`).
+- If that was the prover's own account (a sign-up whose email was never verified), they now have two: the new one, and the old one with their data. Each delete is logged with the old backend account id ("Proven email freed from an unverified Firebase account bound to backend account …") so support can find it and merge.
+- A banned or suspended user who never verified their email can start a clean account this way; the same log line shows the old account's status.
+- Devices signed in to the deleted Firebase account are signed out. Two sign-ins racing to delete the same account both succeed.
 
 ## Adding an email after phone sign-up
 
@@ -61,12 +53,14 @@ Both steps check first and send no code for an email that would get a 409. On Fi
 
 - another Firebase account holding the email **verified** and bound to another backend account: 409, the accounts can't be merged here;
 - one holding it verified that nobody is bound to (left by a sign-in that never finished): kept for a user without a Firebase account yet (their next email sign-in links to it), otherwise deleted so the email can go on the user's own Firebase account;
-- one holding it **unverified**: deleted when sign-in would delete it (as above); a 409 when sign-in would hand it over, since it is that email's own account: the user can sign in with an email code instead. Another Firebase account holding the email unverified is deleted when sign-in would delete it (as above). When sign-in would hand it over instead (it is that email's own account), the request gets a 409 and nothing is deleted: the user can sign in with an email code, which hands it over. The delete happens before the email is saved and can't be undone; if saving then fails, the deleted account was one sign-in would have deleted anyway. On a right code the email is saved on the backend account as verified, and then put on the user's own Firebase account. If that last Firebase step fails, the backend keeps the email and the next email-code sign-in puts it on Firebase. A code only works for the user who asked for it, and one user's request never delays or cancels another's.
+- one holding it **unverified**: deleted, as on sign-in.
+
+Deletes happen before the email is saved and can't be undone; if saving then fails (another account claimed it meanwhile), the deleted account was one that would have been deleted anyway. On a right code the email is saved on the backend account as verified, and then put on the user's own Firebase account. If that last step fails, the backend keeps the email and the next email-code sign-in puts it on Firebase. A code only works for the user who asked for it, and one user's request never delays or cancels another's.
 
 | Status | Meaning |
 |---|---|
 | 400 | Wrong or expired code, or bad input. `message` is user-facing. |
-| 409 | Another account already has this email (backend or Firebase, verified or password-only), or this account already has a different verified email. Ask the user to sign in with that email (by email code) instead. |
+| 409 | Another account already has this email verified (backend, or Firebase bound to another account), or this account already has a different verified email. Ask the user to sign in with that email (by email code) instead. |
 | 429 | Asked for a new code within a minute, too many codes or wrong guesses for this email, or too many requests. |
 | 503 | Sign-in codes switched off, or the email couldn't be sent. |
 

@@ -6,12 +6,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { FindOperator, Repository } from 'typeorm';
-import { ChatRealtimeService } from '../../chat/chat-realtime.service';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
-import { UserSessionEntity } from '../entities/user-session.entity';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
 import { EmailAuthService } from './email-auth.service';
 
@@ -38,21 +36,17 @@ function setup(env: Record<string, unknown> = {}) {
     exists: jest.fn().mockResolvedValue(false),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
-  const sessions = { update: jest.fn().mockResolvedValue({ affected: 2 }) };
   const mail = { sendEmailCode: jest.fn().mockResolvedValue(undefined) };
   const firebase = {
     findUser: jest.fn().mockResolvedValue(null),
     findUserByEmail: jest.fn().mockResolvedValue(null),
     createProvenEmailUser: jest.fn().mockResolvedValue({ uid: 'fresh' }),
-    lockOutForAdoption: jest.fn().mockResolvedValue(undefined),
-    markEmailVerified: jest.fn().mockResolvedValue(undefined),
     deleteUser: jest.fn().mockResolvedValue(undefined),
     setProvenEmail: jest.fn().mockResolvedValue(undefined),
     createCustomToken: jest.fn((uid: string) =>
       Promise.resolve(`token:${uid}`),
     ),
   };
-  const chat = { disconnectUser: jest.fn() };
   const users = {
     assertCanLinkEmail: jest
       .fn()
@@ -64,13 +58,11 @@ function setup(env: Record<string, unknown> = {}) {
     config,
     codes as unknown as Repository<VerificationCodeEntity>,
     userRepo as unknown as Repository<UserEntity>,
-    sessions as unknown as Repository<UserSessionEntity>,
     mail as unknown as MailService,
     firebase as unknown as FirebaseService,
     users as unknown as UserService,
-    chat as unknown as ChatRealtimeService,
   );
-  return { service, codes, userRepo, sessions, mail, firebase, users, chat };
+  return { service, codes, userRepo, mail, firebase, users };
 }
 
 /** A stored code row for `code`, as findOne returns it. */
@@ -315,11 +307,7 @@ describe('EmailAuthService checking add-email codes', () => {
     const { service, codes, firebase, users } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     await service.verifyAddEmailCode('user-1', EMAIL, '123456');
-    expect(users.linkProvenEmail).toHaveBeenCalledWith(
-      'user-1',
-      EMAIL,
-      undefined,
-    );
+    expect(users.linkProvenEmail).toHaveBeenCalledWith('user-1', EMAIL);
     expect(firebase.setProvenEmail).toHaveBeenCalledWith('fb-1', EMAIL);
     // Firebase is written only after the backend has committed.
     expect(users.linkProvenEmail.mock.invocationCallOrder[0]).toBeLessThan(
@@ -334,17 +322,6 @@ describe('EmailAuthService checking add-email codes', () => {
     await expect(
       service.verifyAddEmailCode('user-1', EMAIL, '123456'),
     ).resolves.toEqual({ state: true });
-  });
-
-  it('passes the session on, so the save only happens while it is live', async () => {
-    const { service, codes, users } = setup();
-    codes.findOne.mockResolvedValue(await storedCode('123456'));
-    await service.verifyAddEmailCode('user-1', EMAIL, '123456', 'sess-1');
-    expect(users.linkProvenEmail).toHaveBeenCalledWith(
-      'user-1',
-      EMAIL,
-      'sess-1',
-    );
   });
 
   it("deletes a verified Firebase account nobody's bound to, then adds the email", async () => {
@@ -384,25 +361,16 @@ describe('EmailAuthService checking add-email codes', () => {
     expect(users.linkProvenEmail).toHaveBeenCalled();
   });
 
-  it("refuses, deleting nothing, when it is that email's own account", async () => {
+  it("frees it even from an unverified account that is that email's own: never handed over", async () => {
     const { service, codes, firebase, users, userRepo } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     firebase.findUserByEmail.mockResolvedValue(
       fbUser('other', false, ['password']),
     );
-    userRepo.findOne.mockResolvedValue({
-      id: 'b2',
-      email: EMAIL,
-      is_phone_verified: false,
-      account_status: 'active',
-    });
-    await expect(
-      service.verifyAddEmailCode('user-1', EMAIL, '123456'),
-    ).rejects.toThrow(
-      'This email already has its own account. Sign in with it using an email code instead.',
-    );
-    expect(firebase.deleteUser).not.toHaveBeenCalled();
-    expect(users.linkProvenEmail).not.toHaveBeenCalled();
+    userRepo.findOne.mockResolvedValue({ id: 'b2', email: EMAIL });
+    await service.verifyAddEmailCode('user-1', EMAIL, '123456');
+    expect(firebase.deleteUser).toHaveBeenCalledWith('other');
+    expect(users.linkProvenEmail).toHaveBeenCalled();
   });
 
   it('adds the email to an account without a Firebase account yet', async () => {
@@ -514,227 +482,47 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
     });
     expect(token).toBe('token:held');
     expect(firebase.deleteUser).not.toHaveBeenCalled();
-    expect(firebase.lockOutForAdoption).not.toHaveBeenCalled();
+    expect(firebase.createProvenEmailUser).not.toHaveBeenCalled();
   });
 
   describe('an account holding the email unverified', () => {
     const squatted = (providers = ['password']) =>
       fbUser('squatted', false, providers);
 
-    it('is deleted when no backend account is behind it', async () => {
-      const { token, firebase } = await signIn(({ firebase }) => {
-        firebase.findUserByEmail.mockResolvedValue(squatted());
-      });
-      expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
-      expect(firebase.lockOutForAdoption).not.toHaveBeenCalled();
-      expect(token).toBe('token:fresh');
-    });
-
-    it('is deleted when its backend account has a verified phone', async () => {
-      const { token, firebase } = await signIn(({ firebase, userRepo }) => {
-        firebase.findUserByEmail.mockResolvedValue(squatted());
-        backend(userRepo, null, {
-          id: 'a1',
-          email: EMAIL,
-          is_phone_verified: true,
-        });
-      });
-      expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
-      expect(token).toBe('token:fresh');
-    });
-
-    it('is deleted when its backend account moved to another email (its creator could reset that)', async () => {
-      const { token, firebase, sessions } = await signIn(
-        ({ firebase, userRepo }) => {
-          firebase.findUserByEmail.mockResolvedValue(squatted());
-          backend(userRepo, null, {
-            id: 'a1',
-            email: 'atk@example.com',
-            is_phone_verified: false,
-            account_status: 'active',
-          });
-        },
-      );
-      expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
-      expect(firebase.lockOutForAdoption).not.toHaveBeenCalled();
-      expect(sessions.update).not.toHaveBeenCalled();
-      expect(token).toBe('token:fresh');
-    });
-
-    it("is deleted when its backend account has no email, and the verified owner's account is reached instead", async () => {
-      const { token, firebase } = await signIn(({ firebase, userRepo }) => {
-        // The owner has the email verified but no Firebase account yet.
-        backend(
-          userRepo,
-          { id: 'owner', email: EMAIL, firebase_uid: null },
-          {
-            id: 's1',
-            email: null,
-            is_phone_verified: false,
-            account_status: 'active',
-          },
-        );
-        firebase.findUserByEmail.mockResolvedValue(squatted());
-      });
-      expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
-      // A fresh Firebase account, which sign-in links to the owner by the
-      // verified email (resolveFirebaseLink), never the squatter's account.
-      expect(token).toBe('token:fresh');
-    });
-
-    it("doesn't count Google on Firebase as a way back: still handed over", async () => {
+    it.each([
+      ['no backend account behind it', null],
+      ['a backend account plainly that email', { id: 'a1', email: EMAIL }],
+      [
+        'a backend account with another email',
+        { id: 'a1', email: 'atk@example.com' },
+      ],
+      [
+        'a banned backend account',
+        { id: 'a1', email: EMAIL, account_status: 'banned' },
+      ],
+    ])('is always deleted, never handed over: %s', async (_, account) => {
       const { token, firebase } = await signIn(({ firebase, userRepo }) => {
         firebase.findUserByEmail.mockResolvedValue(
           squatted(['password', 'google.com']),
         );
-        backend(userRepo, null, {
-          id: 'a1',
-          email: EMAIL,
-          is_phone_verified: false,
-          account_status: 'active',
-        });
+        backend(userRepo, null, account);
       });
-      expect(firebase.deleteUser).not.toHaveBeenCalled();
-      expect(firebase.lockOutForAdoption).toHaveBeenCalledWith('squatted');
-      expect(token).toBe('token:squatted');
-    });
-
-    it("is handed over when its backend account is plainly that email's, leaving its creator nothing", async () => {
-      const account = {
-        id: 'a1',
-        email: EMAIL,
-        is_phone_verified: false,
-        account_status: 'active',
-      };
-      const { token, firebase, userRepo, sessions, users, chat } = await signIn(
-        ({ firebase, userRepo }) => {
-          firebase.findUserByEmail.mockResolvedValue(squatted());
-          backend(userRepo, null, account);
-        },
-      );
-
-      expect(token).toBe('token:squatted');
-      expect(firebase.deleteUser).not.toHaveBeenCalled();
-      // Backend: password cleared and the email verified, only while it is
-      // still this email.
-      expect(userRepo.update).toHaveBeenCalledWith(
-        { id: 'a1', email: EMAIL },
-        { password_hash: null, is_email_verified: true },
-      );
-      expect(sessions.update).toHaveBeenCalledWith(
-        { user: { id: 'a1' }, is_active: true },
-        { is_active: false },
-      );
-      expect(users.clearUserCache).toHaveBeenCalledWith(account);
-      expect(chat.disconnectUser).toHaveBeenCalledWith('a1');
-    });
-
-    it('locks out, ends sessions, claims the account, marks verified, then sweeps again', async () => {
-      const { firebase, userRepo, sessions } = await signIn(
-        ({ firebase, userRepo }) => {
-          firebase.findUserByEmail.mockResolvedValue(squatted());
-          backend(userRepo, null, {
-            id: 'a1',
-            email: EMAIL,
-            is_phone_verified: false,
-            account_status: 'active',
-          });
-        },
-      );
-      const order = (mock: jest.Mock, call = 0) =>
-        mock.mock.invocationCallOrder[call];
-      expect(order(firebase.lockOutForAdoption)).toBeLessThan(
-        order(sessions.update),
-      );
-      // Sessions end before the claim, so its creator can't change the
-      // account meanwhile.
-      expect(order(sessions.update)).toBeLessThan(order(userRepo.update));
-      expect(order(userRepo.update)).toBeLessThan(
-        order(firebase.markEmailVerified),
-      );
-      expect(order(firebase.markEmailVerified)).toBeLessThan(
-        order(sessions.update, 1),
-      );
-      expect(order(sessions.update, 1)).toBeLessThan(
-        order(firebase.createCustomToken),
+      expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
+      expect(firebase.createCustomToken).not.toHaveBeenCalledWith('squatted');
+      expect(firebase.createProvenEmailUser).toHaveBeenCalledWith(EMAIL);
+      expect(token).toBe('token:fresh');
+      // Deleted before the fresh account is created.
+      expect(firebase.deleteUser.mock.invocationCallOrder[0]).toBeLessThan(
+        firebase.createProvenEmailUser.mock.invocationCallOrder[0],
       );
     });
 
-    it('stops if the account changed email since it was checked, and deletes on the retry', async () => {
-      const ctx = setup();
-      ctx.codes.findOne.mockResolvedValue(await storedCode('123456'));
-      ctx.firebase.findUserByEmail.mockResolvedValue(squatted());
-      const account: Record<string, unknown> = {
-        id: 'a1',
-        email: EMAIL,
-        is_phone_verified: false,
-        account_status: 'active',
-      };
-      ctx.userRepo.findOne.mockImplementation(({ where }: { where: Where }) =>
-        Promise.resolve('firebase_uid' in where ? { ...account } : null),
-      );
-      // Its creator moved it to their own address just before the claim.
-      ctx.userRepo.update.mockImplementationOnce(() => {
-        account.email = 'atk@example.com';
-        return Promise.resolve({ affected: 0 });
+    it('never changes the backend account behind it', async () => {
+      const { userRepo } = await signIn(({ firebase, userRepo }) => {
+        firebase.findUserByEmail.mockResolvedValue(squatted());
+        backend(userRepo, null, { id: 'a1', email: EMAIL });
       });
-
-      await expect(
-        ctx.service.verifySignInCode(EMAIL, '123456'),
-      ).rejects.toThrow(ConflictException);
-      expect(ctx.firebase.markEmailVerified).not.toHaveBeenCalled();
-      expect(ctx.firebase.createCustomToken).not.toHaveBeenCalled();
-
-      // The code was given back; now it isn't that email's account.
-      await expect(
-        ctx.service.verifySignInCode(EMAIL, '123456'),
-      ).resolves.toEqual({ firebase_token: 'token:fresh' });
-      expect(ctx.firebase.deleteUser).toHaveBeenCalledWith('squatted');
-    });
-
-    it.each(['banned', 'suspended'])(
-      'is deleted, not handed over, when its backend account is %s',
-      async (status) => {
-        const { token, firebase } = await signIn(({ firebase, userRepo }) => {
-          firebase.findUserByEmail.mockResolvedValue(squatted());
-          backend(userRepo, null, {
-            id: 'a1',
-            email: EMAIL,
-            is_phone_verified: false,
-            account_status: status,
-          });
-        });
-        expect(firebase.lockOutForAdoption).not.toHaveBeenCalled();
-        expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
-        expect(token).toBe('token:fresh');
-      },
-    );
-
-    it('redoes the whole handover when a step failed, since it is still unverified', async () => {
-      const ctx = setup();
-      ctx.codes.findOne.mockResolvedValue(await storedCode('123456'));
-      ctx.firebase.findUserByEmail.mockResolvedValue(squatted());
-      const account = {
-        id: 'a1',
-        email: EMAIL,
-        is_phone_verified: false,
-        account_status: 'active',
-      };
-      ctx.userRepo.findOne.mockImplementation(({ where }: { where: Where }) =>
-        Promise.resolve('firebase_uid' in where ? account : null),
-      );
-      ctx.firebase.lockOutForAdoption.mockRejectedValueOnce(
-        new Error('revoke failed'),
-      );
-
-      await expect(
-        ctx.service.verifySignInCode(EMAIL, '123456'),
-      ).rejects.toThrow('revoke failed');
-      expect(ctx.firebase.markEmailVerified).not.toHaveBeenCalled();
-      // The code was given back; the retry locks out again.
-      await ctx.service.verifySignInCode(EMAIL, '123456');
-      expect(ctx.firebase.lockOutForAdoption).toHaveBeenCalledTimes(2);
-      expect(ctx.firebase.markEmailVerified).toHaveBeenCalledTimes(1);
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
 

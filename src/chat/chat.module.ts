@@ -7,7 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
-import { ChatRealtimeModule } from './chat-realtime.module';
+import { ChatRealtimeService } from './chat-realtime.service';
 import { ConversationEntity } from './entities/conversation.entity';
 import { MessageEntity } from './entities/message.entity';
 
@@ -30,7 +30,6 @@ import { AuthModule } from '../auth/auth.module';
     ]),
     CloudinaryModule,
     NotificationModule,
-    ChatRealtimeModule,
     // The gateway authenticates handshakes itself rather than through the
     // passport strategy, which is HTTP-only. Same secret, same session check.
     AuthModule,
@@ -43,9 +42,9 @@ import { AuthModule } from '../auth/auth.module';
     }),
   ],
   controllers: [ChatController],
-  providers: [ChatService, ChatGateway],
+  providers: [ChatService, ChatGateway, ChatRealtimeService],
   // ChatService so the item-request flow can drop system messages into a
-  // thread; ChatRealtimeModule so the back office can drop a user's sockets.
-  exports: [ChatService, ChatRealtimeModule],
+  // thread; ChatRealtimeService so the back office can drop a user's sockets.
+  exports: [ChatService, ChatRealtimeService],
 })
 export class ChatModule {}

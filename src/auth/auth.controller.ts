@@ -187,13 +187,9 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change user password' })
   async changePassword(
-    @GetUser() user: { userId: string; sessionToken: string },
+    @GetUser() user: { userId: string },
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
-    return this.authService.changePassword(
-      user.userId,
-      changePasswordDto,
-      user.sessionToken,
-    );
+    return this.authService.changePassword(user.userId, changePasswordDto);
   }
 }
