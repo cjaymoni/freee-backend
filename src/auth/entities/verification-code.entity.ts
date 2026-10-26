@@ -13,6 +13,12 @@ import { UserEntity } from '../../user/entities/user.entity';
 @Index(['user', 'phone_number', 'email'])
 @Index(['expires_at', 'is_verified'])
 @Index(['code_type'])
+// Email code limits count codes by email over a time window.
+@Index('IDX_verification_codes_email_type_created', [
+  'email',
+  'code_type',
+  'created_at',
+])
 export class VerificationCodeEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

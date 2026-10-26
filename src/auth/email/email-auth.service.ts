@@ -16,7 +16,7 @@ import type { auth as firebaseAuth } from 'firebase-admin';
 import { ChatRealtimeService } from '../../chat/chat-realtime.service';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
-import { UserEntity } from '../../user/entities/user.entity';
+import { AccountStatus, UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
 import { UserSessionEntity } from '../entities/user-session.entity';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
@@ -38,9 +38,12 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 /** Wrong guesses allowed per code. */
 const MAX_ATTEMPTS = 5;
 /**
- * Wrong guesses allowed per email per day, across all its codes: the bound
- * on guessing, 30 in 900,000. Counted on guesses rather than on codes sent,
- * so someone sending codes to an address can't use up its owner's day.
+ * Guesses allowed per email per day, across all its codes of either kind:
+ * the bound on guessing, 30 in 900,000. Counted on guesses rather than codes
+ * sent, so sending codes to an address alone can't shut it. Guessing can:
+ * anyone who knows the address can spend its 30 and close email codes for it
+ * for a day. Some per-address cap is the price of bounding guesses; the
+ * Firebase link and phone sign-in still work meanwhile.
  */
 const MAX_GUESSES_PER_DAY = 30;
 /** Codes per email from one IP per hour, and per email per day (inbox flooding). */
@@ -169,7 +172,8 @@ export class EmailAuthService {
    * - a different email, or none: that account isn't this email's, whatever
    *   it holds. Handing it over would leave its creator a way back in
    *   through that other email (a password reset), and it is never another
-   *   account's that has this email verified.
+   *   account's that has this email verified;
+   * - suspended or banned: the prover would inherit that status.
    *
    * Firebase sign-in methods don't count as a way back: after a delete they
    * would start a new account, not reach the old one.
@@ -177,14 +181,18 @@ export class EmailAuthService {
   private async unverifiedHolderFate(
     holder: firebaseAuth.UserRecord,
     email: string,
-  ): Promise<
-    { handOver: true; account: UserEntity | null } | { handOver: false }
-  > {
+  ): Promise<{ handOver: true; account: UserEntity } | { handOver: false }> {
     const account = await this.userRepo.findOne({
       where: { firebase_uid: holder.uid, is_deleted: false },
     });
-    if (!account) return { handOver: false };
-    if (account.is_phone_verified || account.email !== email) {
+    if (
+      !account ||
+      account.is_phone_verified ||
+      account.email !== email ||
+      // A banned or suspended account would pass its status to the person
+      // who proved the email, and tie the email to it for good.
+      account.account_status !== AccountStatus.ACTIVE
+    ) {
       return { handOver: false };
     }
     return { handOver: true, account };
@@ -200,23 +208,30 @@ export class EmailAuthService {
    */
   private async handOver(
     firebaseUid: string,
-    account: UserEntity | null,
+    account: UserEntity,
     email: string,
   ) {
     await this.firebase.lockOutForAdoption(firebaseUid);
-    if (account) {
-      // The password could have been set during onboarding; the reset
-      // channel is now the proven email alone.
-      await this.userRepo.update(
-        { id: account.id, email },
-        { password_hash: null as unknown as string, is_email_verified: true },
+    // Sessions first, so whoever created it can't change the account (say,
+    // to another email they could reset) while it is handed over.
+    await this.endSessions(account);
+    // The password could have been set during onboarding; the reset channel
+    // is now the proven email alone. Only while the account still has that
+    // email: if it changed since it was checked, stop. The code is given
+    // back, and the retry sees the new email and deletes instead.
+    const claimed = await this.userRepo.update(
+      { id: account.id, email },
+      { password_hash: null as unknown as string, is_email_verified: true },
+    );
+    if (!claimed.affected) {
+      throw new ConflictException(
+        'This account changed while signing in. Please try again.',
       );
-      await this.endSessions(account);
     }
     await this.firebase.markEmailVerified(firebaseUid);
     // Again, for a sign-in that was already past its token check when the
     // Firebase sessions were revoked and saved its session since.
-    if (account) await this.endSessions(account);
+    await this.endSessions(account);
   }
 
   private async endSessions(account: UserEntity) {
@@ -273,8 +288,10 @@ export class EmailAuthService {
     email: string,
     { checkOnly = false } = {},
   ) {
-    if (!user.firebase_uid) return;
     const holder = await this.firebase.findUserByEmail(email);
+    // An account without a Firebase account yet (password sign-up) gets one
+    // on its first email sign-in; any Firebase account already holding the
+    // email would win that sign-in instead, so it is refused like any other.
     if (!holder || holder.uid === user.firebase_uid) return;
     if (
       holder.emailVerified ||
@@ -405,9 +422,10 @@ export class EmailAuthService {
     });
     if (!row) throw new BadRequestException(EXPIRED);
 
+    // Across sign-in and add-email codes alike: either one won gives the
+    // email away. Right guesses count too; nobody needs 30 a day.
     const guessedToday = await this.codes.sum('attempt_count', {
       email,
-      code_type: type,
       created_at: withinLast('1 day'),
     });
     if ((guessedToday ?? 0) >= MAX_GUESSES_PER_DAY) {
@@ -445,9 +463,12 @@ export class EmailAuthService {
     try {
       return await then();
     } catch (error) {
+      // The right guess is refunded too, or a code given back on its last
+      // allowed guess could never be used again.
       await this.codes.update(row.id, {
         is_verified: false,
         verified_at: null as unknown as Date,
+        attempt_count: () => 'GREATEST(attempt_count - 1, 0)',
       });
       throw error;
     }

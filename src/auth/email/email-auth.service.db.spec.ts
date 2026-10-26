@@ -143,6 +143,36 @@ describeWithDatabase('EmailAuthService codes on Postgres', () => {
     });
   });
 
+  it('still accepts a code given back on its last allowed guess', async () => {
+    const email = nextEmail();
+    const code = await send(email);
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        service.verifySignInCode(email, wrong(code)),
+      ).rejects.toThrow("That code isn't right.");
+    }
+    firebase.createProvenEmailUser.mockRejectedValueOnce(new Error('down'));
+    await expect(service.verifySignInCode(email, code)).rejects.toThrow('down');
+    await expect(service.verifySignInCode(email, code)).resolves.toEqual({
+      firebase_token: 'custom-token',
+    });
+  });
+
+  it('counts guesses across sign-in and add-email codes', async () => {
+    const email = nextEmail();
+    await ds.getRepository(VerificationCodeEntity).save({
+      email,
+      code_type: 'email_link',
+      code_hash: 'x',
+      attempt_count: 30,
+      expires_at: new Date(Date.now() - 1000),
+    });
+    const code = await send(email);
+    await expect(service.verifySignInCode(email, code)).rejects.toThrow(
+      'Too many attempts for this email',
+    );
+  });
+
   it('only the newest code works', async () => {
     const email = nextEmail();
     const first = await send(email);

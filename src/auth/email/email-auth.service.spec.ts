@@ -250,6 +250,11 @@ describe('EmailAuthService checking sign-in codes', () => {
     ).rejects.toMatchObject({
       status: HttpStatus.TOO_MANY_REQUESTS,
     });
+    // Counted across sign-in and add-email codes alike.
+    const [column, where] = codes.sum.mock.calls[0] as [string, Where];
+    expect(column).toBe('attempt_count');
+    expect(where).toMatchObject({ email: EMAIL });
+    expect(where).not.toHaveProperty('code_type');
     expect(codes.update).not.toHaveBeenCalled();
     expect(firebase.createCustomToken).not.toHaveBeenCalled();
   });
@@ -283,6 +288,11 @@ describe('EmailAuthService checking sign-in codes', () => {
     const [id, values] = codes.update.mock.calls[2] as [string, Where];
     expect(id).toBe('code-1');
     expect(values).toMatchObject({ is_verified: false });
+    // The right guess is refunded, so a code given back on its last allowed
+    // guess still works.
+    expect((values.attempt_count as () => string)()).toBe(
+      'GREATEST(attempt_count - 1, 0)',
+    );
   });
 });
 
@@ -350,6 +360,7 @@ describe('EmailAuthService checking add-email codes', () => {
       id: 'b2',
       email: EMAIL,
       is_phone_verified: false,
+      account_status: 'active',
     });
     await expect(
       service.verifyAddEmailCode('user-1', EMAIL, '123456'),
@@ -360,14 +371,25 @@ describe('EmailAuthService checking add-email codes', () => {
     expect(users.linkProvenEmail).not.toHaveBeenCalled();
   });
 
-  it('skips Firebase for an account without one', async () => {
+  it('adds the email to an account without a Firebase account yet', async () => {
     const { service, codes, firebase, users } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     users.assertCanLinkEmail.mockResolvedValue({ id: 'user-1' });
     await service.verifyAddEmailCode('user-1', EMAIL, '123456');
-    expect(firebase.findUserByEmail).not.toHaveBeenCalled();
     expect(firebase.setProvenEmail).not.toHaveBeenCalled();
     expect(users.linkProvenEmail).toHaveBeenCalled();
+  });
+
+  it('refuses it too when a Firebase account already has the email verified', async () => {
+    // Its first email sign-in would land in that Firebase account instead.
+    const { service, codes, firebase, users } = setup();
+    codes.findOne.mockResolvedValue(await storedCode('123456'));
+    users.assertCanLinkEmail.mockResolvedValue({ id: 'user-1' });
+    firebase.findUserByEmail.mockResolvedValue(fbUser('other', true, []));
+    await expect(
+      service.verifyAddEmailCode('user-1', EMAIL, '123456'),
+    ).rejects.toThrow(ConflictException);
+    expect(users.linkProvenEmail).not.toHaveBeenCalled();
   });
 });
 
@@ -483,6 +505,7 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
             id: 'a1',
             email: 'atk@example.com',
             is_phone_verified: false,
+            account_status: 'active',
           });
         },
       );
@@ -498,7 +521,12 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
         backend(
           userRepo,
           { id: 'owner', email: EMAIL, firebase_uid: null },
-          { id: 's1', email: null, is_phone_verified: false },
+          {
+            id: 's1',
+            email: null,
+            is_phone_verified: false,
+            account_status: 'active',
+          },
         );
         firebase.findUserByEmail.mockResolvedValue(squatted());
       });
@@ -517,6 +545,7 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
           id: 'a1',
           email: EMAIL,
           is_phone_verified: false,
+          account_status: 'active',
         });
       });
       expect(firebase.deleteUser).not.toHaveBeenCalled();
@@ -525,7 +554,12 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
     });
 
     it("is handed over when its backend account is plainly that email's, leaving its creator nothing", async () => {
-      const account = { id: 'a1', email: EMAIL, is_phone_verified: false };
+      const account = {
+        id: 'a1',
+        email: EMAIL,
+        is_phone_verified: false,
+        account_status: 'active',
+      };
       const { token, firebase, userRepo, sessions, users, chat } = await signIn(
         ({ firebase, userRepo }) => {
           firebase.findUserByEmail.mockResolvedValue(squatted());
@@ -549,7 +583,7 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
       expect(chat.disconnectUser).toHaveBeenCalledWith('a1');
     });
 
-    it('locks out, then cleans the backend, then marks verified, then sweeps sessions again', async () => {
+    it('locks out, ends sessions, claims the account, marks verified, then sweeps again', async () => {
       const { firebase, userRepo, sessions } = await signIn(
         ({ firebase, userRepo }) => {
           firebase.findUserByEmail.mockResolvedValue(squatted());
@@ -557,16 +591,19 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
             id: 'a1',
             email: EMAIL,
             is_phone_verified: false,
+            account_status: 'active',
           });
         },
       );
       const order = (mock: jest.Mock, call = 0) =>
         mock.mock.invocationCallOrder[call];
       expect(order(firebase.lockOutForAdoption)).toBeLessThan(
-        order(userRepo.update),
+        order(sessions.update),
       );
-      expect(order(userRepo.update)).toBeLessThan(order(sessions.update));
-      expect(order(sessions.update)).toBeLessThan(
+      // Sessions end before the claim, so its creator can't change the
+      // account meanwhile.
+      expect(order(sessions.update)).toBeLessThan(order(userRepo.update));
+      expect(order(userRepo.update)).toBeLessThan(
         order(firebase.markEmailVerified),
       );
       expect(order(firebase.markEmailVerified)).toBeLessThan(
@@ -577,11 +614,66 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
       );
     });
 
+    it('stops if the account changed email since it was checked, and deletes on the retry', async () => {
+      const ctx = setup();
+      ctx.codes.findOne.mockResolvedValue(await storedCode('123456'));
+      ctx.firebase.findUserByEmail.mockResolvedValue(squatted());
+      const account: Record<string, unknown> = {
+        id: 'a1',
+        email: EMAIL,
+        is_phone_verified: false,
+        account_status: 'active',
+      };
+      ctx.userRepo.findOne.mockImplementation(({ where }: { where: Where }) =>
+        Promise.resolve('firebase_uid' in where ? { ...account } : null),
+      );
+      // Its creator moved it to their own address just before the claim.
+      ctx.userRepo.update.mockImplementationOnce(() => {
+        account.email = 'atk@example.com';
+        return Promise.resolve({ affected: 0 });
+      });
+
+      await expect(
+        ctx.service.verifySignInCode(EMAIL, '123456'),
+      ).rejects.toThrow(ConflictException);
+      expect(ctx.firebase.markEmailVerified).not.toHaveBeenCalled();
+      expect(ctx.firebase.createCustomToken).not.toHaveBeenCalled();
+
+      // The code was given back; now it isn't that email's account.
+      await expect(
+        ctx.service.verifySignInCode(EMAIL, '123456'),
+      ).resolves.toEqual({ firebase_token: 'token:fresh' });
+      expect(ctx.firebase.deleteUser).toHaveBeenCalledWith('squatted');
+    });
+
+    it.each(['banned', 'suspended'])(
+      'is deleted, not handed over, when its backend account is %s',
+      async (status) => {
+        const { token, firebase } = await signIn(({ firebase, userRepo }) => {
+          firebase.findUserByEmail.mockResolvedValue(squatted());
+          backend(userRepo, null, {
+            id: 'a1',
+            email: EMAIL,
+            is_phone_verified: false,
+            account_status: status,
+          });
+        });
+        expect(firebase.lockOutForAdoption).not.toHaveBeenCalled();
+        expect(firebase.deleteUser).toHaveBeenCalledWith('squatted');
+        expect(token).toBe('token:fresh');
+      },
+    );
+
     it('redoes the whole handover when a step failed, since it is still unverified', async () => {
       const ctx = setup();
       ctx.codes.findOne.mockResolvedValue(await storedCode('123456'));
       ctx.firebase.findUserByEmail.mockResolvedValue(squatted());
-      const account = { id: 'a1', email: EMAIL, is_phone_verified: false };
+      const account = {
+        id: 'a1',
+        email: EMAIL,
+        is_phone_verified: false,
+        account_status: 'active',
+      };
       ctx.userRepo.findOne.mockImplementation(({ where }: { where: Where }) =>
         Promise.resolve('firebase_uid' in where ? account : null),
       );
