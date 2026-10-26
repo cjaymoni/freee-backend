@@ -875,7 +875,11 @@ export class AuthService {
     return await this.userService.findOne(userId);
   }
 
-  async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
+  async changePassword(
+    userId: string,
+    changePasswordDto: ChangePasswordDto,
+    sessionToken?: string,
+  ) {
     const { currentPassword, newPassword } = changePasswordDto;
     const user = await this.userService.findOneEntityWithPassword(userId);
 
@@ -894,7 +898,12 @@ export class AuthService {
       throw new BadRequestException('Invalid current password');
     }
 
-    await this.userService.update(userId, { password: newPassword });
+    // Only while this session is live: see UserService.withLiveSession.
+    const save = (manager?: EntityManager) =>
+      this.userService.update(userId, { password: newPassword }, manager);
+    await (sessionToken === undefined
+      ? save()
+      : this.userService.withLiveSession(sessionToken, save));
 
     return { message: 'Password changed successfully' };
   }

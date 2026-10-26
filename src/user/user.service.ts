@@ -199,6 +199,8 @@ export class UserService {
        * which account gets written.
        */
       actingUserId?: string;
+      /** The acting user's session; the edit runs only while it is live. */
+      sessionToken?: string;
     } = {},
     manager?: EntityManager,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
@@ -223,6 +225,9 @@ export class UserService {
 
       let existingUser: UserEntity | null;
       if (options.actingUserId) {
+        if (options.sessionToken !== undefined) {
+          await this.lockLiveSession(entityManager, options.sessionToken);
+        }
         existingUser = await this.loadOwnProfileForPatch(
           entityManager,
           options.actingUserId,
@@ -529,6 +534,52 @@ export class UserService {
     return user;
   }
 
+  /**
+   * Run a user's edit of their own account only while the session it came
+   * with is still live, holding that session so it can't be ended until the
+   * edit commits.
+   *
+   * Signing in with an email code can hand over an account someone else
+   * created (EmailAuthService.handOver): it ends the account's sessions,
+   * then clears its password. An edit that passed its session check just
+   * before could otherwise land after that, setting a password, an email or
+   * a phone its creator controls. With the lock, ending the sessions waits
+   * for the edit, so the edit either commits first (and the handover wipes
+   * it) or finds its session ended.
+   */
+  withLiveSession<T>(
+    sessionToken: string | undefined,
+    work: (manager: EntityManager) => Promise<T>,
+  ): Promise<T> {
+    return this.dataSource.transaction(async (manager) => {
+      await this.lockLiveSession(manager, sessionToken);
+      return work(manager);
+    });
+  }
+
+  /** withLiveSession's check, inside a transaction the caller already has. */
+  async lockLiveSession(
+    manager: EntityManager,
+    sessionToken: string | undefined,
+  ): Promise<void> {
+    const live =
+      !!sessionToken &&
+      !!(await manager
+        .createQueryBuilder(UserSessionEntity, 'session')
+        .select('session.id')
+        .setLock('pessimistic_read')
+        .where('session.session_token = :sessionToken', { sessionToken })
+        .andWhere('session.is_active = true')
+        .getOne());
+    if (!live) {
+      throw new AppError(
+        new UnauthorizedException(
+          'Your session has ended. Please sign in again.',
+        ),
+      );
+    }
+  }
+
   async findAll(
     findUserDto: FindUserDto,
   ): Promise<ServiceResponseDto<UserResponseDto[]>> {
@@ -768,8 +819,9 @@ export class UserService {
   updatePhoneFromFirebase(
     id: string,
     idToken: string,
+    sessionToken?: string,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    return this.linkFirebaseIdentifier(id, idToken, 'phone');
+    return this.linkFirebaseIdentifier(id, idToken, 'phone', sessionToken);
   }
 
   /**
@@ -779,8 +831,9 @@ export class UserService {
   updateEmailFromFirebase(
     id: string,
     idToken: string,
+    sessionToken?: string,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    return this.linkFirebaseIdentifier(id, idToken, 'email');
+    return this.linkFirebaseIdentifier(id, idToken, 'email', sessionToken);
   }
 
   /**
@@ -793,6 +846,7 @@ export class UserService {
     id: string,
     idToken: string,
     kind: keyof typeof FIREBASE_IDENTIFIERS,
+    sessionToken?: string,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
     const spec = FIREBASE_IDENTIFIERS[kind];
     let decoded: Awaited<ReturnType<FirebaseService['verifyIdToken']>>;
@@ -822,6 +876,7 @@ export class UserService {
 
     return this.saveVerifiedIdentifier(id, kind, value, {
       firebaseUid: decoded.uid,
+      sessionToken,
     });
   }
 
@@ -833,8 +888,9 @@ export class UserService {
   linkProvenEmail(
     id: string,
     email: string,
+    sessionToken?: string,
   ): Promise<ServiceResponseDto<UserResponseDto>> {
-    return this.saveVerifiedIdentifier(id, 'email', email, {});
+    return this.saveVerifiedIdentifier(id, 'email', email, { sessionToken });
   }
 
   /**
@@ -875,7 +931,14 @@ export class UserService {
     id: string,
     kind: keyof typeof FIREBASE_IDENTIFIERS,
     value: string,
-    { firebaseUid }: { firebaseUid?: string },
+    {
+      firebaseUid,
+      sessionToken,
+    }: {
+      firebaseUid?: string;
+      /** When the user acts on their own account: see withLiveSession. */
+      sessionToken?: string;
+    },
   ): Promise<ServiceResponseDto<UserResponseDto>> {
     const spec = FIREBASE_IDENTIFIERS[kind];
     const user = await this.userRepository.findOne({
@@ -924,6 +987,9 @@ export class UserService {
 
     let releasedFrom: ReleasedHolder | undefined;
     const result = await this.dataSource.transaction(async (manager) => {
+      if (sessionToken !== undefined) {
+        await this.lockLiveSession(manager, sessionToken);
+      }
       const claim = await claimVerifiedIdentifier(
         manager.getRepository(UserEntity),
         spec.field,

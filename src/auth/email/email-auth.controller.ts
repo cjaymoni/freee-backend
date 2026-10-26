@@ -98,8 +98,14 @@ export class EmailAuthController {
   })
   async verifyAddEmailCode(
     @GetUser('userId') userId: string,
+    @GetUser('sessionToken') sessionToken: string,
     @Body() dto: VerifyEmailCodeDto,
   ) {
-    return this.emailAuth.verifyAddEmailCode(userId, dto.email, dto.code);
+    return this.emailAuth.verifyAddEmailCode(
+      userId,
+      dto.email,
+      dto.code,
+      sessionToken,
+    );
   }
 }

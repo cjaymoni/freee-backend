@@ -35,6 +35,7 @@ function setup(env: Record<string, unknown> = {}) {
   };
   const userRepo = {
     findOne: jest.fn().mockResolvedValue(null),
+    exists: jest.fn().mockResolvedValue(false),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
   const sessions = { update: jest.fn().mockResolvedValue({ affected: 2 }) };
@@ -185,9 +186,10 @@ describe('EmailAuthService sending codes', () => {
     expect(mail.sendEmailCode).not.toHaveBeenCalled();
   });
 
-  it('sends no add-email code when another Firebase account has it verified', async () => {
-    const { service, firebase, mail } = setup();
+  it('sends no add-email code when another account has it verified on Firebase', async () => {
+    const { service, firebase, mail, userRepo } = setup();
     firebase.findUserByEmail.mockResolvedValue(fbUser('other', true, []));
+    userRepo.exists.mockResolvedValue(true);
     await expect(
       service.sendAddEmailCode('user-1', EMAIL, 'ip'),
     ).rejects.toThrow(ConflictException);
@@ -254,7 +256,11 @@ describe('EmailAuthService checking sign-in codes', () => {
     const [column, where] = codes.sum.mock.calls[0] as [string, Where];
     expect(column).toBe('attempt_count');
     expect(where).toMatchObject({ email: EMAIL });
-    expect(where).not.toHaveProperty('code_type');
+    // Sign-in and add-email codes, not password-reset or verification ones.
+    expect((where.code_type as FindOperator<string[]>).value).toEqual([
+      'email_signin',
+      'email_link',
+    ]);
     expect(codes.update).not.toHaveBeenCalled();
     expect(firebase.createCustomToken).not.toHaveBeenCalled();
   });
@@ -309,7 +315,11 @@ describe('EmailAuthService checking add-email codes', () => {
     const { service, codes, firebase, users } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     await service.verifyAddEmailCode('user-1', EMAIL, '123456');
-    expect(users.linkProvenEmail).toHaveBeenCalledWith('user-1', EMAIL);
+    expect(users.linkProvenEmail).toHaveBeenCalledWith(
+      'user-1',
+      EMAIL,
+      undefined,
+    );
     expect(firebase.setProvenEmail).toHaveBeenCalledWith('fb-1', EMAIL);
     // Firebase is written only after the backend has committed.
     expect(users.linkProvenEmail.mock.invocationCallOrder[0]).toBeLessThan(
@@ -326,10 +336,34 @@ describe('EmailAuthService checking add-email codes', () => {
     ).resolves.toEqual({ state: true });
   });
 
-  it('answers 409 when another Firebase account has the email verified', async () => {
-    const { service, codes, firebase, users } = setup();
+  it('passes the session on, so the save only happens while it is live', async () => {
+    const { service, codes, users } = setup();
+    codes.findOne.mockResolvedValue(await storedCode('123456'));
+    await service.verifyAddEmailCode('user-1', EMAIL, '123456', 'sess-1');
+    expect(users.linkProvenEmail).toHaveBeenCalledWith(
+      'user-1',
+      EMAIL,
+      'sess-1',
+    );
+  });
+
+  it("deletes a verified Firebase account nobody's bound to, then adds the email", async () => {
+    const { service, codes, firebase, users, userRepo } = setup();
+    codes.findOne.mockResolvedValue(await storedCode('123456'));
+    firebase.findUserByEmail.mockResolvedValue(fbUser('orphan', true, []));
+    await service.verifyAddEmailCode('user-1', EMAIL, '123456');
+    const [{ where }] = userRepo.exists.mock.calls[0] as [{ where: Where }];
+    expect(where).toMatchObject({ firebase_uid: 'orphan' });
+    expect(firebase.deleteUser).toHaveBeenCalledWith('orphan');
+    expect(users.linkProvenEmail).toHaveBeenCalled();
+    expect(firebase.setProvenEmail).toHaveBeenCalledWith('fb-1', EMAIL);
+  });
+
+  it('answers 409 when another account has the email verified on Firebase', async () => {
+    const { service, codes, firebase, users, userRepo } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     firebase.findUserByEmail.mockResolvedValue(fbUser('other', true, []));
+    userRepo.exists.mockResolvedValue(true);
     await expect(
       service.verifyAddEmailCode('user-1', EMAIL, '123456'),
     ).rejects.toThrow(ConflictException);
@@ -380,12 +414,24 @@ describe('EmailAuthService checking add-email codes', () => {
     expect(users.linkProvenEmail).toHaveBeenCalled();
   });
 
-  it('refuses it too when a Firebase account already has the email verified', async () => {
-    // Its first email sign-in would land in that Firebase account instead.
+  it("keeps a verified Firebase account nobody's bound to, for an account without one", async () => {
+    // Its next email sign-in links that Firebase account to it.
     const { service, codes, firebase, users } = setup();
     codes.findOne.mockResolvedValue(await storedCode('123456'));
     users.assertCanLinkEmail.mockResolvedValue({ id: 'user-1' });
+    firebase.findUserByEmail.mockResolvedValue(fbUser('orphan', true, []));
+    await service.verifyAddEmailCode('user-1', EMAIL, '123456');
+    expect(firebase.deleteUser).not.toHaveBeenCalled();
+    expect(users.linkProvenEmail).toHaveBeenCalled();
+  });
+
+  it('refuses it too when another account has the email verified on Firebase', async () => {
+    // Its first email sign-in would land in that other account instead.
+    const { service, codes, firebase, users, userRepo } = setup();
+    codes.findOne.mockResolvedValue(await storedCode('123456'));
+    users.assertCanLinkEmail.mockResolvedValue({ id: 'user-1' });
     firebase.findUserByEmail.mockResolvedValue(fbUser('other', true, []));
+    userRepo.exists.mockResolvedValue(true);
     await expect(
       service.verifyAddEmailCode('user-1', EMAIL, '123456'),
     ).rejects.toThrow(ConflictException);

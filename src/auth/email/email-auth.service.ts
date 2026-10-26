@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
-import { IsNull, LessThan, MoreThan, Raw, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Raw, Repository } from 'typeorm';
 import type { auth as firebaseAuth } from 'firebase-admin';
 import { ChatRealtimeService } from '../../chat/chat-realtime.service';
 import { FirebaseService } from '../../firebase/firebase.service';
@@ -185,14 +185,18 @@ export class EmailAuthService {
     const account = await this.userRepo.findOne({
       where: { firebase_uid: holder.uid, is_deleted: false },
     });
-    if (
-      !account ||
-      account.is_phone_verified ||
-      account.email !== email ||
-      // A banned or suspended account would pass its status to the person
-      // who proved the email, and tie the email to it for good.
-      account.account_status !== AccountStatus.ACTIVE
-    ) {
+    if (!account || account.is_phone_verified || account.email !== email) {
+      return { handOver: false };
+    }
+    // A banned or suspended account would pass its status to the person who
+    // proved the email, and tie the email to it for good. Deleting instead
+    // lets that person start a clean account, which is also how a banned
+    // user who never verified their email could start over: logged, so
+    // staff can see it.
+    if (account.account_status !== AccountStatus.ACTIVE) {
+      this.logger.warn(
+        `Email-code sign-in for ${account.account_status} account ${account.id}'s unverified email: its Firebase account is deleted, not handed over`,
+      );
       return { handOver: false };
     }
     return { handOver: true, account };
@@ -250,11 +254,20 @@ export class EmailAuthService {
     await this.issue(ADD_EMAIL, email, ip, userId);
   }
 
-  async verifyAddEmailCode(userId: string, email: string, code: string) {
+  async verifyAddEmailCode(
+    userId: string,
+    email: string,
+    code: string,
+    sessionToken?: string,
+  ) {
     return this.consume(ADD_EMAIL, email, code, userId, async () => {
       const user = await this.users.assertCanLinkEmail(userId, email);
       await this.freeOnFirebase(user, email);
-      const saved = await this.users.linkProvenEmail(userId, email);
+      const saved = await this.users.linkProvenEmail(
+        userId,
+        email,
+        sessionToken,
+      );
       // After the commit, so a failed commit can't leave the email on
       // Firebase only. If this fails the backend already has it verified,
       // and the next email-code sign-in puts it on this Firebase account.
@@ -273,15 +286,21 @@ export class EmailAuthService {
 
   /**
    * Make room on Firebase for `user` to take a proven email, or refuse with
-   * 409. Another Firebase account holding it verified keeps it. One holding
-   * it unverified is deleted when unverifiedHolderFate says so; when it
-   * would be handed over instead, it is refused: it is that email's
-   * account, so the user should sign in with an email code, which hands it
-   * over. `checkOnly`: refuse, but delete nothing.
+   * 409 (`checkOnly`: refuse, but delete nothing):
    *
-   * The delete happens before the email is saved and can't be undone; if
-   * saving then fails (another account claimed the email meanwhile), the
-   * deleted account was one that would have been deleted anyway.
+   * - held verified by a Firebase account another backend account is bound
+   *   to: refused, the accounts can't be merged here;
+   * - held verified by one nobody is bound to (left by a sign-in that never
+   *   finished): kept for a user without a Firebase account yet, whose next
+   *   email sign-in links to it; otherwise deleted, so the email can go on
+   *   the user's own Firebase account;
+   * - held unverified: deleted when unverifiedHolderFate says so; refused
+   *   when it would be handed over, since it is that email's own account and
+   *   signing in with an email code hands it over.
+   *
+   * Deletes happen before the email is saved and can't be undone; if saving
+   * then fails (another account claimed the email meanwhile), the deleted
+   * account was one that would have been deleted anyway.
    */
   private async freeOnFirebase(
     user: UserEntity,
@@ -289,17 +308,20 @@ export class EmailAuthService {
     { checkOnly = false } = {},
   ) {
     const holder = await this.firebase.findUserByEmail(email);
-    // An account without a Firebase account yet (password sign-up) gets one
-    // on its first email sign-in; any Firebase account already holding the
-    // email would win that sign-in instead, so it is refused like any other.
     if (!holder || holder.uid === user.firebase_uid) return;
-    if (
-      holder.emailVerified ||
-      (await this.unverifiedHolderFate(holder, email)).handOver
-    ) {
-      throw new ConflictException(
+    const refuse = () =>
+      new ConflictException(
         'This email already has its own account. Sign in with it using an email code instead.',
       );
+
+    if (holder.emailVerified) {
+      const bound = await this.userRepo.exists({
+        where: { firebase_uid: holder.uid, is_deleted: false },
+      });
+      if (bound) throw refuse();
+      if (!user.firebase_uid) return;
+    } else if ((await this.unverifiedHolderFate(holder, email)).handOver) {
+      throw refuse();
     }
     if (!checkOnly) await this.firebase.deleteUser(holder.uid);
   }
@@ -423,9 +445,11 @@ export class EmailAuthService {
     if (!row) throw new BadRequestException(EXPIRED);
 
     // Across sign-in and add-email codes alike: either one won gives the
-    // email away. Right guesses count too; nobody needs 30 a day.
+    // email away. Not password-reset or verification codes, which anyone can
+    // set off for an address. Right guesses count too; nobody needs 30 a day.
     const guessedToday = await this.codes.sum('attempt_count', {
       email,
+      code_type: In([SIGN_IN, ADD_EMAIL]),
       created_at: withinLast('1 day'),
     });
     if ((guessedToday ?? 0) >= MAX_GUESSES_PER_DAY) {
