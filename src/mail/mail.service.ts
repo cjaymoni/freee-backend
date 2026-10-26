@@ -79,6 +79,41 @@ export class MailService {
     }
   }
 
+  /** A one-time code to sign in, or to add this email to an account. */
+  async sendEmailCode(
+    email: string,
+    code: string,
+    purpose: 'sign-in' | 'add-email',
+  ) {
+    const [subject, intro] =
+      purpose === 'sign-in'
+        ? ['Your Freeee sign-in code', 'Use this code to sign in to Freeee:']
+        : [
+            'Confirm your email for Freeee',
+            'Use this code to add this email to your Freeee account:',
+          ];
+    try {
+      const html = this.getTemplate(
+        subject,
+        `<p class="text">${intro}</p>
+         <div class="action-box"><span class="code">${code}</span></div>
+         <p class="text">It expires in 10 minutes. If you didn't ask for it, you can ignore this email.</p>`,
+      );
+      await this.mailerService.sendMail({
+        to: email,
+        subject,
+        text: `${intro} ${code}. It expires in 10 minutes. If you didn't ask for it, ignore this email.`,
+        html,
+      });
+      this.logger.log(`Email code sent (${purpose})`);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to send email code: ${errorMessage}`);
+      throw error;
+    }
+  }
+
   async sendPasswordResetCode(email: string, code: string) {
     try {
       const html = this.getTemplate(

@@ -15,6 +15,12 @@ import { UserEntity } from '../user/entities/user.entity';
 import { UserModule } from '../user/user.module';
 import { MailModule } from '../mail/mail.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { SmsAuthController } from './sms/sms-auth.controller';
+import { SmsAuthService } from './sms/sms-auth.service';
+import { TwilioVerifyClient } from './sms/twilio-verify.client';
+import { EmailAuthController } from './email/email-auth.controller';
+import { EmailAuthService } from './email/email-auth.service';
+import { ChatRealtimeModule } from '../chat/chat-realtime.module';
 
 @Module({
   imports: [
@@ -26,6 +32,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     ]),
     UserModule,
     MailModule,
+    // To drop the sockets of an account adopted on email sign-in.
+    ChatRealtimeModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -36,12 +44,20 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  controllers: [AuthController, FirebaseAuthController],
+  controllers: [
+    AuthController,
+    FirebaseAuthController,
+    SmsAuthController,
+    EmailAuthController,
+  ],
   providers: [
     AuthService,
     FirebaseAuthService,
     AccountLockoutService,
     JwtStrategy,
+    SmsAuthService,
+    TwilioVerifyClient,
+    EmailAuthService,
   ],
   exports: [AuthService, AccountLockoutService],
 })

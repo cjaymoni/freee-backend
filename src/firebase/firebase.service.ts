@@ -1,6 +1,29 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
+import { randomBytes } from 'crypto';
+
+const isNotFound = (error: unknown) =>
+  (error as { code?: string }).code === 'auth/user-not-found';
+
+/** The user `lookup` finds, or null if there is none. */
+async function orNull(
+  lookup: Promise<admin.auth.UserRecord>,
+): Promise<admin.auth.UserRecord | null> {
+  try {
+    return await lookup;
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/** setProvenEmail: another Firebase account already has this email. */
+export class EmailHeldByOtherFirebaseUser extends Error {
+  constructor() {
+    super('Email belongs to another Firebase account');
+  }
+}
 
 /** FCM errors that always mean the token itself is dead. */
 const DEAD_TOKEN_CODES = new Set([
@@ -120,6 +143,175 @@ export class FirebaseService implements OnModuleInit {
       throw new Error('Firebase Admin SDK is not initialized');
     }
     return admin.auth().verifyIdToken(idToken, checkRevoked);
+  }
+
+  /**
+   * A custom token for the Firebase user that owns `phone`, creating it on
+   * first sign-in, the same account Firebase phone auth would sign in to.
+   * `boundUid` is the Firebase account of the backend account that already
+   * has this number verified; it wins, so one person isn't split across two
+   * Firebase accounts. The client trades the token for an ID token with
+   * signInWithCustomToken.
+   */
+  async customTokenForPhone(phone: string, boundUid?: string): Promise<string> {
+    this.assertReady();
+    const auth = admin.auth();
+    if (boundUid) {
+      const bound = await this.findUser(boundUid);
+      if (bound) {
+        if (bound.phoneNumber !== phone) {
+          // So Firebase knows it too; the sign-in works without it.
+          await auth
+            .updateUser(bound.uid, { phoneNumber: phone })
+            .catch((error) =>
+              this.logger.warn(
+                `Couldn't put the proven number on its bound Firebase account: ${String(error)}`,
+              ),
+            );
+        }
+        return auth.createCustomToken(bound.uid);
+      }
+    }
+
+    let uid: string;
+    try {
+      uid = (await auth.getUserByPhoneNumber(phone)).uid;
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      try {
+        uid = (await auth.createUser({ phoneNumber: phone })).uid;
+      } catch (createError) {
+        // A concurrent sign-in for the same number created it first.
+        if (
+          (createError as { code?: string }).code !==
+          'auth/phone-number-already-exists'
+        ) {
+          throw createError;
+        }
+        uid = (await auth.getUserByPhoneNumber(phone)).uid;
+      }
+    }
+    return auth.createCustomToken(uid);
+  }
+
+  createCustomToken(uid: string): Promise<string> {
+    this.assertReady();
+    return admin.auth().createCustomToken(uid);
+  }
+
+  /** The Firebase user with this uid, or null. */
+  findUser(uid: string): Promise<admin.auth.UserRecord | null> {
+    this.assertReady();
+    return orNull(admin.auth().getUser(uid));
+  }
+
+  /** The Firebase user holding this email, verified or not, or null. */
+  findUserByEmail(email: string): Promise<admin.auth.UserRecord | null> {
+    this.assertReady();
+    return orNull(admin.auth().getUserByEmail(email));
+  }
+
+  /**
+   * A new Firebase user with `email` verified. If a concurrent request
+   * created one first, that one, once it is verified.
+   */
+  async createProvenEmailUser(email: string): Promise<admin.auth.UserRecord> {
+    this.assertReady();
+    const auth = admin.auth();
+    try {
+      return await auth.createUser({ email, emailVerified: true });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'auth/email-already-exists') {
+        throw error;
+      }
+      const other = await auth.getUserByEmail(email);
+      if (!other.emailVerified) throw error;
+      return other;
+    }
+  }
+
+  /**
+   * First step of handing over an account that held a proven email
+   * unverified (see EmailAuthService): shut out whoever created it. Its
+   * password, if any, becomes a random one (the owner can reset it), every
+   * other sign-in method is removed, and its sessions are revoked. Reads the
+   * account afresh, so a method linked since the caller looked is removed
+   * too. Safe to repeat.
+   */
+  async lockOutForAdoption(uid: string): Promise<void> {
+    this.assertReady();
+    const auth = admin.auth();
+    const user = await auth.getUser(uid);
+    const providers = user.providerData.map((p) => p.providerId);
+    const others = providers.filter((p) => p !== 'password' && p !== 'phone');
+    await auth.updateUser(uid, {
+      ...(providers.includes('password') && {
+        password: randomBytes(32).toString('base64url'),
+      }),
+      ...(user.phoneNumber && { phoneNumber: null }),
+      ...(others.length && { providersToUnlink: others }),
+    });
+    await auth.revokeRefreshTokens(uid);
+  }
+
+  /**
+   * Last step of a handover: the email counts as verified. Last because it
+   * is what tells a retry the handover is done; anything that failed before
+   * it is simply redone.
+   */
+  async markEmailVerified(uid: string): Promise<void> {
+    this.assertReady();
+    await admin.auth().updateUser(uid, { emailVerified: true });
+    this.logger.warn(
+      'Handed over a Firebase account that held a proven email unverified',
+    );
+  }
+
+  /** Delete a Firebase user; one already gone (a concurrent delete) is fine. */
+  async deleteUser(uid: string): Promise<void> {
+    this.assertReady();
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+  }
+
+  /** Put a proven email, verified, on the user's own Firebase account. */
+  async setProvenEmail(uid: string, email: string): Promise<void> {
+    this.assertReady();
+    try {
+      await admin.auth().updateUser(uid, { email, emailVerified: true });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'auth/email-already-exists') {
+        throw new EmailHeldByOtherFirebaseUser();
+      }
+      throw error;
+    }
+  }
+
+  private assertReady() {
+    if (!this.firebaseApp) {
+      throw new Error('Firebase Admin SDK is not initialized');
+    }
+  }
+
+  /**
+   * The phone number and email on a Firebase user's record, for sign-ins
+   * whose token may not carry them (custom tokens).
+   */
+  async identifiersOf(uid: string): Promise<{
+    phone_number?: string;
+    email?: string;
+    email_verified: boolean;
+  }> {
+    if (!this.firebaseApp) return { email_verified: false };
+    const user = await admin.auth().getUser(uid);
+    return {
+      phone_number: user.phoneNumber,
+      email: user.email,
+      email_verified: user.emailVerified,
+    };
   }
 
   /**
