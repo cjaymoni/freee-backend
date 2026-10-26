@@ -14,7 +14,13 @@ import { LoginAttemptEntity } from './entities/login-attempt.entity';
 import { UserEntity } from '../user/entities/user.entity';
 import { UserModule } from '../user/user.module';
 import { MailModule } from '../mail/mail.module';
+import { NotificationModule } from '../notification/notification.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { SmsAuthController } from './sms/sms-auth.controller';
+import { SmsAuthService } from './sms/sms-auth.service';
+import { TwilioVerifyClient } from './sms/twilio-verify.client';
+import { EmailAuthController } from './email/email-auth.controller';
+import { EmailAuthService } from './email/email-auth.service';
 
 @Module({
   imports: [
@@ -26,6 +32,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     ]),
     UserModule,
     MailModule,
+    // The staff inbox, for accounts split by an email-code sign-in.
+    NotificationModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -36,12 +44,20 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  controllers: [AuthController, FirebaseAuthController],
+  controllers: [
+    AuthController,
+    FirebaseAuthController,
+    SmsAuthController,
+    EmailAuthController,
+  ],
   providers: [
     AuthService,
     FirebaseAuthService,
     AccountLockoutService,
     JwtStrategy,
+    SmsAuthService,
+    TwilioVerifyClient,
+    EmailAuthService,
   ],
   exports: [AuthService, AccountLockoutService],
 })

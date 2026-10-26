@@ -58,3 +58,20 @@ export const takenOverEntry = (
         ? '/reports/users'
         : '/support',
 });
+
+/**
+ * The freed email is in the body: by now the old account no longer has it,
+ * and it is how staff find the new account (search users by email).
+ */
+export const accountSplitEntry = (
+  oldUserId: string,
+  email: string,
+): StaffEntry => ({
+  type: StaffNotificationType.ACCOUNT_SPLIT,
+  title: 'A user may now have two accounts',
+  body:
+    `Check if it's the same person: ${email} now belongs to a new account. ` +
+    'It was never verified on this one, which can no longer sign in with ' +
+    'it. Search users for the email to find the new account.',
+  link: `/users/${oldUserId}`,
+});

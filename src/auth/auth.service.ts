@@ -312,9 +312,25 @@ export class AuthService {
       throw new UnauthorizedException(`Authentication failed: ${errorMessage}`);
     }
 
-    const { phone_number, uid: firebase_uid } = decodedToken;
-    const email = normalizeEmail(decodedToken.email);
-    const emailVerified = decodedToken.email_verified === true;
+    const { uid: firebase_uid } = decodedToken;
+    let { phone_number } = decodedToken;
+    let email = normalizeEmail(decodedToken.email);
+    let emailVerified = decodedToken.email_verified === true;
+    // Sign-ins verified by the backend (POST /auth/sms/verify-code,
+    // /auth/email/verify-code) arrive as custom-token sign-ins; read the
+    // identifiers off the Firebase user in case the token doesn't carry
+    // them. Only the backend mints these tokens.
+    if (
+      decodedToken.firebase?.sign_in_provider === 'custom' &&
+      (!phone_number || !email)
+    ) {
+      const record = await this.firebaseService.identifiersOf(firebase_uid);
+      phone_number ??= record.phone_number;
+      if (!email) {
+        email = normalizeEmail(record.email);
+        emailVerified = record.email_verified;
+      }
+    }
     this.logger.log(
       `[firebaseAuthenticate] decoded token => uid present: ${!!firebase_uid}, email present: ${!!email}, phone present: ${!!phone_number}`,
     );

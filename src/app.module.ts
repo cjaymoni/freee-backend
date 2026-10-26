@@ -92,6 +92,8 @@ import { envValidationSchema } from './config/env.validation';
             socket: {
               host: configService.get<string>('REDIS_HOST'),
               port: configService.get<number>('REDIS_PORT'),
+              reconnectStrategy: (retries: number) =>
+                Math.min(retries * 100, 3000),
             },
             password: configService.get<string>('REDIS_PASSWORD'),
             ttl: 600, // 10 minutes default

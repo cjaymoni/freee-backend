@@ -1,5 +1,12 @@
 import * as Joi from 'joi';
 
+const twilioSetting = () =>
+  Joi.when('SMS_PROVIDER', {
+    is: 'twilio',
+    then: Joi.string().required(),
+    otherwise: Joi.string().allow('').optional(),
+  });
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test', 'provision')
@@ -48,6 +55,26 @@ export const envValidationSchema = Joi.object({
   MAX_LOGIN_ATTEMPTS: Joi.number().default(5),
   LOCKOUT_DURATION_MINUTES: Joi.number().default(30),
   PASSWORD_MIN_LENGTH: Joi.number().default(8),
+
+  // Phone sign-in SMS. `firebase`: clients send codes with the Firebase SDK
+  // and fall back to the backend (Twilio) only when Firebase refuses to send.
+  // `twilio`: clients always ask the backend. See docs/SMS_PROVIDERS.md.
+  SMS_PROVIDER: Joi.string().valid('firebase', 'twilio').default('firebase'),
+  SMS_FALLBACK_ENABLED: Joi.boolean().default(true),
+  // Comma-separated E.164 prefixes the backend will text; mirrors the
+  // Firebase SMS region policy.
+  SMS_ALLOWED_PREFIXES: Joi.string().default('+233'),
+  // Required once Twilio is the provider, so a missing one stops the app
+  // instead of quietly leaving Firebase as the only sender.
+  TWILIO_ACCOUNT_SID: twilioSetting(),
+  TWILIO_AUTH_TOKEN: twilioSetting(),
+  TWILIO_VERIFY_SERVICE_SID: twilioSetting(),
+
+  // Email sign-in. `firebase`: clients send Firebase email links and fall
+  // back to a code from the backend when Firebase refuses. `server`: clients
+  // always use backend codes (sent over SMTP). See docs/EMAIL_SIGN_IN.md.
+  EMAIL_PROVIDER: Joi.string().valid('firebase', 'server').default('firebase'),
+  EMAIL_FALLBACK_ENABLED: Joi.boolean().default(true),
 
   // Pre-launch Founding Freers sign-up; close it at launch.
   FOUNDING_FREERS_OPEN: Joi.boolean().default(false),

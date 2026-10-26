@@ -17,6 +17,11 @@ export enum StaffNotificationType {
   ROLE_CHANGED = 'role_changed',
   /** Someone else closed a report or complaint this person had in review. */
   TAKEN_OVER = 'taken_over',
+  /**
+   * An email-code sign-in freed an email from an account that never
+   * verified it; the same person may now have two accounts.
+   */
+  ACCOUNT_SPLIT = 'account_split',
 }
 
 /**
