@@ -14,6 +14,8 @@ import { AppController } from '../app.controller';
 import { AuditController } from '../audit/audit.controller';
 import { AuthController } from './auth.controller';
 import { FirebaseAuthController } from './firebase-auth.controller';
+import { SmsAuthController } from './sms/sms-auth.controller';
+import { EmailAuthController } from './email/email-auth.controller';
 import { CategoryController } from '../category/category.controller';
 import { ChatController } from '../chat/chat.controller';
 import { FoundingFreerController } from '../founding-freer/founding-freer.controller';
@@ -97,6 +99,8 @@ const CONTROLLERS = [
   AuditController,
   AuthController,
   FirebaseAuthController,
+  SmsAuthController,
+  EmailAuthController,
   CategoryController,
   ChatController,
   HealthController,

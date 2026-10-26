@@ -820,13 +820,74 @@ export class UserService {
       );
     }
 
+    return this.saveVerifiedIdentifier(id, kind, value, {
+      firebaseUid: decoded.uid,
+    });
+  }
+
+  /**
+   * Save an email the user proved with a code the backend sent
+   * (POST /auth/email/link/verify-code), with the same rules as
+   * POST /user/email.
+   */
+  linkProvenEmail(
+    id: string,
+    email: string,
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    return this.saveVerifiedIdentifier(id, 'email', email, {});
+  }
+
+  /**
+   * The 409s linkProvenEmail would give, checked without writing, so no
+   * code is sent for an email that can't be added. Returns the user.
+   */
+  async assertCanLinkEmail(id: string, email: string): Promise<UserEntity> {
     const user = await this.userRepository.findOne({
       where: { id, is_deleted: false },
     });
     if (!user) {
       throw new AppError(new NotFoundException(`User with ID ${id} not found`));
     }
-    if (!user.firebase_uid || user.firebase_uid !== decoded.uid) {
+    if (user.email && user.is_email_verified && user.email !== email) {
+      throw new AppError(
+        new ConflictException(
+          'This account already has a verified email. Change it from the profile instead.',
+        ),
+      );
+    }
+    const holder = await this.userRepository.findOne({ where: { email } });
+    if (holder && holder.id !== id && holder.is_email_verified) {
+      throw new AppError(
+        new ConflictException(
+          'This email is already linked to another account.',
+        ),
+      );
+    }
+    return user;
+  }
+
+  /**
+   * The saving half of linkFirebaseIdentifier, for a value already proven.
+   * With `firebaseUid`, the proof came from that Firebase account, which
+   * must be the user's own.
+   */
+  private async saveVerifiedIdentifier(
+    id: string,
+    kind: keyof typeof FIREBASE_IDENTIFIERS,
+    value: string,
+    { firebaseUid }: { firebaseUid?: string },
+  ): Promise<ServiceResponseDto<UserResponseDto>> {
+    const spec = FIREBASE_IDENTIFIERS[kind];
+    const user = await this.userRepository.findOne({
+      where: { id, is_deleted: false },
+    });
+    if (!user) {
+      throw new AppError(new NotFoundException(`User with ID ${id} not found`));
+    }
+    if (
+      firebaseUid !== undefined &&
+      (!user.firebase_uid || user.firebase_uid !== firebaseUid)
+    ) {
       throw new AppError(
         new ForbiddenException(
           'The Firebase ID token belongs to a different account.',

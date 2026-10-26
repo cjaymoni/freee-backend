@@ -119,9 +119,12 @@ describe('AuthService.firebaseAuthenticate for a returning user', () => {
     {
       updateError,
       create,
+      record,
     }: {
       updateError?: Error;
       create?: (dto: Record<string, unknown>) => Promise<unknown>;
+      /** The Firebase user record, for custom-token sign-ins. */
+      record?: Record<string, unknown>;
     } = {},
   ) => {
     // Lookups hand out copies, so only what the service writes back counts:
@@ -166,8 +169,12 @@ describe('AuthService.firebaseAuthenticate for a returning user', () => {
       unknown
     >;
     service.logger = { log: jest.fn(), error: jest.fn() };
+    const identifiersOf = jest
+      .fn()
+      .mockResolvedValue(record ?? { email_verified: false });
     service.firebaseService = {
       verifyIdToken: jest.fn().mockResolvedValue({ uid: 'fb-1', ...token }),
+      identifiersOf,
     };
     service.dataSource = {
       transaction: (run: (m: typeof manager) => unknown) => run(manager),
@@ -184,7 +191,7 @@ describe('AuthService.firebaseAuthenticate for a returning user', () => {
         '::1',
         'ua',
       );
-    return { signIn, userRepo, userService };
+    return { signIn, userRepo, userService, identifiersOf };
   };
   const me = (over: Partial<DbRow> = {}): DbRow => ({
     id: 'u1',
@@ -480,6 +487,90 @@ describe('AuthService.firebaseAuthenticate for a returning user', () => {
     expect(rows[0]).toMatchObject({
       firebase_uid: 'fb-1',
       is_email_verified: true,
+    });
+  });
+
+  describe('after a code the backend verified (custom token)', () => {
+    const custom = { firebase: { sign_in_provider: 'custom' } };
+
+    it('reads the email off the Firebase record when the token lacks it', async () => {
+      const rows = [me()];
+      const { signIn, identifiersOf } = setup(rows, custom, {
+        record: { email: 'Ama@Gmail.com', email_verified: true },
+      });
+
+      await signIn();
+
+      expect(identifiersOf).toHaveBeenCalledWith('fb-1');
+      expect(rows[0]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+    });
+
+    it('fills only the claim the token lacks', async () => {
+      const rows = [me()];
+      const { signIn } = setup(
+        rows,
+        { ...custom, phone_number: '+233201' },
+        {
+          record: {
+            phone_number: '+233999',
+            email: 'ama@gmail.com',
+            email_verified: true,
+          },
+        },
+      );
+
+      await signIn();
+
+      expect(rows[0]).toMatchObject({
+        phone_number: '+233201',
+        is_phone_verified: true,
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+    });
+
+    it('leaves out a record email another account has verified', async () => {
+      const rows = [
+        me(),
+        { id: 'u2', email: 'ama@gmail.com', is_email_verified: true },
+      ];
+      const { signIn } = setup(rows, custom, {
+        record: { email: 'ama@gmail.com', email_verified: true },
+      });
+
+      await signIn();
+
+      expect(rows[0]).toMatchObject({ email: null });
+      expect(rows[1]).toMatchObject({
+        email: 'ama@gmail.com',
+        is_email_verified: true,
+      });
+    });
+
+    it('keeps an unverified record email unverified', async () => {
+      const rows = [me()];
+      const { signIn } = setup(rows, custom, {
+        record: { email: 'ama@gmail.com', email_verified: false },
+      });
+
+      await signIn();
+
+      expect(rows[0]).toMatchObject({ is_email_verified: false });
+    });
+
+    it('never consults the record for an ordinary sign-in', async () => {
+      const rows = [me()];
+      const { signIn, identifiersOf } = setup(rows, {
+        firebase: { sign_in_provider: 'phone' },
+        phone_number: '+233201',
+      });
+
+      await signIn();
+
+      expect(identifiersOf).not.toHaveBeenCalled();
     });
   });
 });
