@@ -7,6 +7,7 @@ import {
 } from '../../common/testing/test-database';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
+import { StaffInboxService } from '../../notification/staff-inbox.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
@@ -65,6 +66,7 @@ describeWithDatabase('EmailAuthService codes on Postgres', () => {
       mail as unknown as MailService,
       firebase as unknown as FirebaseService,
       { clearUserCache: jest.fn() } as unknown as UserService,
+      { toAllStaff: jest.fn() } as unknown as StaffInboxService,
     );
   });
 

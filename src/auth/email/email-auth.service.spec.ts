@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { FindOperator, Repository } from 'typeorm';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
+import { StaffInboxService } from '../../notification/staff-inbox.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
@@ -47,6 +48,7 @@ function setup(env: Record<string, unknown> = {}) {
       Promise.resolve(`token:${uid}`),
     ),
   };
+  const staffInbox = { toAllStaff: jest.fn().mockResolvedValue(undefined) };
   const users = {
     assertCanLinkEmail: jest
       .fn()
@@ -61,8 +63,9 @@ function setup(env: Record<string, unknown> = {}) {
     mail as unknown as MailService,
     firebase as unknown as FirebaseService,
     users as unknown as UserService,
+    staffInbox as unknown as StaffInboxService,
   );
-  return { service, codes, userRepo, mail, firebase, users };
+  return { service, codes, userRepo, mail, firebase, users, staffInbox };
 }
 
 /** A stored code row for `code`, as findOne returns it. */
@@ -515,6 +518,61 @@ describe('EmailAuthService: which Firebase account a proven email signs in to', 
       expect(firebase.deleteUser.mock.invocationCallOrder[0]).toBeLessThan(
         firebase.createProvenEmailUser.mock.invocationCallOrder[0],
       );
+    });
+
+    it('tells staff, with a link to the old account, when one is behind it', async () => {
+      const { staffInbox } = await signIn(({ firebase, userRepo }) => {
+        firebase.findUserByEmail.mockResolvedValue(squatted());
+        backend(userRepo, null, { id: 'a1', email: EMAIL });
+      });
+      const [entry] = staffInbox.toAllStaff.mock.calls[0] as [
+        { type: string; link: string; body: string },
+      ];
+      expect(entry).toMatchObject({ type: 'account_split', link: '/users/a1' });
+      // Names the email: it finds the new account.
+      expect(entry.body).toContain(EMAIL);
+    });
+
+    it('tells nobody when no backend account is behind it', async () => {
+      const { staffInbox } = await signIn(({ firebase }) => {
+        firebase.findUserByEmail.mockResolvedValue(squatted());
+      });
+      expect(staffInbox.toAllStaff).not.toHaveBeenCalled();
+    });
+
+    it('deletes it again if it reappears before the fresh account is made', async () => {
+      const taken = Object.assign(new Error('taken'), {
+        code: 'auth/email-already-exists',
+      });
+      const { token, firebase } = await signIn(({ firebase }) => {
+        firebase.findUserByEmail
+          .mockResolvedValueOnce(squatted())
+          .mockResolvedValueOnce({ ...squatted(), uid: 'again' })
+          .mockResolvedValue(null);
+        firebase.createProvenEmailUser
+          .mockRejectedValueOnce(taken)
+          .mockResolvedValue({ uid: 'fresh' });
+      });
+      expect(firebase.deleteUser).toHaveBeenNthCalledWith(1, 'squatted');
+      expect(firebase.deleteUser).toHaveBeenNthCalledWith(2, 'again');
+      expect(token).toBe('token:fresh');
+    });
+
+    it('gives up after 3 tries, giving the code back', async () => {
+      const ctx = setup();
+      ctx.codes.findOne.mockResolvedValue(await storedCode('123456'));
+      ctx.firebase.findUserByEmail.mockResolvedValue(squatted());
+      ctx.firebase.createProvenEmailUser.mockRejectedValue(
+        Object.assign(new Error('taken'), {
+          code: 'auth/email-already-exists',
+        }),
+      );
+      await expect(
+        ctx.service.verifySignInCode(EMAIL, '123456'),
+      ).rejects.toThrow('taken');
+      expect(ctx.firebase.createProvenEmailUser).toHaveBeenCalledTimes(3);
+      const giveBack = ctx.codes.update.mock.calls.at(-1) as [string, Where];
+      expect(giveBack[1]).toMatchObject({ is_verified: false });
     });
 
     it('never changes the backend account behind it', async () => {

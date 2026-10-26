@@ -1,8 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import {
-  EmailHeldByOtherFirebaseUser,
-  FirebaseService,
-} from './firebase.service';
+import { FirebaseService } from './firebase.service';
 
 const auth = {
   getUser: jest.fn(),
@@ -108,13 +105,6 @@ describe('FirebaseService.setProvenEmail', () => {
       email: EMAIL,
       emailVerified: true,
     });
-  });
-
-  it('reports another account holding the email', async () => {
-    auth.updateUser.mockRejectedValue(fbError('auth/email-already-exists'));
-    await expect(service().setProvenEmail('me', EMAIL)).rejects.toThrow(
-      EmailHeldByOtherFirebaseUser,
-    );
   });
 });
 

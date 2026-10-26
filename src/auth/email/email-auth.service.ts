@@ -15,6 +15,8 @@ import { In, IsNull, LessThan, MoreThan, Raw, Repository } from 'typeorm';
 import type { auth as firebaseAuth } from 'firebase-admin';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
+import { StaffInboxService } from '../../notification/staff-inbox.service';
+import { accountSplitEntry } from '../../notification/staff-notices';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
 import { VerificationCodeEntity } from '../entities/verification-code.entity';
@@ -33,8 +35,10 @@ const SIGN_IN = 'email_signin';
 const ADD_EMAIL = 'email_link';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
-/** Wrong guesses allowed per code. */
+/** Guesses allowed per code, the right one included. */
 const MAX_ATTEMPTS = 5;
+/** Tries at freeing an email and creating its Firebase account. */
+const CREATE_ATTEMPTS = 3;
 /**
  * Guesses allowed per email per day, across all its codes of either kind:
  * the bound on guessing, 30 in 900,000. Counted on guesses rather than codes
@@ -81,6 +85,7 @@ export class EmailAuthService {
     private readonly mail: MailService,
     private readonly firebase: FirebaseService,
     private readonly users: UserService,
+    private readonly staffInbox: StaffInboxService,
   ) {}
 
   getConfig(): EmailConfig {
@@ -137,39 +142,57 @@ export class EmailAuthService {
       }
     }
 
-    let holder = await this.firebase.findUserByEmail(email);
-    if (holder && !holder.emailVerified) {
-      await this.deleteUnverifiedHolder(holder);
-      holder = null;
+    // Whoever made the unverified account can recreate it in the moment
+    // between the delete and the create; delete it again, a few times.
+    for (let attempt = 1; ; attempt++) {
+      const holder = await this.firebase.findUserByEmail(email);
+      if (holder?.emailVerified) {
+        return this.firebase.createCustomToken(holder.uid);
+      }
+      if (holder) await this.deleteUnverifiedHolder(holder);
+      try {
+        const created = await this.firebase.createProvenEmailUser(email);
+        return this.firebase.createCustomToken(created.uid);
+      } catch (error) {
+        const taken =
+          (error as { code?: string }).code === 'auth/email-already-exists';
+        if (!taken || attempt >= CREATE_ATTEMPTS) throw error;
+        this.logger.warn(
+          `An unverified Firebase account reappeared for a proven email (attempt ${attempt}); deleting it again`,
+        );
+      }
     }
-    holder ??= await this.firebase.createProvenEmailUser(email);
-    return this.firebase.createCustomToken(holder.uid);
   }
 
   /**
    * Delete a Firebase account that holds an email unverified, to free the
    * email for whoever proved it. Anyone could have created it with someone
    * else's address, set a password, linked their own phone or Google, and
-   * built a backend account behind it, so it is never handed over: taking
-   * over an account someone else could use until a moment ago can't be done
-   * safely. Firebase can't take an email off an account, so it is deleted.
+   * built a backend account behind it, so it is never handed over: a login,
+   * a token refresh or a Firebase sign-in already under way could leave its
+   * creator a way back in. Firebase can't take an email off an account, so
+   * it is deleted.
    *
-   * Its backend account, if any, keeps its data, phone and sessions, and
-   * loses the unverified email to the verified sign-in (resolveFirebaseLink).
-   * If it was the prover's own (a sign-up whose email was never verified),
-   * the prover now has a second account; the log line lets support find the
-   * old one and merge them.
+   * Its backend account, if any, keeps its data, phone and current sessions,
+   * but loses the email (resolveFirebaseLink) and with it its Firebase
+   * sign-in and its password sign-in, which goes by email. If it was the
+   * prover's own (a sign-up whose email was never verified), they now have
+   * two accounts, so staff get an inbox entry linking to the old one and
+   * naming the email, which finds the new one.
    */
   private async deleteUnverifiedHolder(holder: firebaseAuth.UserRecord) {
     const account = await this.userRepo.findOne({
       where: { firebase_uid: holder.uid, is_deleted: false },
     });
+    await this.firebase.deleteUser(holder.uid);
     if (account) {
       this.logger.warn(
-        `Proven email freed from an unverified Firebase account bound to backend account ${account.id} (${account.account_status}); a second account may follow for the same person`,
+        `Proven email freed from an unverified Firebase account bound to backend account ${account.id} (${account.account_status})`,
+      );
+      void this.staffInbox.toAllStaff(
+        accountSplitEntry(account.id, holder.email ?? ''),
       );
     }
-    await this.firebase.deleteUser(holder.uid);
   }
 
   async sendAddEmailCode(userId: string, email: string, ip: string) {

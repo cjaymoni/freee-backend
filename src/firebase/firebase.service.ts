@@ -17,13 +17,6 @@ async function orNull(
   }
 }
 
-/** setProvenEmail: another Firebase account already has this email. */
-export class EmailHeldByOtherFirebaseUser extends Error {
-  constructor() {
-    super('Email belongs to another Firebase account');
-  }
-}
-
 /** FCM errors that always mean the token itself is dead. */
 const DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -242,14 +235,7 @@ export class FirebaseService implements OnModuleInit {
   /** Put a proven email, verified, on the user's own Firebase account. */
   async setProvenEmail(uid: string, email: string): Promise<void> {
     this.assertReady();
-    try {
-      await admin.auth().updateUser(uid, { email, emailVerified: true });
-    } catch (error) {
-      if ((error as { code?: string }).code === 'auth/email-already-exists') {
-        throw new EmailHeldByOtherFirebaseUser();
-      }
-      throw error;
-    }
+    await admin.auth().updateUser(uid, { email, emailVerified: true });
   }
 
   private assertReady() {
