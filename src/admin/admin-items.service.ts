@@ -28,7 +28,7 @@ import { escapeLike } from '../common/text-fold';
 import { AdminAuditService, StaffActor } from './admin-audit.service';
 import { AdminItem, toAdminItem, toUserRef } from './admin-views';
 import { AdminItemQueryDto } from './dto/admin-query.dto';
-import { FOUNDING_REVIEW_REASON } from '../founding-freer/founding-freer.constants';
+import { REVIEW_REASONS } from '../item/listing-review';
 
 export const ITEM_HIDDEN = 'hidden';
 export const ITEM_FLAGGED = 'flagged';
@@ -102,9 +102,9 @@ export class AdminItemsService {
     }
     if (query.awaiting_review !== undefined) {
       const awaiting =
-        "(item.moderation_status = 'hidden' AND item.moderation_reason = :reviewReason)";
+        "(item.moderation_status = 'hidden' AND item.moderation_reason IN (:...reviewReasons))";
       qb.andWhere(query.awaiting_review ? awaiting : `NOT ${awaiting}`, {
-        reviewReason: FOUNDING_REVIEW_REASON,
+        reviewReasons: REVIEW_REASONS,
       });
     }
     if (query.city) {
@@ -331,7 +331,7 @@ export class AdminItemsService {
     } else if (item.moderation_status === ModerationStatus.HIDDEN) {
       void this.notifications.notify(
         item.user_id,
-        item.moderation_reason === FOUNDING_REVIEW_REASON
+        REVIEW_REASONS.includes(item.moderation_reason ?? '')
           ? listingApprovedNotice(item)
           : listingRestoredNotice(item),
       );

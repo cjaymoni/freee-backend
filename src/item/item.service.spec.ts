@@ -24,6 +24,8 @@ import { ItemViewService } from '../item-view/item-view.service';
 import { SearchService } from '../search/search.service';
 import { LocationNamesService } from '../locations/location-names.service';
 import { NotificationService } from '../notification/notification.service';
+import { StaffInboxService } from '../notification/staff-inbox.service';
+import { LISTING_REVIEW_REASON } from './listing-review';
 import { NotificationCategory } from '../notification/notification.types';
 
 const mockUser: UserEntity & { items_count?: number } = {
@@ -302,6 +304,7 @@ describe('ItemService', () => {
 
   const mockSearchService = { record: jest.fn().mockResolvedValue(undefined) };
   const mockNotifications = { notify: jest.fn().mockResolvedValue(undefined) };
+  const mockStaffInbox = { toAllStaff: jest.fn().mockResolvedValue(undefined) };
 
   const mockItemViewService = {
     recordUniqueView: jest
@@ -331,6 +334,7 @@ describe('ItemService', () => {
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
         { provide: NotificationService, useValue: mockNotifications },
+        { provide: StaffInboxService, useValue: mockStaffInbox },
         {
           provide: LocationNamesService,
           useValue: { fill: jest.fn().mockResolvedValue(undefined) },
@@ -383,6 +387,25 @@ describe('ItemService', () => {
       const result = await service.create('user-1', createDto);
 
       expect(result.data).toMatchObject({ is_free: false, price: 50 });
+    });
+
+    it('holds a new listing for review and tells staff', async () => {
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+      });
+      await service.create('user-1', createDto);
+
+      expect(mockItemRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          moderation_status: ModerationStatus.HIDDEN,
+          moderation_reason: LISTING_REVIEW_REASON,
+        }),
+      );
+      expect(mockStaffInbox.toAllStaff).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'listing_awaiting_review' }),
+        'user-1',
+      );
     });
 
     it('keeps an item posted without a price free', async () => {

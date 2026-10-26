@@ -35,6 +35,9 @@ import {
 import { closeActiveRequests } from '../item-request/close-active-requests';
 import { NotificationService } from '../notification/notification.service';
 import { listingRemovedNotice } from '../notification/notices';
+import { StaffInboxService } from '../notification/staff-inbox.service';
+import { listingAwaitingReviewEntry } from '../notification/staff-notices';
+import { LISTING_REVIEW_REASON } from './listing-review';
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -94,6 +97,7 @@ export class ItemService {
     private readonly searchService: SearchService,
     private readonly notifications: NotificationService,
     private readonly locationNames: LocationNamesService,
+    private readonly staffInbox: StaffInboxService,
   ) {}
 
   /** Live listings per sharer, shown as items_count on each item's card. */
@@ -467,16 +471,20 @@ export class ItemService {
    * Create a new item
    */
   /**
-   * `moderation` starts the listing in a moderation state other than
-   * visible, set before the first save so it is never briefly public.
+   * New listings start hidden, waiting for a moderator to approve them, and
+   * staff are told. `moderation` replaces the default hold with another
+   * reason. Either is set before the first save so it is never briefly public.
    */
   async create(
     userId: string,
     createDto: CreateItemDto,
     files?: Express.Multer.File[],
-    moderation?: {
+    moderation: {
       moderation_status: ModerationStatus;
       moderation_reason: string;
+    } = {
+      moderation_status: ModerationStatus.HIDDEN,
+      moderation_reason: LISTING_REVIEW_REASON,
     },
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     // Validate price logic
@@ -519,6 +527,12 @@ export class ItemService {
     );
     if (latitude !== undefined && longitude !== undefined) {
       void this.locationNames.fill(saved.location_id);
+    }
+    if (saved.moderation_status === ModerationStatus.HIDDEN) {
+      void this.staffInbox.toAllStaff(
+        listingAwaitingReviewEntry(saved.id, saved.title),
+        userId,
+      );
     }
 
     return {

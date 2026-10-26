@@ -22,6 +22,7 @@ import {
 } from '../common/testing/test-database';
 import { LocationNamesService } from '../locations/location-names.service';
 import { NotificationService } from '../notification/notification.service';
+import { StaffInboxService } from '../notification/staff-inbox.service';
 
 /**
  * GET /items against a real Postgres: paging over the images join, the
@@ -87,6 +88,7 @@ describeDb('ItemService.findAll on Postgres', () => {
           useValue: { record: () => Promise.resolve() },
         },
         { provide: NotificationService, useValue: { notify: jest.fn() } },
+        { provide: StaffInboxService, useValue: { toAllStaff: jest.fn() } },
         {
           provide: LocationNamesService,
           useValue: { fill: jest.fn().mockResolvedValue(undefined) },

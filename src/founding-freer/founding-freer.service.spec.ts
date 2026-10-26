@@ -1,4 +1,3 @@
-import { StaffInboxService } from '../notification/staff-inbox.service';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
@@ -14,7 +13,6 @@ describe('FoundingFreerService', () => {
   let users: { findOne: jest.Mock; update: jest.Mock };
   let itemService: { create: jest.Mock };
   let userService: { invalidateUserCache: jest.Mock };
-  let staffInbox: { toAllStaff: jest.Mock };
   let open: string;
 
   const service = () =>
@@ -23,7 +21,6 @@ describe('FoundingFreerService', () => {
       userService as unknown as UserService,
       itemService as unknown as ItemService,
       { get: () => open } as unknown as ConfigService,
-      staffInbox as unknown as StaffInboxService,
     );
 
   const dto = {
@@ -41,7 +38,6 @@ describe('FoundingFreerService', () => {
         data: { id: 'item-1', title: 'Chair' },
       }),
     };
-    staffInbox = { toAllStaff: jest.fn() };
     userService = { invalidateUserCache: jest.fn() };
   });
 
@@ -100,19 +96,6 @@ describe('FoundingFreerService', () => {
         moderation_status: ModerationStatus.HIDDEN,
         moderation_reason: FOUNDING_REVIEW_REASON,
       });
-    });
-
-    it('tells every other staff member it is waiting for review', async () => {
-      users.findOne.mockResolvedValue({ id: 'u1', is_founding_freer: true });
-      await service().createItem('u1', dto, photo);
-      expect(staffInbox.toAllStaff).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'listing_awaiting_review',
-          body: 'Chair',
-          link: '/listings/item-1',
-        }),
-        'u1',
-      );
     });
 
     it('needs the user to have joined', async () => {
