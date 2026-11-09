@@ -7,16 +7,21 @@
 # Deploys are triggered by .github/workflows/staging.yml once the tests pass,
 # through a Render deploy hook, which is why autoDeploy is off.
 #
+# Render is NOT tracking this file as a Blueprint instance: the live service
+# was created by hand in the dashboard. Nothing here is applied automatically,
+# so any change made here must also be made in the dashboard, and vice versa.
+#
 # Full setup, including the Neon and Upstash steps: docs/STAGING_DEPLOYMENT.md
 
 services:
   - type: web
-    name: free-backend-staging
+    name: freeee-backend-staging
     runtime: node
     plan: free
-    # Closest Render region to Accra; keep the Neon project in eu-central-1
-    # so the API is not querying across an ocean.
-    region: frankfurt
+    # Oregon, matching the service that exists. Frankfurt is the closest
+    # region to Accra and would pair better with a European Neon project;
+    # region is immutable on Render, so moving means recreating the service.
+    region: oregon
     branch: staging
     # GitHub Actions decides when to deploy, after lint, tests and build pass.
     autoDeploy: false
@@ -43,7 +48,8 @@ services:
       - key: LOG_LEVEL
         value: debug
 
-      # Neon Postgres. Use the direct (non-pooled) connection string with
+      # Neon Postgres: project freeee_staging, region aws-us-east-2, branch
+      # production. Use the direct (non-pooled) connection string with
       # ?sslmode=require: migrations run on boot and PgBouncer's transaction
       # pooling is a poor fit for them. Set it in the Render dashboard.
       - key: DATABASE_URL
@@ -84,11 +90,17 @@ services:
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
 
-      # Sign-in providers. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
-      # TWILIO_VERIFY_SERVICE_SID in the dashboard before switching
-      # SMS_PROVIDER to twilio — env validation requires them then.
+      # Sign-in providers. The Twilio credentials below are already set in
+      # the dashboard, so SMS_PROVIDER can be switched to twilio — env
+      # validation requires all three once it is.
       - key: SMS_PROVIDER
         value: firebase
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_VERIFY_SERVICE_SID
+        sync: false
       - key: SMS_FALLBACK_ENABLED
         value: true
       - key: SMS_ALLOWED_PREFIXES
