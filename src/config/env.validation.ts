@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { APP_ENVS } from './app-env';
 
 const twilioSetting = () =>
   Joi.when('SMS_PROVIDER', {
@@ -12,6 +13,11 @@ export const envValidationSchema = Joi.object({
     .valid('development', 'production', 'test', 'provision')
     .default('development'),
   PORT: Joi.number().default(3000),
+  // Staging boots with NODE_ENV=production so TypeORM runs its migrations;
+  // APP_ENV is what names the deployment. See src/config/app-env.ts.
+  APP_ENV: Joi.string()
+    .valid(...APP_ENVS)
+    .optional(),
 
   // Database
   DATABASE_URL: Joi.string().optional(),

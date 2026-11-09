@@ -35,14 +35,9 @@ export const typeOrmConfig: TypeOrmModuleAsyncOptions = {
         ...baseConfig,
         url: databaseUrl,
         synchronize: false, // Force false for remote databases
+        // Neon and the other managed hosts terminate TLS with their own CA.
         ssl: {
           rejectUnauthorized: false,
-        },
-        extra: {
-          max: 10,
-          min: 0,
-          idleTimeoutMillis: 10000,
-          connectionTimeoutMillis: 10000,
         },
       };
     }

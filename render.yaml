@@ -1,40 +1,102 @@
+# Staging deployment for the Freeee API.
+#
+# Production runs on the VPS behind nginx under pm2. This blueprint describes
+# the staging service only: its Postgres lives on Neon and its cache on a
+# separate Upstash database, so staging shares no state with production.
+#
+# Deploys are triggered by .github/workflows/staging.yml once the tests pass,
+# through a Render deploy hook, which is why autoDeploy is off.
+#
+# Full setup, including the Neon and Upstash steps: docs/STAGING_DEPLOYMENT.md
+
 services:
   - type: web
-    name: free-backend-api
+    name: free-backend-staging
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    # Closest Render region to Accra; keep the Neon project in eu-central-1
+    # so the API is not querying across an ocean.
+    region: frankfurt
+    branch: staging
+    # GitHub Actions decides when to deploy, after lint, tests and build pass.
+    autoDeploy: false
+    previewsEnabled: false
+    buildCommand: npm ci && npm run build
+    # The free plan caps the instance at 512 MB.
     startCommand: node --max-old-space-size=450 dist/main
+    # The full /health check asserts RSS under 150 MB, which a cold instance
+    # can exceed; liveness only answers once Nest has finished booting.
+    healthCheckPath: /health/live
     envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+
+      # TypeORM only runs migrations and forces synchronize off when NODE_ENV
+      # is production (src/config/typeorm.config.ts), so staging claims it too.
+      # APP_ENV is what names the deployment on the health endpoints.
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: staging
       - key: PORT
         value: 3000
+      - key: LOG_LEVEL
+        value: debug
 
-      # Database Connection (User to provide in Render Dashboard)
+      # Neon Postgres. Use the direct (non-pooled) connection string with
+      # ?sslmode=require: migrations run on boot and PgBouncer's transaction
+      # pooling is a poor fit for them. Set it in the Render dashboard.
       - key: DATABASE_URL
         sync: false
+      # Neon's free tier is not generous with connections and staging serves
+      # one instance, so keep the pool small.
+      - key: DB_POOL_MAX
+        value: 5
 
-      # Upstash Redis Connection (User to provide in Render Dashboard)
+      # Upstash Redis — a staging database of its own, never production's.
       - key: UPSTASH_REDIS_REST_URL
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
 
-      # Other Secrets (User to provide in Render Dashboard)
+      # Staging mints its own tokens, so a production JWT is useless here
+      # and vice versa.
       - key: JWT_SECRET
         generateValue: true
+
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
-        sync: false
+        value: 587
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS
         sync: false
+
+      # Firebase service account JSON for the staging Firebase project.
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+
+      # Sign-in providers. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
+      # TWILIO_VERIFY_SERVICE_SID in the dashboard before switching
+      # SMS_PROVIDER to twilio — env validation requires them then.
+      - key: SMS_PROVIDER
+        value: firebase
+      - key: SMS_FALLBACK_ENABLED
+        value: true
+      - key: SMS_ALLOWED_PREFIXES
+        value: '+233'
+      - key: EMAIL_PROVIDER
+        value: firebase
+      - key: EMAIL_FALLBACK_ENABLED
+        value: true
+
+      - key: FOUNDING_FREERS_OPEN
+        value: true
