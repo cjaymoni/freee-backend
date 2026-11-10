@@ -53,6 +53,7 @@ import { NotificationCategory } from '../notification/notification.types';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
 import { escapeLike } from '../common/text-fold';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 
 /** Which side of the canonical pair a user sits on. See ConversationEntity. */
 type PairSide = 'a' | 'b';
@@ -88,7 +89,37 @@ export class ChatService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly notifications: NotificationService,
     private readonly realtime: ChatRealtimeService,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /**
+   * Refuses a message longer than staff allow. The DTOs already reject
+   * anything over the hard ceiling in chat.constants.ts; this is the lower
+   * bar an admin may have set, which a decorator cannot read.
+   *
+   * @throws BadRequestException when the message is too long.
+   */
+  private assertMessageFits(content: string): void {
+    const max = this.settings.get('chat.max_message_length');
+    if (content.length > max) {
+      throw new BadRequestException(
+        `Messages cannot be longer than ${max} characters`,
+      );
+    }
+  }
+
+  /**
+   * Refuses an attachment larger than staff allow, for the same reason as
+   * {@link assertMessageFits}.
+   *
+   * @throws BadRequestException when the image is too large.
+   */
+  private assertImageFits(file: Express.Multer.File): void {
+    const maxMb = this.settings.get('chat.max_image_mb');
+    if (file.size > maxMb * 1024 * 1024) {
+      throw new BadRequestException(`Images cannot be larger than ${maxMb} MB`);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Pair helpers
@@ -1017,6 +1048,7 @@ export class ChatService {
       if (!trimmed) {
         throw new BadRequestException('Message content cannot be empty');
       }
+      this.assertMessageFits(trimmed);
 
       const { conversation, recipientId } = await this.loadWritableConversation(
         conversationId,
@@ -1066,6 +1098,8 @@ export class ChatService {
       if (!file) {
         throw new BadRequestException('An image file is required');
       }
+      this.assertImageFits(file);
+      if (caption?.trim()) this.assertMessageFits(caption.trim());
 
       const { conversation, recipientId } = await this.loadWritableConversation(
         conversationId,

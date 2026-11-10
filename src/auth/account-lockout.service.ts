@@ -2,24 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../user/entities/user.entity';
-import { ConfigService } from '@nestjs/config';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 
 @Injectable()
 export class AccountLockoutService {
-  private readonly maxAttempts: number;
-  private readonly lockoutDuration: number; // in minutes
-
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
-    private readonly configService: ConfigService,
-  ) {
-    this.maxAttempts = this.configService.get<number>('MAX_LOGIN_ATTEMPTS', 5);
-    this.lockoutDuration = this.configService.get<number>(
-      'LOCKOUT_DURATION_MINUTES',
-      30,
-    );
-  }
+    private readonly settings: PlatformSettingsService,
+  ) {}
 
   async isAccountLocked(userId: string): Promise<boolean> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
@@ -44,9 +35,15 @@ export class AccountLockoutService {
 
     user.failed_login_attempts += 1;
 
-    if (user.failed_login_attempts >= this.maxAttempts) {
+    // Read per attempt, not once at startup, so raising or lowering the
+    // threshold in the back office takes effect on the next sign-in.
+    if (
+      user.failed_login_attempts >= this.settings.get('auth.max_login_attempts')
+    ) {
       const lockoutUntil = new Date();
-      lockoutUntil.setMinutes(lockoutUntil.getMinutes() + this.lockoutDuration);
+      lockoutUntil.setMinutes(
+        lockoutUntil.getMinutes() + this.settings.get('auth.lockout_minutes'),
+      );
       user.account_locked_until = lockoutUntil;
     }
 

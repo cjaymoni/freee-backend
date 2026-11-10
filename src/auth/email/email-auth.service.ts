@@ -11,10 +11,12 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
-import { In, IsNull, LessThan, MoreThan, Raw, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Repository } from 'typeorm';
 import type { auth as firebaseAuth } from 'firebase-admin';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
+import { withinLast } from '../../common/within-last';
+import { PlatformSettingsService } from '../../platform-settings/platform-settings.service';
 import { StaffInboxService } from '../../notification/staff-inbox.service';
 import { accountSplitEntry } from '../../notification/staff-notices';
 import { UserEntity } from '../../user/entities/user.entity';
@@ -34,30 +36,21 @@ export interface EmailConfig {
 const SIGN_IN = 'email_signin';
 const ADD_EMAIL = 'email_link';
 
-const CODE_TTL_MS = 10 * 60 * 1000;
-/** Guesses allowed per code, the right one included. */
-const MAX_ATTEMPTS = 5;
 /** Tries at freeing an email and creating its Firebase account. */
 const CREATE_ATTEMPTS = 3;
-/**
- * Guesses allowed per email per day, across all its codes of either kind:
- * the bound on guessing, 30 in 900,000. Counted on guesses rather than codes
- * sent, so sending codes to an address alone can't shut it. Guessing can:
- * anyone who knows the address can spend its 30 and close email codes for it
- * for a day. Some per-address cap is the price of bounding guesses; the
- * Firebase link and phone sign-in still work meanwhile.
- */
-const MAX_GUESSES_PER_DAY = 30;
-/** Codes per email from one IP per hour, and per email per day (inbox flooding). */
-const MAX_CODES_PER_IP_HOUR = 5;
-const MAX_CODES_PER_DAY = 20;
 
-/**
- * created_at is filled by the database clock, so windows on it are measured
- * by the same clock. Fixed strings, never user input.
+/*
+ * The code lifetime, the guesses allowed per code and per email per day, and
+ * how many codes an address or an IP may be sent, are all platform settings;
+ * see the `auth.*` keys in platform-settings/settings.registry.ts.
+ *
+ * The per-day guess cap is what bounds guessing: 30 tries in 900,000.
+ * Counted on guesses rather than codes sent, so sending codes to an address
+ * alone can't shut it. Guessing can: anyone who knows the address can spend
+ * its day's guesses and close email codes for it until tomorrow. Some
+ * per-address cap is the price of bounding guesses; the Firebase link and
+ * phone sign-in still work meanwhile.
  */
-const withinLast = (interval: '60 seconds' | '1 hour' | '1 day') =>
-  Raw((column) => `${column} > CURRENT_TIMESTAMP - INTERVAL '${interval}'`);
 
 const EXPIRED = 'That code has expired. Send a new one.';
 
@@ -86,6 +79,7 @@ export class EmailAuthService {
     private readonly firebase: FirebaseService,
     private readonly users: UserService,
     private readonly staffInbox: StaffInboxService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   getConfig(): EmailConfig {
@@ -314,8 +308,8 @@ export class EmailAuthService {
       }),
     ]);
     if (
-      fromThisIp >= MAX_CODES_PER_IP_HOUR ||
-      forThisEmail >= MAX_CODES_PER_DAY
+      fromThisIp >= this.settings.get('auth.max_codes_per_ip_per_hour') ||
+      forThisEmail >= this.settings.get('auth.max_codes_per_day')
     ) {
       throw new HttpException(
         'Too many codes for this email. Try again later.',
@@ -335,7 +329,9 @@ export class EmailAuthService {
         email,
         code_type: type,
         code_hash: await bcrypt.hash(code, await bcrypt.genSalt()),
-        expires_at: new Date(Date.now() + CODE_TTL_MS),
+        expires_at: new Date(
+          Date.now() + this.settings.get('auth.code_ttl_minutes') * 60 * 1000,
+        ),
         ip_address: ip,
         ...(userId && { user: { id: userId } }),
       }),
@@ -388,7 +384,9 @@ export class EmailAuthService {
       code_type: In([SIGN_IN, ADD_EMAIL]),
       created_at: withinLast('1 day'),
     });
-    if ((guessedToday ?? 0) >= MAX_GUESSES_PER_DAY) {
+    if (
+      (guessedToday ?? 0) >= this.settings.get('auth.max_code_guesses_per_day')
+    ) {
       throw new HttpException(
         'Too many attempts for this email. Try again tomorrow.',
         HttpStatus.TOO_MANY_REQUESTS,
@@ -401,7 +399,9 @@ export class EmailAuthService {
       {
         id: row.id,
         is_verified: false,
-        attempt_count: LessThan(MAX_ATTEMPTS),
+        attempt_count: LessThan(
+          this.settings.get('auth.max_attempts_per_code'),
+        ),
         expires_at: MoreThan(new Date()),
       },
       { attempt_count: () => 'attempt_count + 1' },

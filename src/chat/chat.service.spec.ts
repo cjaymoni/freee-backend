@@ -25,6 +25,8 @@ import {
   Notice,
 } from '../notification/notification.types';
 import { AppError } from '../common/app-error';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
 // Chosen so that ALICE < BOB lexicographically, which is what the canonical
 // pair ordering is keyed on.
@@ -158,6 +160,10 @@ describe('ChatService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChatService,
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(),
+        },
         ChatRealtimeService,
         {
           provide: getRepositoryToken(ConversationEntity),
@@ -330,6 +336,49 @@ describe('ChatService', () => {
         fail('expected a rejection');
       } catch (error) {
         expect(statusOf(error)).toBe(HttpStatus.FORBIDDEN);
+      }
+    });
+  });
+
+  describe('platform limits', () => {
+    const MAX = 4000;
+
+    it('sends a message right at the limit', async () => {
+      conversationRepository.findOne.mockResolvedValue(conversation());
+
+      await expect(
+        service.sendMessage(ALICE, 'conv-1', 'a'.repeat(MAX)),
+      ).resolves.toMatchObject({ state: true });
+    });
+
+    it('refuses a message one character over the limit', async () => {
+      conversationRepository.findOne.mockResolvedValue(conversation());
+
+      try {
+        await service.sendMessage(ALICE, 'conv-1', 'a'.repeat(MAX + 1));
+        fail('expected a rejection');
+      } catch (error) {
+        expect(statusOf(error)).toBe(HttpStatus.BAD_REQUEST);
+        expect((error as Error).message).toContain(
+          `cannot be longer than ${MAX} characters`,
+        );
+      }
+    });
+
+    it('refuses an attachment over the size limit, before uploading it', async () => {
+      conversationRepository.findOne.mockResolvedValue(conversation());
+      const file = {
+        originalname: 'huge.jpg',
+        size: 11 * 1024 * 1024,
+        buffer: Buffer.from(''),
+      } as Express.Multer.File;
+
+      try {
+        await service.sendImageMessage(ALICE, 'conv-1', file);
+        fail('expected a rejection');
+      } catch (error) {
+        expect(statusOf(error)).toBe(HttpStatus.BAD_REQUEST);
+        expect((error as Error).message).toContain('cannot be larger than');
       }
     });
   });

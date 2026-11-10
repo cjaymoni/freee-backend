@@ -9,6 +9,7 @@ import { AnnouncementController } from '../announcement/announcement.controller'
 import { AdminItemsController } from '../admin/admin-items.controller';
 import { AdminNotificationsController } from '../admin/admin-notifications.controller';
 import { AdminRequestsController } from '../admin/admin-requests.controller';
+import { AdminSettingsController } from '../admin/admin-settings.controller';
 import { AdminUsersController } from '../admin/admin-users.controller';
 import { AppController } from '../app.controller';
 import { AuditController } from '../audit/audit.controller';
@@ -61,6 +62,9 @@ const MATRIX: Record<string, UserRole[]> = {
   'AdminNotificationsController.send': [ADMIN],
   'AdminRequestsController.list': STAFF,
   'AdminRequestsController.detail': STAFF,
+  'AdminSettingsController.list': [ADMIN],
+  'AdminSettingsController.update': [ADMIN],
+  'AdminSettingsController.reset': [ADMIN],
   'AdminUsersController.list': STAFF,
   'AdminUsersController.detail': STAFF,
   'AdminUsersController.requests': STAFF,
@@ -93,6 +97,7 @@ const CONTROLLERS = [
   AdminItemsController,
   AdminNotificationsController,
   AdminRequestsController,
+  AdminSettingsController,
   AdminUsersController,
   AnnouncementController,
   AppController,

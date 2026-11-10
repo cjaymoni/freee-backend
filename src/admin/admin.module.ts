@@ -13,6 +13,7 @@ import { AdminNotificationsController } from './admin-notifications.controller';
 import { AdminNotificationsService } from './admin-notifications.service';
 import { AdminRequestsController } from './admin-requests.controller';
 import { AdminRequestsService } from './admin-requests.service';
+import { AdminSettingsController } from './admin-settings.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminUsersService } from './admin-users.service';
 
@@ -36,6 +37,7 @@ import { AdminUsersService } from './admin-users.service';
     AdminNotificationsController,
     AdminInboxController,
     AdminAnnouncementsController,
+    AdminSettingsController,
   ],
   providers: [
     AdminAuditService,

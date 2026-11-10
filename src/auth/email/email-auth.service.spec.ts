@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { FindOperator, Repository } from 'typeorm';
 import { FirebaseService } from '../../firebase/firebase.service';
 import { MailService } from '../../mail/mail.service';
+import { stubPlatformSettings } from '../../platform-settings/testing/stub-platform-settings';
 import { StaffInboxService } from '../../notification/staff-inbox.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { UserService } from '../../user/user.service';
@@ -64,6 +65,7 @@ function setup(env: Record<string, unknown> = {}) {
     firebase as unknown as FirebaseService,
     users as unknown as UserService,
     staffInbox as unknown as StaffInboxService,
+    stubPlatformSettings(),
   );
   return { service, codes, userRepo, mail, firebase, users, staffInbox };
 }

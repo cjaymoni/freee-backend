@@ -16,10 +16,7 @@ import {
   AudienceFilter,
   NotificationAudience,
 } from '../notification/entities/admin-notification.entity';
-import {
-  NotificationService,
-  PUSH_IDLE_DAYS,
-} from '../notification/notification.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   Notice,
   NotificationCategory,
@@ -125,10 +122,7 @@ export class AdminNotificationsService {
         `COUNT(*) FILTER (WHERE u.email IS NOT NULL AND ${wants('email')})`,
         'email',
       )
-      .setParameter(
-        'idleSince',
-        new Date(Date.now() - PUSH_IDLE_DAYS * 24 * 60 * 60 * 1000),
-      )
+      .setParameter('idleSince', this.notifications.pushIdleSince())
       .getRawOne<{ count: string; push: string; email: string }>();
     return {
       message: 'Audience counted',
