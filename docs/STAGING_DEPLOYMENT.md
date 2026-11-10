@@ -15,7 +15,7 @@ Pieces involved:
 | Piece | Where | File |
 | --- | --- | --- |
 | Service definition | Render | [`render.yaml`](../render.yaml) |
-| Deploy pipeline | GitHub Actions | [`.github/workflows/staging.yml`](../.github/workflows/staging.yml) |
+| Deploy pipeline | GitHub Actions | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 | Variables to fill in | Render dashboard | [`.env.staging.example`](../.env.staging.example) |
 
 ---
