@@ -26,7 +26,9 @@ services:
     # GitHub Actions decides when to deploy, after lint, tests and build pass.
     autoDeploy: false
     previewsEnabled: false
-    buildCommand: npm ci && npm run build
+    # NODE_ENV=production below makes npm skip devDependencies, and the Nest
+    # CLI and husky live there, so the install must ask for them explicitly.
+    buildCommand: npm ci --include=dev && npm run build
     # The free plan caps the instance at 512 MB.
     startCommand: node --max-old-space-size=450 dist/main
     # The full /health check asserts RSS under 150 MB, which a cold instance
