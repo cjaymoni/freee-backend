@@ -4,7 +4,7 @@
 # the staging service only: its Postgres lives on Neon and its cache on a
 # separate Upstash database, so staging shares no state with production.
 #
-# Deploys are triggered by .github/workflows/staging.yml once the tests pass,
+# Deploys are triggered by .github/workflows/ci.yml once the tests pass,
 # through a Render deploy hook, which is why autoDeploy is off.
 #
 # Render is NOT tracking this file as a Blueprint instance: the live service

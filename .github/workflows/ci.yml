@@ -1,0 +1,236 @@
+# The branch flow: work branches open a pull request into `staging`, and
+# `staging` opens one into `main`. Nothing merges into `main` from anywhere
+# else - the `base` job below is what enforces that, and it is a required
+# check on `main`.
+#
+# Every pull request into either branch is verified here before it can merge,
+# so a red test is caught while it is still a proposal. A push to `staging`
+# is verified again and then handed to Render, which builds the branch and
+# runs the TypeORM migrations against Neon on boot.
+#
+# Setup, including the secrets this needs: docs/STAGING_DEPLOYMENT.md
+name: CI
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging, main]
+    # `edited` is what fires when a pull request's base branch changes.
+    # Without it, retargeting a staging pull request at main would never
+    # re-run this, and the result from when it still pointed at staging would
+    # stand as the newest one. It also fires on title and body edits, which
+    # costs a re-run we do not need - cheap next to the hole it closes.
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+# One deploy at a time, so a queued push waits rather than racing the
+# migrations. Pull request runs are grouped per pull request instead, where
+# superseding a run that is already out of date is what we want.
+# A folded scalar here would keep its newlines, which only works while the
+# whole value sits inside ${{ }}. Kept on one line so it cannot rot into a
+# group name with a newline in it.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-staging-deploy', github.workflow) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22.11.0'
+
+jobs:
+  # Only this repository's `staging` may propose a merge into `main`. GitHub
+  # cannot express "this base accepts only that head" in a branch rule, so it
+  # is a required check instead.
+  #
+  # It runs on every pull request, not only the ones into `main`, and decides
+  # inside the step. A job skipped by an `if:` still publishes a check run,
+  # and GitHub counts a skipped required check as a pass - so a pull request
+  # opened against `staging` (where the job would skip) and then retargeted
+  # at `main` would carry that skip through as a green required check.
+  base:
+    name: Base branch
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only staging merges into main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ "$BASE_REF" != "main" ]; then
+            echo "Base is '$BASE_REF'; nothing to enforce."
+            exit 0
+          fi
+
+          # head_ref is a bare branch name with no owner on it, and this
+          # repository is public: anyone can fork it and call a branch
+          # "staging". The repository has to match too.
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::A pull request into main must come from this repository's staging branch, not from the fork '$HEAD_REPO'." >&2
+            exit 1
+          fi
+
+          if [ "$HEAD_REF" != "staging" ]; then
+            echo "::error::Only staging merges into main. This pull request is from '$HEAD_REF'. Retarget it at staging, then open a staging -> main pull request once it has landed." >&2
+            exit 1
+          fi
+
+          echo "Base is main and head is this repository's staging."
+
+  verify:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The lint step diffs against the base commit, which a shallow
+          # checkout would not have.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Only what this change touched. The repo carries a few hundred older
+      # no-unsafe-* errors; blocking on those would stop every merge and
+      # would not get them fixed. Holding new and edited code to the rule
+      # means the debt only ever shrinks, file by file, as they are worked
+      # on. The whole-repo count is printed below so it stays in view.
+      - name: Lint changed files
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # The checkout is refs/pull/N/merge, and that merge commit's
+            # first parent is the base branch as it stands right now.
+            # Diffing against the base SHA recorded when the pull request
+            # last synced would drag in everything merged since, and fail an
+            # author over files they never opened.
+            base=$(git rev-parse 'HEAD^1')
+          else
+            base="$BEFORE_SHA"
+            # A new branch, or a forced push, reports an all-zero "before";
+            # there is no range to diff, so use the commit's own change set.
+            if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+              base="${GITHUB_SHA}^"
+            fi
+          fi
+
+          # Without this, a base that cannot be resolved - a pruned SHA, a
+          # forced push, a first commit with no parent - would leave the diff
+          # empty, and the step would report "nothing changed" and wave the
+          # whole gate through.
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::error::Cannot resolve '$base' to diff against, so the changed files are unknown. Refusing to pass by linting nothing." >&2
+            exit 1
+          fi
+
+          # ACMR: added, copied, modified, renamed. A deleted file has
+          # nothing left to lint. Filtering after the diff rather than with a
+          # pathspec, so a directory the repo does not have cannot make git
+          # exit with "pathspec did not match". The diff is deliberately not
+          # wrapped in `|| true`: only grep's "found nothing" is masked.
+          changed=$(git diff --name-only --diff-filter=ACMR "$base" "$GITHUB_SHA")
+          files=$(printf '%s\n' "$changed" | grep -E '^(src|apps|libs|test)/.*\.ts$' || true)
+
+          if [ -z "$files" ]; then
+            echo "No TypeScript files changed."
+            exit 0
+          fi
+
+          echo "Linting $(printf '%s\n' "$files" | wc -l) changed file(s):"
+          printf '%s\n' "$files" | sed 's/^/  /'
+          # One argument per line, so a path with a space stays one path.
+          # The npm script passes --fix, which is pointless on a CI checkout.
+          printf '%s\n' "$files" | xargs -d '\n' npx eslint --max-warnings 0
+
+      - name: Report the whole-repo lint debt
+        # Never fails the build: this is a number to watch, not a gate.
+        if: always()
+        run: |
+          set -uo pipefail
+          # ESLint prints its count and then a blank line, so tail alone
+          # reads the blank one and reports a clean repo. Match the line
+          # instead. stderr is left on the log, so a config error shows up
+          # rather than rendering as "no problems".
+          summary=$(
+            npx eslint "{src,apps,libs,test}/**/*.ts" \
+              | grep -E '[0-9]+ problems?' | tail -1 || true
+          )
+          echo "Whole repo: ${summary:-no problems reported}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test
+        # Serial: the suite shares module state across files and goes red at
+        # random when Jest spreads it over workers.
+        run: npx jest --ci --runInBand
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy to Render
+    needs: verify
+    # Only a real push to staging deploys. Stated positively: a manual
+    # workflow_dispatch is not a pull request either, and would otherwise
+    # reach the Render hook from any ref.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Trigger the Render deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_HOOK:-}" ]; then
+            echo "::error::RENDER_STAGING_DEPLOY_HOOK is not set on the staging environment." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --location \
+            --request POST "$DEPLOY_HOOK" --output /dev/null
+          echo "Deploy requested."
+
+      - name: Wait for the new build to answer
+        env:
+          # Repository variable, e.g. https://free-backend-staging.onrender.com
+          STAGING_URL: ${{ vars.STAGING_STATUS_URL }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_URL:-}" ]; then
+            echo "STAGING_STATUS_URL is not set; skipping the health check."
+            exit 0
+          fi
+
+          # Match on the commit, not just a 200: the instance being replaced
+          # keeps answering until the new one passes Render's health check.
+          # Render builds from scratch and the free plan is slow, so allow
+          # 15 minutes, polled every 15 seconds.
+          deadline=$(( SECONDS + 900 ))
+          last=""
+          until [ "$SECONDS" -ge "$deadline" ]; do
+            last=$(curl --silent --max-time 10 "$STAGING_URL/health/live" || true)
+            case "$last" in
+              *"\"commit\":\"$EXPECTED_COMMIT\""*)
+                echo "Staging is running $EXPECTED_COMMIT: $last"
+                exit 0
+                ;;
+            esac
+            sleep 15
+          done
+
+          echo "::error::$STAGING_URL/health/live never reported commit $EXPECTED_COMMIT within 15 minutes. Last answer: ${last:-none}" >&2
+          exit 1

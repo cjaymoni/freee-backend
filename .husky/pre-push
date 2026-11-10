@@ -1,1 +1,30 @@
-npx secretlint "**/*" && npm run lint && npm test
+#!/usr/bin/env sh
+# Mirrors the CI gate, so a push that would go red is caught here instead.
+#
+# Lint covers the files this branch changes, not the whole repo: a few
+# hundred older no-unsafe-* errors live in files nobody is touching, and
+# failing every push over them would only teach everyone to pass --no-verify.
+set -eu
+
+npx secretlint "**/*"
+
+# The branch this work will be proposed into. staging is the default base;
+# fall back to main for a clone that has not fetched it.
+base_ref=origin/staging
+git rev-parse --verify --quiet "$base_ref" >/dev/null || base_ref=origin/main
+
+if base=$(git merge-base "$base_ref" HEAD 2>/dev/null); then
+  files=$(git diff --name-only --diff-filter=ACMR "$base" HEAD \
+    | grep -E '^(src|apps|libs|test)/.*\.ts$' || true)
+  if [ -n "$files" ]; then
+    echo "Linting $(printf '%s\n' "$files" | wc -l | tr -d ' ') changed file(s)..."
+    # shellcheck disable=SC2086
+    printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 npx eslint --max-warnings 0
+  else
+    echo "No TypeScript files changed; skipping lint."
+  fi
+else
+  echo "No merge base with $base_ref; skipping the changed-file lint." >&2
+fi
+
+npm test
