@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../user/entities/user.entity';
@@ -15,6 +14,7 @@ import { ItemResponseDto } from '../item/dto/item-response.dto';
 import { ModerationStatus } from '../item/entities/item.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { JoinFoundingFreersDto } from './dto/join-founding-freers.dto';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { FOUNDING_REVIEW_REASON } from './founding-freer.constants';
 
 @Injectable()
@@ -24,11 +24,11 @@ export class FoundingFreerService {
     private readonly userRepository: Repository<UserEntity>,
     private readonly userService: UserService,
     private readonly itemService: ItemService,
-    private readonly config: ConfigService,
+    private readonly settings: PlatformSettingsService,
   ) {}
 
   isOpen(): boolean {
-    return String(this.config.get('FOUNDING_FREERS_OPEN')) === 'true';
+    return this.settings.get('platform.founding_freers_open');
   }
 
   async join(userId: string, dto: JoinFoundingFreersDto) {

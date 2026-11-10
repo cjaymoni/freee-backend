@@ -2,6 +2,7 @@ import { DataSource, FindOperator } from 'typeorm';
 import { NotificationService } from './notification.service';
 import { NotificationCategory, Notice } from './notification.types';
 import { FirebaseService } from '../firebase/firebase.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 import { MailService } from '../mail/mail.service';
 
 const USER = 'user-1';
@@ -72,6 +73,7 @@ const setup = ({
     {} as DataSource,
     firebase as unknown as FirebaseService,
     mail as unknown as MailService,
+    stubPlatformSettings(),
   );
   return { service, firebase, mail, sessions, tokenQuery };
 };

@@ -7,9 +7,8 @@ import { SearchQueryEntity } from './entities/search-query.entity';
 import { PopularSearchDto } from './dto/popular-search.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { foldText } from '../common/text-fold';
-
-/** How far back popular terms are counted. */
-export const POPULAR_WINDOW_DAYS = 7;
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { numberDefinitionOf } from '../platform-settings/settings.registry';
 
 /**
  * A term must be searched by at least this many different people before it is
@@ -32,7 +31,17 @@ export class SearchService {
   constructor(
     @InjectRepository(SearchQueryEntity)
     private readonly searchQueryRepository: Repository<SearchQueryEntity>,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /**
+   * The oldest search still counted as popular. Read per call so the window
+   * set in the back office applies without a restart.
+   */
+  private windowStart(): Date {
+    const days = this.settings.get('platform.popular_search_window_days');
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  }
 
   /**
    * The form a term is stored and ranked in: accents and case folded and
@@ -75,16 +84,14 @@ export class SearchService {
   }
 
   /**
-   * Terms searched by the most different people over the last
-   * {@link POPULAR_WINDOW_DAYS} days, most popular first. Ties go to the more
-   * recently searched term, then alphabetically.
+   * Terms searched by the most different people inside the popular-searches
+   * window, most popular first. Ties go to the more recently searched term,
+   * then alphabetically.
    */
   async getPopular(
     limit: number,
   ): Promise<ServiceResponseDto<PopularSearchDto[]>> {
-    const since = new Date(
-      Date.now() - POPULAR_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-    );
+    const since = this.windowStart();
 
     const rows = await this.searchQueryRepository
       .createQueryBuilder('search')
@@ -113,11 +120,26 @@ export class SearchService {
     };
   }
 
-  /** Searches older than the window are never ranked again, so drop them. */
+  /**
+   * Searches too old to be ranked under any setting are never read again, so
+   * drop them.
+   *
+   * Deliberately measured against the widest window the setting allows, not
+   * the one in force. Purging at the current window would make the setting a
+   * one-way ratchet: shortening it to a day would destroy the rest at 3am,
+   * and lengthening it again would rank nothing until that much new data had
+   * accumulated. Keeping the full span costs a little storage and makes the
+   * choice reversible, which is what the setting's description promises.
+   */
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async purgeExpired(): Promise<void> {
     const cutoff = new Date(
-      Date.now() - POPULAR_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+      Date.now() -
+        numberDefinitionOf('platform.popular_search_window_days').max *
+          24 *
+          60 *
+          60 *
+          1000,
     );
     try {
       const result = await this.searchQueryRepository.delete({

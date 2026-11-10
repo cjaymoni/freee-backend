@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { SearchService, POPULAR_MIN_SEARCHERS } from './search.service';
 import { SearchQueryEntity } from './entities/search-query.entity';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
 describe('SearchService', () => {
   let service: SearchService;
@@ -35,6 +37,10 @@ describe('SearchService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SearchService,
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(),
+        },
         { provide: getRepositoryToken(SearchQueryEntity), useValue: repo },
       ],
     }).compile();

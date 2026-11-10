@@ -32,6 +32,10 @@ import { LocationsModule } from './locations/locations.module';
 import { FoundingFreerModule } from './founding-freer/founding-freer.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 
+import { PageSizeInterceptor } from './common/interceptors/page-size.interceptor';
+import { PlatformSettingsModule } from './platform-settings/platform-settings.module';
+import { PlatformSettingsService } from './platform-settings/platform-settings.service';
+
 import { envValidationSchema } from './config/env.validation';
 
 @Module({
@@ -41,12 +45,20 @@ import { envValidationSchema } from './config/env.validation';
       isGlobal: true,
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000,
-        limit: 100,
-      },
-    ]),
+    PlatformSettingsModule,
+    // Resolved per request so a limit changed in the back office applies
+    // without a redeploy. @Throttle on a controller still wins for the
+    // endpoints that carry their own limit, such as sending a sign-in code.
+    ThrottlerModule.forRootAsync({
+      imports: [PlatformSettingsModule],
+      inject: [PlatformSettingsService],
+      useFactory: (settings: PlatformSettingsService) => [
+        {
+          ttl: () => settings.get('rate_limits.window_seconds') * 1000,
+          limit: () => settings.get('rate_limits.requests_per_window'),
+        },
+      ],
+    }),
     ScheduleModule.forRoot(),
     CacheModule.registerAsync({
       isGlobal: true,
@@ -130,6 +142,13 @@ import { envValidationSchema } from './config/env.validation';
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditInterceptor,
+    },
+    // Applies platform.max_page_size to every list endpoint, whichever way
+    // that endpoint validates its paging. An interceptor, so it runs after
+    // the route's own guards - see the class for why that matters.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: PageSizeInterceptor,
     },
   ],
 })

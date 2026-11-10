@@ -58,6 +58,7 @@ const setup = ({
     notify: jest
       .fn<Promise<NotifyResult>, unknown[]>()
       .mockResolvedValue({ push: 'sent', email: 'skipped' }),
+    pushIdleSince: jest.fn(() => new Date('2026-01-01T00:00:00Z')),
   };
   const service = new AdminNotificationsService(
     dataSource as unknown as DataSource,

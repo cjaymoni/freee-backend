@@ -38,19 +38,20 @@ import { ItemUserDto } from '../item/dto/item-user.dto';
 import { ChatService } from '../chat/chat.service';
 import { SystemEvent } from '../chat/entities/message.entity';
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
+import { LockNamespace, lockUser } from '../common/advisory-lock';
+import { withinLast } from '../common/within-last';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { closeActiveRequests } from './close-active-requests';
 
-/**
- * Wrong pickup codes allowed per issued code. Generous enough for typos at the
- * hand-off, far too few to guess one of 32^6 codes.
+/*
+ * How many wrong pickup codes are allowed per issued code, and how often a
+ * locked-out requester may ask for a new one, are platform settings:
+ * `requests.max_pickup_code_attempts` and
+ * `requests.pickup_code_cooldown_minutes`. Their shipped values - 5 guesses,
+ * an hour's wait - are generous enough for typos at the hand-off and far too
+ * few to guess one of 32^6 codes, and the registry only lets staff tighten
+ * them. Read them through the two helpers below, never from a copy here.
  */
-export const MAX_PICKUP_ATTEMPTS = 5;
-
-/**
- * How often a locked-out requester can ask the owner for a new code. Each ask
- * is a chat card and a push to the owner, so repeats are spaced out.
- */
-export const PICKUP_CODE_REQUEST_COOLDOWN_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class ItemRequestService {
@@ -63,7 +64,70 @@ export class ItemRequestService {
     private readonly itemRepository: Repository<ItemEntity>,
     private readonly dataSource: DataSource,
     private readonly chatService: ChatService,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /** Wrong codes allowed before the owner has to issue a new one. */
+  private maxPickupAttempts(): number {
+    return this.settings.get('requests.max_pickup_code_attempts');
+  }
+
+  /** How long a locked-out requester waits before asking again. */
+  private pickupCooldownMs(): number {
+    return (
+      this.settings.get('requests.pickup_code_cooldown_minutes') * 60 * 1000
+    );
+  }
+
+  /**
+   * Refuses a new request that would put the requester over the caps staff
+   * have set. Runs inside the transaction that creates it and locks the
+   * requester, so two requests racing cannot both find room under the cap.
+   *
+   * Lock order: the caller has already taken the item row's write lock (see
+   * lockItem), so this advisory lock is always the second of the two on this
+   * path. Any other path that takes both must take them in the same order,
+   * or two transactions can deadlock holding one each.
+   *
+   * A cap of 0 means no limit.
+   *
+   * @throws BadRequestException naming the cap that was reached.
+   */
+  private async assertWithinRequestLimits(
+    manager: EntityManager,
+    requesterId: string,
+  ): Promise<void> {
+    const maxActive = this.settings.get('requests.max_active_per_user');
+    const maxPerDay = this.settings.get('requests.max_per_day_per_user');
+    if (maxActive === 0 && maxPerDay === 0) return;
+
+    await lockUser(manager, LockNamespace.REQUEST_CAP, requesterId);
+
+    if (maxActive > 0) {
+      const active = await manager.count(ItemRequestEntity, {
+        where: {
+          requester_id: requesterId,
+          status: In([RequestStatus.PENDING, RequestStatus.CONFIRMED]),
+        },
+      });
+      if (active >= maxActive) {
+        throw new BadRequestException(
+          `You can have ${maxActive} open ${maxActive === 1 ? 'request' : 'requests'} at a time. Cancel one to ask for something else.`,
+        );
+      }
+    }
+
+    if (maxPerDay > 0) {
+      const made = await manager.count(ItemRequestEntity, {
+        where: { requester_id: requesterId, created_at: withinLast('1 day') },
+      });
+      if (made >= maxPerDay) {
+        throw new BadRequestException(
+          `You can make ${maxPerDay} ${maxPerDay === 1 ? 'request' : 'requests'} a day. Try again tomorrow.`,
+        );
+      }
+    }
+  }
 
   /**
    * Take the item row's write lock, which is how every state transition below
@@ -163,7 +227,8 @@ export class ItemRequestService {
     dto.pickup_date = entity.pickup_date ?? null;
     dto.confirmation_code =
       viewerId === entity.owner_id ? (entity.confirmation_code ?? null) : null;
-    dto.pickup_locked = (entity.pickup_attempts ?? 0) >= MAX_PICKUP_ATTEMPTS;
+    dto.pickup_locked =
+      (entity.pickup_attempts ?? 0) >= this.maxPickupAttempts();
     dto.is_picked_up = entity.is_picked_up;
     dto.picked_up_at = entity.picked_up_at ?? null;
     dto.cancelled_at = entity.cancelled_at ?? null;
@@ -285,6 +350,8 @@ export class ItemRequestService {
             'You already have a pending request for this item',
           );
         }
+
+        await this.assertWithinRequestLimits(manager, requesterId);
 
         // Create the request
         const itemRequest = manager.create(ItemRequestEntity, {
@@ -548,7 +615,7 @@ export class ItemRequestService {
           throw new BadRequestException('Request must be confirmed first');
         }
 
-        if (request.pickup_attempts >= MAX_PICKUP_ATTEMPTS) {
+        if (request.pickup_attempts >= this.maxPickupAttempts()) {
           throw new HttpException(
             'Too many wrong codes. Ask the owner for a new pickup code',
             HttpStatus.TOO_MANY_REQUESTS,
@@ -590,7 +657,8 @@ export class ItemRequestService {
       });
 
       if (outcome.wrongCode) {
-        const remaining = MAX_PICKUP_ATTEMPTS - outcome.request.pickup_attempts;
+        const remaining =
+          this.maxPickupAttempts() - outcome.request.pickup_attempts;
         throw new BadRequestException(
           remaining > 0
             ? `Invalid confirmation code. ${remaining} attempt${remaining === 1 ? '' : 's'} left`
@@ -628,7 +696,7 @@ export class ItemRequestService {
 
   /**
    * Replace a confirmed request's pickup code and clear its wrong attempts.
-   * This is how a requester locked out by {@link MAX_PICKUP_ATTEMPTS} gets
+   * This is how a requester locked out by the pickup attempt cap gets
    * another go, and lets an owner retire a code they think was seen by
    * someone else. The old code stops working immediately.
    */
@@ -708,21 +776,17 @@ export class ItemRequestService {
           );
         }
 
-        if (request.pickup_attempts < MAX_PICKUP_ATTEMPTS) {
+        if (request.pickup_attempts < this.maxPickupAttempts()) {
           throw new BadRequestException(
             'You can still enter the pickup code the owner gives you',
           );
         }
 
         const now = Date.now();
+        const cooldownMs = this.pickupCooldownMs();
         const lastAsked = request.pickup_code_requested_at?.getTime();
-        if (
-          lastAsked !== undefined &&
-          now - lastAsked < PICKUP_CODE_REQUEST_COOLDOWN_MS
-        ) {
-          const minutes = Math.ceil(
-            (lastAsked + PICKUP_CODE_REQUEST_COOLDOWN_MS - now) / 60_000,
-          );
+        if (lastAsked !== undefined && now - lastAsked < cooldownMs) {
+          const minutes = Math.ceil((lastAsked + cooldownMs - now) / 60_000);
           throw new HttpException(
             `The owner has already been asked. You can ask again in ${minutes} minute${minutes === 1 ? '' : 's'}`,
             HttpStatus.TOO_MANY_REQUESTS,
