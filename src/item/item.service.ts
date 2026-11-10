@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Not, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import {
   ItemEntity,
   ItemStatus,
@@ -37,7 +37,10 @@ import { NotificationService } from '../notification/notification.service';
 import { listingRemovedNotice } from '../notification/notices';
 import { StaffInboxService } from '../notification/staff-inbox.service';
 import { listingAwaitingReviewEntry } from '../notification/staff-notices';
-import { LISTING_REVIEW_REASON } from './listing-review';
+import { LockNamespace, lockUser } from '../common/advisory-lock';
+import { withinLast } from '../common/within-last';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { LISTING_REVIEW_REASON, REVIEW_REASONS } from './listing-review';
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -98,7 +101,184 @@ export class ItemService {
     private readonly notifications: NotificationService,
     private readonly locationNames: LocationNamesService,
     private readonly staffInbox: StaffInboxService,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /**
+   * How a listing posted in the app starts out: held for a moderator, or
+   * straight to visible when staff have turned the review queue off.
+   */
+  private defaultModeration(): {
+    moderation_status: ModerationStatus;
+    moderation_reason: string | null;
+  } {
+    return this.settings.get('listings.hold_new_for_review')
+      ? {
+          moderation_status: ModerationStatus.HIDDEN,
+          moderation_reason: LISTING_REVIEW_REASON,
+        }
+      : {
+          moderation_status: ModerationStatus.VISIBLE,
+          moderation_reason: null,
+        };
+  }
+
+  /**
+   * Refuses a photo bigger than staff allow. Multer has already applied the
+   * hard ceiling (see item-image-upload.options.ts); this is the lower bar an
+   * admin may have set on top of it.
+   *
+   * @throws BadRequestException naming the file that was too big.
+   */
+  private assertImageSizes(files?: Express.Multer.File[]): void {
+    if (!files?.length) return;
+
+    const maxMb = this.settings.get('listings.max_image_mb');
+    const tooBig = files.find((file) => file.size > maxMb * 1024 * 1024);
+    if (tooBig) {
+      throw new BadRequestException(
+        `"${tooBig.originalname}" is larger than the ${maxMb} MB limit for listing photos.`,
+      );
+    }
+  }
+
+  /**
+   * Refuses an edit that would leave the listing holding more photos than
+   * staff allow.
+   *
+   * Counts what the listing would end up with - what it has, less what this
+   * edit removes, plus what it adds - rather than the size of this one
+   * upload, so photos cannot be added a batch at a time past the limit.
+   * Checked before anything is sent to Cloudinary.
+   *
+   * An edit that does not add to the count is always allowed, even when the
+   * listing is already over. Lowering the setting must not strand listings
+   * that were within the old limit: `saveWithImages` runs on every update, so
+   * refusing them here would block editing the title of a listing whose only
+   * fault is that the limit moved under it. They come back into line as their
+   * owners remove photos, and never drift further out.
+   *
+   * @throws BadRequestException naming the limit and what it would take to
+   * get under it.
+   */
+  private assertImageCount(
+    before: number,
+    keeping: number,
+    adding: number,
+  ): void {
+    const maxImages = this.settings.get('listings.max_images');
+    const after = keeping + adding;
+    if (after <= maxImages || after <= before) return;
+
+    const over = after - maxImages;
+    throw new BadRequestException(
+      `A listing can have up to ${maxImages} ${maxImages === 1 ? 'photo' : 'photos'}. ` +
+        `This would leave it with ${after}; remove ${over} ${over === 1 ? 'photo' : 'photos'} first.`,
+    );
+  }
+
+  /**
+   * Which of a user's listings count towards `listings.max_active_per_user`:
+   * the ones they put up that are live or on their way to being live, and
+   * which they could take down to make room.
+   *
+   * That means visible, or held for review - a listing waiting on a
+   * moderator is one the owner chose to post and can delete, so it counts.
+   * Leaving it out would make the cap meaningless on any platform with
+   * `listings.hold_new_for_review` on, which is the default: every new
+   * listing starts hidden, so nothing would ever be counted at the moment
+   * the cap is checked, and a user could post without limit.
+   *
+   * It does not mean hidden by a moderator, taken down, or already picked
+   * up. None of those is something the owner can withdraw, so counting them
+   * would strand someone at the cap with no action available to them.
+   */
+  private static countsTowardsCap(userId: string) {
+    const live = {
+      user_id: userId,
+      is_deleted: false,
+      status: In([ItemStatus.AVAILABLE, ItemStatus.RESERVED]),
+    };
+    // An array is OR: visible, or hidden for one of the review reasons.
+    return [
+      { ...live, moderation_status: ModerationStatus.VISIBLE },
+      {
+        ...live,
+        moderation_status: ModerationStatus.HIDDEN,
+        moderation_reason: In(REVIEW_REASONS),
+      },
+    ];
+  }
+
+  /**
+   * Refuses a new listing that would put the owner over the caps staff have
+   * set.
+   *
+   * Runs inside the transaction that saves the listing, behind an advisory
+   * lock on the owner taken before the first count, so two posts racing
+   * cannot both find room under the cap. `lock: false` is for the pre-check
+   * below, which has no transaction to scope a lock to. The listing path only inserts, so
+   * this lock is the only one it holds; were a future caller to pass this
+   * guard on an update path, it would have to keep taking the advisory lock
+   * before the row lock, the way ItemRequestService does not - see the note
+   * there.
+   *
+   * A cap of 0 means no limit, and skipping the lock then keeps the usual
+   * path free of it.
+   *
+   * @throws BadRequestException naming the cap that was reached.
+   */
+  private async assertWithinListingLimits(
+    manager: EntityManager,
+    userId: string,
+    { lock }: { lock: boolean } = { lock: true },
+  ): Promise<void> {
+    const maxActive = this.settings.get('listings.max_active_per_user');
+    const maxPerDay = this.settings.get('listings.max_per_day_per_user');
+    if (maxActive === 0 && maxPerDay === 0) return;
+
+    if (lock) await lockUser(manager, LockNamespace.LISTING_CAP, userId);
+
+    if (maxActive > 0) {
+      const live = await manager.count(ItemEntity, {
+        where: ItemService.countsTowardsCap(userId),
+      });
+      if (live >= maxActive) {
+        throw new BadRequestException(
+          `You can have ${maxActive} ${maxActive === 1 ? 'listing' : 'listings'} up at a time, including any waiting for review. Take one down to post another.`,
+        );
+      }
+    }
+
+    if (maxPerDay > 0) {
+      const posted = await manager.count(ItemEntity, {
+        where: { user_id: userId, created_at: withinLast('1 day') },
+      });
+      if (posted >= maxPerDay) {
+        throw new BadRequestException(
+          `You can post ${maxPerDay} ${maxPerDay === 1 ? 'listing' : 'listings'} a day. Try again tomorrow.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * The same caps, checked before the photos are uploaded.
+   *
+   * Takes no lock and is not authoritative - assertWithinListingLimits inside
+   * the transaction is - but it turns "upload ten photos, then be refused"
+   * into a refusal that costs nothing, which matters because a user hammering
+   * a cap would otherwise spend the Cloudinary quota on every attempt.
+   *
+   * @throws BadRequestException naming the cap that was reached.
+   */
+  private async precheckListingLimits(userId: string): Promise<void> {
+    await this.assertWithinListingLimits(this.itemRepository.manager, userId, {
+      // There is no transaction to scope a lock to out here, and the
+      // authoritative check takes one anyway.
+      lock: false,
+    });
+  }
 
   /** Live listings per sharer, shown as items_count on each item's card. */
   private async getItemsCountByUser(
@@ -340,7 +520,15 @@ export class ItemService {
     item: ItemEntity,
     removeImageIds?: string[],
     files?: Express.Multer.File[],
+    /**
+     * Checked inside the transaction, before the listing is saved, for rules
+     * that must not be raced. Throwing from it rolls the transaction back and
+     * discards anything already uploaded.
+     */
+    guard?: (manager: EntityManager) => Promise<void>,
   ): Promise<{ item: ItemEntity; failed: string[] }> {
+    this.assertImageSizes(files);
+
     const existing = item.id
       ? await this.imageRepository.find({
           where: { item_id: item.id, is_deleted: false },
@@ -370,6 +558,13 @@ export class ItemService {
       );
     }
 
+    // Still before the uploads: a refusal here costs no Cloudinary quota.
+    this.assertImageCount(
+      existing.length,
+      existing.length - toRemove.length,
+      uploadCount,
+    );
+
     const { uploaded, failed } =
       uploadCount > 0
         ? await this.uploadFiles(files!)
@@ -383,6 +578,7 @@ export class ItemService {
 
     try {
       const saved = await this.dataSource.transaction(async (manager) => {
+        if (guard) await guard(manager);
         const saved = await manager.getRepository(ItemEntity).save(item);
         const imageRepository = manager.getRepository(ItemImageEntity);
 
@@ -472,19 +668,18 @@ export class ItemService {
    */
   /**
    * New listings start hidden, waiting for a moderator to approve them, and
-   * staff are told. `moderation` replaces the default hold with another
-   * reason. Either is set before the first save so it is never briefly public.
+   * staff are told - unless staff have switched `listings.hold_new_for_review`
+   * off, in which case they go live at once. `moderation` replaces either
+   * with another reason, as the Founding Freer flow does. Whichever applies
+   * is set before the first save, so a held listing is never briefly public.
    */
   async create(
     userId: string,
     createDto: CreateItemDto,
     files?: Express.Multer.File[],
-    moderation: {
+    moderation?: {
       moderation_status: ModerationStatus;
       moderation_reason: string;
-    } = {
-      moderation_status: ModerationStatus.HIDDEN,
-      moderation_reason: LISTING_REVIEW_REASON,
     },
   ): Promise<ServiceResponseDto<ItemResponseDto>> {
     // Validate price logic
@@ -493,6 +688,10 @@ export class ItemService {
         'Item cannot be marked as free if price is greater than 0',
       );
     }
+
+    // Refused here, before the photos go up, and again inside the save
+    // transaction where it cannot be raced.
+    await this.precheckListingLimits(userId);
 
     this.assertLocationInputIsCoherent(createDto);
     if (createDto.category_id) {
@@ -504,6 +703,8 @@ export class ItemService {
 
     const { latitude, longitude, ...fields } = createDto;
 
+    const applied = moderation ?? this.defaultModeration();
+
     const item = this.itemRepository.create({
       ...fields,
       user_id: userId,
@@ -511,7 +712,7 @@ export class ItemService {
       // Left unset, the column defaults to true - so an item posted with a
       // price and no is_free would be listed as free.
       is_free: createDto.is_free ?? !(createDto.price && createDto.price > 0),
-      ...moderation,
+      ...applied,
     });
 
     if (latitude !== undefined && longitude !== undefined) {
@@ -524,6 +725,7 @@ export class ItemService {
       item,
       undefined,
       files,
+      (manager) => this.assertWithinListingLimits(manager, userId),
     );
     if (latitude !== undefined && longitude !== undefined) {
       void this.locationNames.fill(saved.location_id);

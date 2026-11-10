@@ -1,11 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import {
-  ItemRequestService,
-  MAX_PICKUP_ATTEMPTS,
-  PICKUP_CODE_REQUEST_COOLDOWN_MS,
-} from './item-request.service';
+import { ItemRequestService } from './item-request.service';
+import { LockNamespace } from '../common/advisory-lock';
 import {
   ItemRequestEntity,
   RequestStatus,
@@ -13,6 +10,22 @@ import {
 import { ItemEntity, ModerationStatus } from '../item/entities/item.entity';
 import { ChatService } from '../chat/chat.service';
 import { SystemEvent } from '../chat/entities/message.entity';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
+import {
+  numberDefinitionOf,
+  type SettingValues,
+} from '../platform-settings/settings.registry';
+
+// The shipped values the service falls back to, read from the one place that
+// owns them so a changed default cannot leave these tests asserting the old one.
+const MAX_PICKUP_ATTEMPTS = numberDefinitionOf(
+  'requests.max_pickup_code_attempts',
+).default;
+const PICKUP_CODE_REQUEST_COOLDOWN_MS =
+  numberDefinitionOf('requests.pickup_code_cooldown_minutes').default *
+  60 *
+  1000;
 
 const buildQueryBuilder = (data: unknown[], total: number) => ({
   leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -28,10 +41,15 @@ describe('ItemRequestService', () => {
   let service: ItemRequestService;
   const mockRequestRepo = { createQueryBuilder: jest.fn() };
 
-  beforeEach(async () => {
+  /** Rebuilds the service, optionally with limits staff have changed. */
+  const build = async (settings: Partial<SettingValues> = {}) => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ItemRequestService,
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(settings),
+        },
         {
           provide: getRepositoryToken(ItemRequestEntity),
           useValue: mockRequestRepo,
@@ -43,7 +61,9 @@ describe('ItemRequestService', () => {
     }).compile();
 
     service = module.get(ItemRequestService);
-  });
+  };
+
+  beforeEach(() => build());
 
   afterEach(() => jest.clearAllMocks());
 
@@ -407,6 +427,18 @@ describe('ItemRequestService', () => {
       return { request, manager };
     };
 
+    it('follows the attempt cap staff have set, not the shipped one', async () => {
+      await build({ 'requests.max_pickup_code_attempts': 2 });
+      setup({ pickup_attempts: 2 });
+
+      await expect(
+        service.confirmPickup('requester', 'req-1', 'WRONG1'),
+      ).rejects.toMatchObject({
+        status: 429,
+        message: 'Too many wrong codes. Ask the owner for a new pickup code',
+      });
+    });
+
     it('counts a wrong code and says how many attempts are left', async () => {
       const { request, manager } = setup({ pickup_attempts: 2 });
 
@@ -561,6 +593,89 @@ describe('ItemRequestService', () => {
       await expect(
         service.requestNewPickupCode('owner', 'req-1'),
       ).rejects.toMatchObject({ status: 403 });
+    });
+  });
+
+  describe('request caps', () => {
+    /**
+     * Wires the service to a transaction manager that answers the cap
+     * queries. `open` is how many requests the requester already has.
+     */
+    const setup = (open: number) => {
+      const manager = {
+        findOne: jest.fn((entity: unknown) =>
+          Promise.resolve(
+            entity === ItemEntity
+              ? {
+                  id: 'item-1',
+                  user_id: 'owner',
+                  is_deleted: false,
+                  status: 'available',
+                  moderation_status: ModerationStatus.VISIBLE,
+                }
+              : null,
+          ),
+        ),
+        exists: jest.fn().mockResolvedValue(false),
+        count: jest.fn().mockResolvedValue(open),
+        create: jest.fn((_: unknown, row: object) => ({ ...row })),
+        save: jest.fn((row: object) => Promise.resolve({ ...row, id: 'r-1' })),
+        query: jest.fn().mockResolvedValue([]),
+      };
+      (service as unknown as { dataSource: object }).dataSource = {
+        transaction: (work: (m: typeof manager) => unknown) => work(manager),
+      };
+      (service as unknown as { chatService: object }).chatService = {
+        createSystemMessage: jest.fn().mockResolvedValue(undefined),
+      };
+      return manager;
+    };
+
+    it('refuses a request once the requester is at the open cap', async () => {
+      await build({ 'requests.max_active_per_user': 3 });
+      setup(3);
+
+      await expect(
+        service.createRequest('requester', { item_id: 'item-1' }),
+      ).rejects.toThrow('You can have 3 open requests at a time');
+    });
+
+    it('allows one more while the requester is under the cap', async () => {
+      await build({ 'requests.max_active_per_user': 3 });
+      const manager = setup(2);
+
+      await expect(
+        service.createRequest('requester', { item_id: 'item-1' }),
+      ).resolves.toMatchObject({ state: true });
+      expect(manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('pg_advisory_xact_lock'),
+        [LockNamespace.REQUEST_CAP, 'requester'],
+      );
+    });
+
+    it('refuses a request once the requester is at the daily cap', async () => {
+      await build({ 'requests.max_per_day_per_user': 5 });
+      setup(5);
+
+      await expect(
+        service.createRequest('requester', { item_id: 'item-1' }),
+      ).rejects.toThrow('You can make 5 requests a day');
+    });
+
+    it('counts nothing and takes no lock when both caps are off', async () => {
+      await build({
+        'requests.max_active_per_user': 0,
+        'requests.max_per_day_per_user': 0,
+      });
+      const manager = setup(99);
+
+      await service.createRequest('requester', { item_id: 'item-1' });
+
+      expect(manager.count).not.toHaveBeenCalled();
+      expect(manager.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('pg_advisory_xact_lock'),
+        expect.anything(),
+      );
     });
   });
 });

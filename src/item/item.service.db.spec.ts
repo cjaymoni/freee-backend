@@ -22,6 +22,8 @@ import {
 } from '../common/testing/test-database';
 import { LocationNamesService } from '../locations/location-names.service';
 import { NotificationService } from '../notification/notification.service';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 import { StaffInboxService } from '../notification/staff-inbox.service';
 
 /**
@@ -81,6 +83,10 @@ describeDb('ItemService.findAll on Postgres', () => {
             useValue: ds.getRepository(entity),
           }),
         ),
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(),
+        },
         { provide: CloudinaryService, useValue: {} },
         { provide: ItemViewService, useValue: {} },
         {

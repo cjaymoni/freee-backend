@@ -32,10 +32,11 @@
     "migration:show": "npm run typeorm -- migration:show -d src/config/data-source.ts",
     "schema:drop": "npm run typeorm -- schema:drop -d src/config/data-source.ts",
     "schema:sync": "npm run typeorm -- schema:sync -d src/config/data-source.ts",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
+    "@nestjs-modules/mailer": "^2.0.2",
     "@nestjs/cache-manager": "^3.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -79,7 +80,6 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
-    "@nestjs-modules/mailer": "^2.0.2",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",

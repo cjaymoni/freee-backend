@@ -1,5 +1,4 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
@@ -8,19 +7,20 @@ import { CreateItemDto } from '../item/dto/create-item.dto';
 import { ItemCondition, ModerationStatus } from '../item/entities/item.entity';
 import { FoundingFreerService } from './founding-freer.service';
 import { FOUNDING_REVIEW_REASON } from './founding-freer.constants';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
 describe('FoundingFreerService', () => {
   let users: { findOne: jest.Mock; update: jest.Mock };
   let itemService: { create: jest.Mock };
   let userService: { invalidateUserCache: jest.Mock };
-  let open: string;
+  let isOpen: boolean;
 
   const service = () =>
     new FoundingFreerService(
       users as unknown as Repository<UserEntity>,
       userService as unknown as UserService,
       itemService as unknown as ItemService,
-      { get: () => open } as unknown as ConfigService,
+      stubPlatformSettings({ 'platform.founding_freers_open': isOpen }),
     );
 
   const dto = {
@@ -30,7 +30,7 @@ describe('FoundingFreerService', () => {
   const photo = [{ originalname: 'chair.jpg' }] as Express.Multer.File[];
 
   beforeEach(() => {
-    open = 'true';
+    isOpen = true;
     users = { findOne: jest.fn(), update: jest.fn() };
     itemService = {
       create: jest.fn().mockResolvedValue({
@@ -81,7 +81,7 @@ describe('FoundingFreerService', () => {
     });
 
     it('is refused once sign-up closes', async () => {
-      open = 'false';
+      isOpen = false;
       await expect(service().join('u1', {})).rejects.toThrow(
         ForbiddenException,
       );
@@ -114,7 +114,7 @@ describe('FoundingFreerService', () => {
     });
 
     it('is refused once sign-up closes', async () => {
-      open = 'false';
+      isOpen = false;
       await expect(service().createItem('u1', dto, photo)).rejects.toThrow(
         ForbiddenException,
       );

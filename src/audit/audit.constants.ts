@@ -19,6 +19,7 @@ export enum AuditEntityType {
   REPORTS = 'reports',
   NOTIFICATIONS = 'notifications',
   ANNOUNCEMENTS = 'announcements',
+  PLATFORM_SETTINGS = 'platform_settings',
 }
 
 /**

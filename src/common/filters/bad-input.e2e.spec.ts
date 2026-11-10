@@ -10,6 +10,8 @@ import { CategoryService } from '../../category/category.service';
 import { ItemViewController } from '../../item-view/item-view.controller';
 import { ItemViewService } from '../../item-view/item-view.service';
 import { AppError } from '../app-error';
+import { PlatformSettingsService } from '../../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../../platform-settings/testing/stub-platform-settings';
 
 /**
  * Malformed ids and enums on public GETs are rejected before they reach
@@ -25,6 +27,10 @@ describe('public GETs with malformed input', () => {
     const module = await Test.createTestingModule({
       controllers: [ItemController, CategoryController, ItemViewController],
       providers: [
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(),
+        },
         { provide: ItemService, useValue: itemService },
         { provide: UserActivityService, useValue: {} },
         { provide: CategoryService, useValue: categoryService },

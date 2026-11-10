@@ -5,6 +5,8 @@ import { ItemRequestController } from './item-request.controller';
 import { ItemRequestService } from './item-request.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiExceptionFilter } from '../common/filters/api-exception.filter';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
 describe('ItemRequestController paging', () => {
   let app: INestApplication;
@@ -16,7 +18,13 @@ describe('ItemRequestController paging', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [ItemRequestController],
-      providers: [{ provide: ItemRequestService, useValue: service }],
+      providers: [
+        { provide: ItemRequestService, useValue: service },
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(),
+        },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({

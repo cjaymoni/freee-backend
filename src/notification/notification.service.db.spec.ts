@@ -6,6 +6,7 @@ import { UserEntity } from '../user/entities/user.entity';
 import { UserPreferenceEntity } from '../user/entities/user-preference.entity';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { FirebaseService } from '../firebase/firebase.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 import { MailService } from '../mail/mail.service';
 import { MoveFcmTokensToSessions1797000000000 } from '../migrations/1797000000000-MoveFcmTokensToSessions';
 import {
@@ -76,6 +77,7 @@ describeWithDatabase('NotificationService devices on Postgres', () => {
       ds,
       firebase as unknown as FirebaseService,
       { sendNotice: jest.fn() } as unknown as MailService,
+      stubPlatformSettings(),
     );
     [ama, kofi] = await ds.getRepository(UserEntity).save([
       { email: 'ama@example.com', first_name: 'Ama' },

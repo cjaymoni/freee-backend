@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ItemService } from './item.service';
+import { LockNamespace } from '../common/advisory-lock';
 import {
   ItemEntity,
   ItemCondition,
@@ -27,6 +28,9 @@ import { NotificationService } from '../notification/notification.service';
 import { StaffInboxService } from '../notification/staff-inbox.service';
 import { LISTING_REVIEW_REASON } from './listing-review';
 import { NotificationCategory } from '../notification/notification.types';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
+import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
+import type { SettingValues } from '../platform-settings/settings.registry';
 
 const mockUser: UserEntity & { items_count?: number } = {
   id: 'user-1',
@@ -247,7 +251,15 @@ describe('ItemService', () => {
   let service: ItemService;
   let mockQueryBuilder: ReturnType<typeof buildQueryBuilder>;
 
+  // What the pre-upload cap check counts through: the repository's own
+  // manager, with no transaction and so no lock.
+  const mockRepoManager = {
+    count: jest.fn().mockResolvedValue(0),
+    query: jest.fn().mockResolvedValue([]),
+  };
+
   const mockItemRepo = {
+    manager: mockRepoManager,
     createQueryBuilder: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn(),
@@ -292,13 +304,19 @@ describe('ItemService', () => {
   // transaction wrote.
   const mockCategoryRepo = { exists: jest.fn().mockResolvedValue(true) };
 
+  // The transaction's manager. `count` answers the per-user listing caps and
+  // `query` stands in for the advisory lock they take.
+  const mockManager = {
+    getRepository: (entity: unknown) =>
+      entity === ItemEntity ? mockItemRepo : mockImageRepo,
+    query: jest.fn().mockResolvedValue([]),
+    count: jest.fn().mockResolvedValue(0),
+  };
+
   const mockDataSource = {
     getRepository: jest.fn(() => mockCategoryRepo),
     transaction: jest.fn((work: (manager: unknown) => Promise<unknown>) =>
-      work({
-        getRepository: (entity: unknown) =>
-          entity === ItemEntity ? mockItemRepo : mockImageRepo,
-      }),
+      work(mockManager),
     ),
   };
 
@@ -312,10 +330,19 @@ describe('ItemService', () => {
       .mockResolvedValue({ isNew: true, view: { id: 'view-1' } }),
   };
 
-  beforeEach(async () => {
+  /**
+   * Builds the service against the mocked repositories. `settings` overrides
+   * the shipped platform defaults, for the tests that exercise a limit staff
+   * have changed.
+   */
+  const build = async (settings: Partial<SettingValues> = {}) => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ItemService,
+        {
+          provide: PlatformSettingsService,
+          useValue: stubPlatformSettings(settings),
+        },
         { provide: getRepositoryToken(ItemEntity), useValue: mockItemRepo },
         {
           provide: getRepositoryToken(ItemImageEntity),
@@ -343,7 +370,9 @@ describe('ItemService', () => {
     }).compile();
 
     service = module.get<ItemService>(ItemService);
-  });
+  };
+
+  beforeEach(() => build());
 
   afterEach(() => jest.clearAllMocks());
 
@@ -406,6 +435,23 @@ describe('ItemService', () => {
         expect.objectContaining({ type: 'listing_awaiting_review' }),
         'user-1',
       );
+    });
+
+    it('publishes a new listing at once when the review queue is off', async () => {
+      await build({ 'listings.hold_new_for_review': false });
+      const createDto = plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+      });
+      await service.create('user-1', createDto);
+
+      expect(mockItemRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          moderation_status: ModerationStatus.VISIBLE,
+          moderation_reason: null,
+        }),
+      );
+      expect(mockStaffInbox.toAllStaff).not.toHaveBeenCalled();
     });
 
     it('keeps an item posted without a price free', async () => {
@@ -1653,6 +1699,188 @@ describe('ItemService', () => {
         ).find(([p]) => 'featured_now' in p);
         expect(params?.[0].featured_now).toBeInstanceOf(Date);
       });
+    });
+  });
+
+  describe('platform limits', () => {
+    const anItem = () =>
+      plainToInstance(CreateItemDto, {
+        title: 'Bicycle',
+        condition: ItemCondition.GOOD,
+      });
+
+    const photos = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        originalname: `photo-${i}.jpg`,
+        size: 1024,
+        buffer: Buffer.from(''),
+      })) as Express.Multer.File[];
+
+    beforeEach(() => {
+      mockItemRepo.create.mockImplementation((data: Partial<ItemEntity>) => ({
+        ...data,
+      }));
+      mockItemRepo.save.mockImplementation((entity: ItemEntity) =>
+        Promise.resolve({ ...entity, id: entity.id ?? 'item-1' }),
+      );
+    });
+
+    it('refuses more photos than staff allow, before uploading any', async () => {
+      await build({ 'listings.max_images': 3 });
+
+      await expect(
+        service.create('user-1', anItem(), photos(4)),
+      ).rejects.toThrow('A listing can have up to 3 photos');
+      expect(mockCloudinary.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('counts the photos a listing already has towards the limit', async () => {
+      await build({ 'listings.max_images': 3 });
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([
+        { id: 'img-1', item_id: 'item-1', is_deleted: false },
+        { id: 'img-2', item_id: 'item-1', is_deleted: false },
+      ]);
+
+      // Two already up, two more asked for: one over.
+      await expect(
+        service.update('user-1', 'item-1', {}, photos(2)),
+      ).rejects.toThrow('This would leave it with 4; remove 1 photo first.');
+      expect(mockCloudinary.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('accepts exactly as many photos as staff allow', async () => {
+      await build({ 'listings.max_images': 3 });
+
+      await expect(
+        service.create('user-1', anItem(), photos(3)),
+      ).resolves.toMatchObject({ state: true });
+    });
+
+    it('refuses a photo over the size staff allow', async () => {
+      await build({ 'listings.max_image_mb': 2 });
+      const tooBig = [
+        {
+          originalname: 'huge.jpg',
+          size: 3 * 1024 * 1024,
+          buffer: Buffer.from(''),
+        },
+      ] as Express.Multer.File[];
+
+      await expect(service.create('user-1', anItem(), tooBig)).rejects.toThrow(
+        '"huge.jpg" is larger than the 2 MB limit',
+      );
+      expect(mockCloudinary.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('refuses a listing once the owner is at the cap', async () => {
+      await build({ 'listings.max_active_per_user': 2 });
+      mockRepoManager.count.mockResolvedValue(2);
+
+      await expect(service.create('user-1', anItem())).rejects.toThrow(
+        'You can have 2 listings up at a time, including any waiting for review',
+      );
+      expect(mockItemRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('counts the listings waiting for review as well as the live ones', async () => {
+      await build({ 'listings.max_active_per_user': 2 });
+      mockRepoManager.count.mockResolvedValue(0);
+
+      await service.create('user-1', anItem());
+
+      // New listings start hidden while the review queue is on, so a cap that
+      // only counted visible ones would never count anything at the moment it
+      // is checked, and the user could post without limit.
+      const [entity, options] = mockRepoManager.count.mock.calls[0] as [
+        unknown,
+        { where: Record<string, unknown>[] },
+      ];
+      expect(entity).toBe(ItemEntity);
+      expect(options.where).toHaveLength(2);
+      expect(options.where[0]).toMatchObject({
+        user_id: 'user-1',
+        is_deleted: false,
+        moderation_status: ModerationStatus.VISIBLE,
+      });
+      expect(options.where[1]).toMatchObject({
+        user_id: 'user-1',
+        is_deleted: false,
+        moderation_status: ModerationStatus.HIDDEN,
+      });
+      // Hidden only for a review reason: a moderator's takedown is not
+      // something the owner can withdraw, so it must not count.
+      expect(options.where[1].moderation_reason).toBeDefined();
+    });
+
+    it('lets an edit through that leaves an over-limit listing no bigger', async () => {
+      // The cap was lowered under a listing that already had more. Refusing
+      // its title edit would strand it, so only growth is refused.
+      await build({ 'listings.max_images': 2 });
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([
+        { id: 'img-1', item_id: 'item-1', is_deleted: false },
+        { id: 'img-2', item_id: 'item-1', is_deleted: false },
+        { id: 'img-3', item_id: 'item-1', is_deleted: false },
+      ]);
+
+      await expect(
+        service.update('user-1', 'item-1', { title: 'Nicer chair' }),
+      ).resolves.toMatchObject({ state: true });
+    });
+
+    it('still refuses an edit that would grow an over-limit listing', async () => {
+      await build({ 'listings.max_images': 2 });
+      mockItemRepo.findOne.mockResolvedValue({ ...mockItemEntity });
+      mockImageRepo.find.mockResolvedValue([
+        { id: 'img-1', item_id: 'item-1', is_deleted: false },
+        { id: 'img-2', item_id: 'item-1', is_deleted: false },
+        { id: 'img-3', item_id: 'item-1', is_deleted: false },
+      ]);
+
+      await expect(
+        service.update('user-1', 'item-1', {}, photos(1)),
+      ).rejects.toThrow('This would leave it with 4');
+    });
+
+    it('locks the owner before counting, so two posts cannot race', async () => {
+      await build({ 'listings.max_active_per_user': 2 });
+      mockManager.count.mockResolvedValue(1);
+      mockRepoManager.count.mockResolvedValue(1);
+
+      await service.create('user-1', anItem());
+
+      // Inside the save transaction, where the lock can be scoped to it.
+      expect(mockManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('pg_advisory_xact_lock'),
+        [LockNamespace.LISTING_CAP, 'user-1'],
+      );
+      // The pre-upload check takes none: there is no transaction out there.
+      expect(mockRepoManager.query).not.toHaveBeenCalled();
+    });
+
+    it('refuses a listing once the owner is at the daily cap', async () => {
+      await build({ 'listings.max_per_day_per_user': 3 });
+      mockRepoManager.count.mockResolvedValue(3);
+
+      await expect(service.create('user-1', anItem())).rejects.toThrow(
+        'You can post 3 listings a day',
+      );
+      // Refused before a byte went to Cloudinary.
+      expect(mockCloudinary.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('counts nothing and takes no lock when both caps are off', async () => {
+      await build({
+        'listings.max_active_per_user': 0,
+        'listings.max_per_day_per_user': 0,
+      });
+
+      await service.create('user-1', anItem());
+
+      expect(mockManager.query).not.toHaveBeenCalled();
+      expect(mockManager.count).not.toHaveBeenCalled();
+      expect(mockRepoManager.count).not.toHaveBeenCalled();
     });
   });
 });

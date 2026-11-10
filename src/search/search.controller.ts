@@ -1,13 +1,10 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
-import {
-  SearchService,
-  POPULAR_MIN_SEARCHERS,
-  POPULAR_WINDOW_DAYS,
-} from './search.service';
+import { SearchService, POPULAR_MIN_SEARCHERS } from './search.service';
 import { PopularSearchDto } from './dto/popular-search.dto';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { AppError } from '../common/app-error';
+import { SkipPageSize } from '../common/decorators/skip-page-size.decorator';
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
@@ -18,10 +15,14 @@ export class SearchController {
   constructor(private readonly searchService: SearchService) {}
 
   @Get('popular')
+  // `limit` here is how many terms to return, with its own ceiling below, so
+  // the platform page cap is both the wrong bound and the wrong message.
+  @SkipPageSize()
   @ApiOperation({
     summary: 'Get popular search terms',
     description:
-      `Terms searched through \`GET /items?query=\` over the last ${POPULAR_WINDOW_DAYS} days, ` +
+      'Terms searched through `GET /items?query=` inside the popular-searches ' +
+      'window set in the back office (7 days unless staff changed it), ' +
       'ranked by how many different people searched them (each searcher counts ' +
       'once per day). Terms are lowercased and without accents. A term is only ' +
       `listed once at least ${POPULAR_MIN_SEARCHERS} different people have searched it, ` +

@@ -6,6 +6,7 @@ import { UserPreferenceEntity } from '../user/entities/user-preference.entity';
 import { UserSessionEntity } from '../auth/entities/user-session.entity';
 import { FirebaseService } from '../firebase/firebase.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { Notice } from './notification.types';
 import { releaseFcmToken } from './device-tokens';
 
@@ -37,9 +38,6 @@ class SessionNotLive extends Error {}
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** How long an unopened device keeps getting pushes. */
-export const PUSH_IDLE_DAYS = 90;
-
 /**
  * Sends a user push notifications and emails, and keeps track of the
  * devices they can be pushed to.
@@ -63,7 +61,19 @@ export class NotificationService {
     private readonly dataSource: DataSource,
     private readonly firebase: FirebaseService,
     private readonly mail: MailService,
+    private readonly settings: PlatformSettingsService,
   ) {}
+
+  /**
+   * The oldest a session may be and still be pushed to. Shared with the back
+   * office's audience count, so the number it shows is the number that will
+   * actually be reached.
+   */
+  pushIdleSince(): Date {
+    return new Date(
+      Date.now() - this.settings.get('platform.push_idle_days') * DAY,
+    );
+  }
 
   /**
    * Tell a user something, by push and, if the notice has one, by email,
@@ -199,8 +209,8 @@ export class NotificationService {
    * that sat idle past its refresh token still counts: the app is still
    * installed, and FCM tells us once a token stops working.
    *
-   * Up to a point: one not opened for PUSH_IDLE_DAYS is left out. A phone
-   * that changed accounts without the server hearing of it (signed out
+   * Up to a point: one not opened within the push idle window is left out.
+   * A phone that changed accounts without the server hearing of it (signed out
    * offline, and the next login sent no token) would otherwise show the old
    * account's pushes for good. created_at measures it, since an app in use
    * gets a new session on every refresh.
@@ -216,7 +226,7 @@ export class NotificationService {
       .andWhere('s.is_active = true')
       .andWhere('s.fcm_token IS NOT NULL')
       .andWhere('s.created_at > :idleSince', {
-        idleSince: new Date(Date.now() - PUSH_IDLE_DAYS * DAY),
+        idleSince: this.pushIdleSince(),
       });
     if (skipDevicesOf.length) {
       // A device is known by its token, which survives session rotation.
