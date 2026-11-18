@@ -839,6 +839,43 @@ describe('ItemRequestService', () => {
         expect(mockNotifications.notify).not.toHaveBeenCalled();
       });
 
+      it('sends no push for a tap minutes after the last reminder', async () => {
+        const { manager } = setup({
+          pickup_marked_by: 'finder',
+          pickup_marked_at: new Date(Date.now() - 60 * 60_000),
+          pickup_reminded_at: new Date(Date.now() - 2 * 60_000),
+        });
+
+        await service.markPickedUp('finder', 'req-1');
+
+        expect(manager.save).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUser).not.toHaveBeenCalled();
+        expect(mockNotifications.notify).not.toHaveBeenCalled();
+      });
+
+      it('skips the push on a device that has the app open', async () => {
+        setup(markedBy('finder'));
+        mockRealtime.foregroundSessions.mockReturnValueOnce(['session-open']);
+
+        await service.markPickedUp('finder', 'req-1');
+
+        expect(mockNotifications.notify).toHaveBeenCalledWith(
+          'freer',
+          expect.anything(),
+          { skipDevicesOf: ['session-open'] },
+        );
+      });
+
+      it('fails loudly on a mark with no time rather than skip the reminder', async () => {
+        setup({ pickup_marked_by: 'finder', pickup_marked_at: null });
+
+        // A 500 to the client; the cause is logged with the request id.
+        await expect(
+          service.markPickedUp('finder', 'req-1'),
+        ).rejects.toMatchObject({ status: 500 });
+        expect(mockNotifications.notify).not.toHaveBeenCalled();
+      });
+
       it('answers a tap after the pickup completed with the finished request', async () => {
         const { manager, chat } = setup(
           { ...markedBy('finder'), status: RequestStatus.COMPLETED },
@@ -1029,6 +1066,14 @@ describe('ItemRequestService', () => {
           service.declinePickedUp('freer', 'req-1'),
         ).rejects.toMatchObject({ status: 400 });
       });
+    });
+
+    it('sends no pickup event when completing by code with nothing marked', async () => {
+      setup({ confirmation_code: 'ABC234', pickup_attempts: 0 });
+
+      await service.confirmPickup('finder', 'req-1', 'ABC234');
+
+      expect(mockRealtime.emitToUsers).not.toHaveBeenCalled();
     });
 
     it('closes a pending sheet when the pickup completes by code', async () => {

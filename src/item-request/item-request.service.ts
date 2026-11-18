@@ -62,10 +62,12 @@ const PICKUP_REMINDER_BATCH = 200;
 const PICKUP_REMINDER_CONCURRENCY = 10;
 
 /**
- * How soon a repeat "Picked up" tap may raise the other party's sheet again,
- * so one side can't hammer the other's screen by tapping.
+ * How soon a repeat "Picked up" tap may remind the other party again. A
+ * reminder is a lock-screen push, not just a socket event, so this is sized
+ * for notifications: one side can't buzz the other's phone by tapping. The
+ * sheet can't be dismissed, so an open app is still showing it meanwhile.
  */
-const PICKUP_RERAISE_COOLDOWN_MS = 30_000;
+const PICKUP_RERAISE_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** One row claimed by the reminder job. */
 interface PickupReminderRow {
@@ -888,10 +890,10 @@ export class ItemRequestService {
    * confirm sheet; the request stays confirmed until they answer.
    *
    * If the other party had already marked it, this is them agreeing and the
-   * pickup completes. Tapping again after marking raises the other party's
-   * sheet again, at most once per PICKUP_RERAISE_COOLDOWN_MS, and counts as
-   * a reminder: the next timed one is a full interval later. A tap after the
-   * pickup completed returns the completed request.
+   * pickup completes. Tapping again after marking sends the other party a
+   * reminder - socket event and push - at most once per
+   * PICKUP_RERAISE_COOLDOWN_MS, and the next timed one is a full interval
+   * later. A tap after the pickup completed returns the completed request.
    *
    * @throws ForbiddenException when the caller is not one of the two parties.
    * @throws BadRequestException when the request is not confirmed.
@@ -925,7 +927,15 @@ export class ItemRequestService {
           }
           request.pickup_reminded_at = new Date();
           const reraised = await manager.save(request);
-          return { kind: 'reraised' as const, request: reraised, item };
+          return {
+            kind: 'reraised' as const,
+            request: reraised,
+            item,
+            // Built here, inside the transaction, so a mark with no time -
+            // broken data - rolls the stamp back and fails loudly instead of
+            // postponing the reminder with nothing sent.
+            reminder: this.toReminderRow(reraised, item.title ?? null),
+          };
         }
 
         if (request.pickup_marked_by) {
@@ -981,27 +991,11 @@ export class ItemRequestService {
           itemId: request.item_id,
           requestId: request.id,
         });
-      }
-      if (outcome.kind === 'marked') {
         this.emitPickupConfirmationRequested(request, item.title ?? null);
-      }
-      // A re-tap stands in for the next timed reminder, so it has to deliver
-      // like one: the push matters most when the other app is closed.
-      if (
-        outcome.kind === 'reraised' &&
-        request.pickup_marked_by &&
-        request.pickup_marked_at
-      ) {
-        await this.remindPickupConfirmation({
-          id: request.id,
-          item_id: request.item_id,
-          owner_id: request.owner_id,
-          requester_id: request.requester_id,
-          status: request.status,
-          pickup_marked_by: request.pickup_marked_by,
-          pickup_marked_at: request.pickup_marked_at,
-          item_title: item.title ?? null,
-        });
+      } else if (outcome.kind === 'reraised') {
+        // A re-tap stands in for the next timed reminder, so it delivers like
+        // one: the push matters most when the other app is closed.
+        await this.remindPickupConfirmation(outcome.reminder);
       }
 
       return {
@@ -1269,6 +1263,33 @@ export class ItemRequestService {
       this.logger.log(`Sent ${rows.length} pickup confirmation reminder(s)`);
     }
     return rows.length;
+  }
+
+  /**
+   * The reminder for a request someone has marked, in the shape the cron
+   * claims. Shared so the cron and a re-tap deliver identically.
+   *
+   * @throws Error when the request has no mark, which no caller should pass.
+   */
+  private toReminderRow(
+    request: ItemRequestEntity,
+    itemTitle: string | null,
+  ): PickupReminderRow {
+    if (!request.pickup_marked_by || !request.pickup_marked_at) {
+      throw new Error(
+        `Pickup reminder for request ${request.id} has no mark to remind about`,
+      );
+    }
+    return {
+      id: request.id,
+      item_id: request.item_id,
+      owner_id: request.owner_id,
+      requester_id: request.requester_id,
+      status: request.status,
+      pickup_marked_by: request.pickup_marked_by,
+      pickup_marked_at: request.pickup_marked_at,
+      item_title: itemTitle,
+    };
   }
 
   private async remindPickupConfirmation(

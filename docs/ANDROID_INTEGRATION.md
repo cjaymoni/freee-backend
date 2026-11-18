@@ -427,8 +427,8 @@ when a `pickup_confirmation` push is opened.
 
 Retries are safe. Confirming again after the pickup completed, or declining
 again when there's no mark left, returns **200** with the request as it is.
-Tapping "Picked up" again re-raises the other person's sheet at most every 30
-seconds.
+Tapping "Picked up" again re-sends the other person the reminder (socket event
+and push) at most every 5 minutes; taps in between are accepted and do nothing.
 
 If confirm or decline returns **400** or **409**, the request changed under the
 user (the other side cancelled, the item was removed). Re-fetch the request and
