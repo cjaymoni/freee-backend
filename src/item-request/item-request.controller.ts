@@ -7,7 +7,6 @@ import {
   Param,
   Query,
   UseGuards,
-  Request,
   DefaultValuePipe,
   ParseIntPipe,
   ParseEnumPipe,
@@ -24,10 +23,10 @@ import {
 } from '@nestjs/swagger';
 import { ItemRequestService } from './item-request.service';
 import { CreateItemRequestDto } from './dto/create-item-request.dto';
-import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
 // import { ConfirmPickupDto } from './dto/confirm-pickup.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { GetUser } from '../common/decorators/get-user.decorator';
 import { RequestStatus } from './entities/item-request.entity';
 import { ServiceResponseDto } from '../common/service-response.dto';
 import { ItemRequestResponseDto } from './dto/item-request-response.dto';
@@ -64,10 +63,9 @@ export class ItemRequestController {
   @ApiResponse({ status: 404, description: 'Item not found' })
   @ApiResponse({ status: 409, description: 'Already have a pending request' })
   async createRequest(
-    @Request() req,
+    @GetUser('userId') requesterId: string,
     @Body() createItemRequestDto: CreateItemRequestDto,
   ) {
-    const requesterId = req.user.userId;
     return this.itemRequestService.createRequest(
       requesterId,
       createItemRequestDto,
@@ -101,16 +99,10 @@ export class ItemRequestController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Request not found' })
   async confirmRequest(
-    @Request() req,
+    @GetUser('userId') ownerId: string,
     @Param('requestId') requestId: string,
-    @Body() updateDto: UpdateItemRequestDto,
   ) {
-    const ownerId = req.user.userId;
-    return this.itemRequestService.confirmRequest(
-      ownerId,
-      requestId,
-      updateDto,
-    );
+    return this.itemRequestService.confirmRequest(ownerId, requestId);
   }
 
   @Patch(':requestId/cancel')
@@ -139,11 +131,10 @@ export class ItemRequestController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Request not found' })
   async cancelRequest(
-    @Request() req,
+    @GetUser('userId') userId: string,
     @Param('requestId') requestId: string,
     @Body() cancelDto: CancelRequestDto,
   ) {
-    const userId = req.user.userId;
     return this.itemRequestService.cancelRequest(userId, requestId, cancelDto);
   }
 
@@ -180,8 +171,11 @@ export class ItemRequestController {
     status: 409,
     description: 'Item was removed or is no longer reserved',
   })
-  async markPickedUp(@Request() req, @Param('requestId') requestId: string) {
-    return this.itemRequestService.markPickedUp(req.user.userId, requestId);
+  async markPickedUp(
+    @GetUser('userId') userId: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.itemRequestService.markPickedUp(userId, requestId);
   }
 
   @Patch(':requestId/picked-up/confirm')
@@ -219,8 +213,11 @@ export class ItemRequestController {
     status: 409,
     description: 'Item was removed or is no longer reserved',
   })
-  async confirmPickedUp(@Request() req, @Param('requestId') requestId: string) {
-    return this.itemRequestService.confirmPickedUp(req.user.userId, requestId);
+  async confirmPickedUp(
+    @GetUser('userId') userId: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.itemRequestService.confirmPickedUp(userId, requestId);
   }
 
   @Patch(':requestId/picked-up/decline')
@@ -260,8 +257,11 @@ export class ItemRequestController {
     status: 409,
     description: 'Item was removed or is no longer reserved',
   })
-  async declinePickedUp(@Request() req, @Param('requestId') requestId: string) {
-    return this.itemRequestService.declinePickedUp(req.user.userId, requestId);
+  async declinePickedUp(
+    @GetUser('userId') userId: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.itemRequestService.declinePickedUp(userId, requestId);
   }
 
   @Get('pickup-confirmations')
@@ -311,13 +311,13 @@ export class ItemRequestController {
     },
   })
   async getPendingPickupConfirmations(
-    @Request() req,
+    @GetUser('userId') userId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     assertPaging(page, limit);
     return this.itemRequestService.getPendingPickupConfirmations(
-      req.user.userId,
+      userId,
       page,
       limit,
     );
@@ -366,11 +366,10 @@ export class ItemRequestController {
    * @ApiResponse({ status: 403, description: 'Forbidden' })
    * @ApiResponse({ status: 404, description: 'Request not found' })
    * async confirmPickup(
-   *   @Request() req,
+   *   @GetUser('userId') requesterId: string,
    *   @Param('requestId') requestId: string,
    *   @Body() confirmPickupDto: ConfirmPickupDto,
    * ) {
-   *   const requesterId = req.user.userId;
    *   return this.itemRequestService.confirmPickup(
    *     requesterId,
    *     requestId,
@@ -406,10 +405,9 @@ export class ItemRequestController {
    * @ApiResponse({ status: 403, description: 'Forbidden' })
    * @ApiResponse({ status: 404, description: 'Request not found' })
    * async regeneratePickupCode(
-   *   @Request() req,
+   *   @GetUser('userId') ownerId: string,
    *   @Param('requestId') requestId: string,
    * ) {
-   *   const ownerId = req.user.userId;
    *   return this.itemRequestService.regeneratePickupCode(ownerId, requestId);
    * }
    *
@@ -450,10 +448,9 @@ export class ItemRequestController {
    *   description: 'Already asked within the last hour',
    * })
    * async requestNewPickupCode(
-   *   @Request() req,
+   *   @GetUser('userId') requesterId: string,
    *   @Param('requestId') requestId: string,
    * ) {
-   *   const requesterId = req.user.userId;
    *   return this.itemRequestService.requestNewPickupCode(requesterId, requestId);
    * }
    */
@@ -505,13 +502,12 @@ export class ItemRequestController {
     },
   })
   async getUserRequests(
-    @Request() req,
+    @GetUser('userId') userId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
     @Query('status', new ParseEnumPipe(RequestStatus, { optional: true }))
     status?: RequestStatus,
   ) {
-    const userId = req.user.userId;
     assertPaging(page, limit);
     return this.itemRequestService.getUserRequests(userId, page, limit, status);
   }
@@ -563,13 +559,12 @@ export class ItemRequestController {
     },
   })
   async getItemRequests(
-    @Request() req,
+    @GetUser('userId') ownerId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
     @Query('status', new ParseEnumPipe(RequestStatus, { optional: true }))
     status?: RequestStatus,
   ) {
-    const ownerId = req.user.userId;
     assertPaging(page, limit);
     return this.itemRequestService.getItemRequests(
       ownerId,
@@ -600,8 +595,10 @@ export class ItemRequestController {
     },
   })
   @ApiResponse({ status: 404, description: 'Request not found' })
-  async getRequestById(@Request() req, @Param('requestId') requestId: string) {
-    const userId = req.user.userId;
+  async getRequestById(
+    @GetUser('userId') userId: string,
+    @Param('requestId') requestId: string,
+  ) {
     return this.itemRequestService.getRequestById(requestId, userId);
   }
 }

@@ -46,10 +46,10 @@ const mockUser: UserEntity & { items_count?: number } = {
   member_since: new Date('2024-01-01T00:00:00.000Z'),
   phone_number: '+233243225121',
   items_count: 3,
-} as any;
+} as unknown as UserEntity & { items_count?: number };
 
 const mockLocation = (lat: number, lng: number) =>
-  ({ latitude: lat, longitude: lng }) as any;
+  ({ latitude: lat, longitude: lng }) as LocationEntity;
 
 const mockItemEntity: ItemEntity = {
   id: 'item-1',
@@ -80,7 +80,7 @@ const mockItemEntity: ItemEntity = {
   user: mockUser,
   category: null,
   deletedByUser: null,
-} as any;
+} as unknown as ItemEntity;
 
 const mockImage = (
   id: string,
@@ -166,13 +166,16 @@ describe('ItemResponseDto.fromEntity', () => {
     const entity = {
       ...mockItemEntity,
       user: { ...mockUser, first_name: null, last_name: null },
-    } as any;
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.name).toBe('');
   });
 
   it('sets user to undefined when user relation is not loaded', () => {
-    const entity = { ...mockItemEntity, user: undefined } as any;
+    const entity = {
+      ...mockItemEntity,
+      user: undefined,
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user).toBeUndefined();
   });
@@ -187,7 +190,7 @@ describe('ItemResponseDto.fromEntity', () => {
     const entity = {
       ...mockItemEntity,
       user: { ...mockUser, items_count: undefined },
-    } as any;
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.items_count).toBe(0);
   });
@@ -1438,8 +1441,8 @@ describe('ItemService', () => {
 
         await service.findAll({ query: '  Chaisé ', searcher_key: 'user-9' });
 
-        const call = mockQueryBuilder.andWhere.mock.calls.find(
-          ([sql]: [string]) => sql.includes(':search'),
+        const call = (mockQueryBuilder.andWhere.mock.calls as unknown[][]).find(
+          ([sql]) => typeof sql === 'string' && sql.includes(':search'),
         );
         expect(call).toBeDefined();
         const [sql, params] = call as [string, { search: string }];
@@ -1626,7 +1629,10 @@ describe('ItemService', () => {
     });
 
     it('does not set user when user relation is not loaded', async () => {
-      const entityWithoutUser = { ...mockItemEntity, user: undefined } as any;
+      const entityWithoutUser = {
+        ...mockItemEntity,
+        user: undefined,
+      } as unknown as ItemEntity;
       mockQueryBuilder = buildQueryBuilder(
         [entityWithoutUser],
         [{ user_items_count: '0' }],

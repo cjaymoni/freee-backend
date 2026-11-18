@@ -301,9 +301,7 @@ describe('ItemRequestService', () => {
       };
       useItem(manager);
 
-      await expect(
-        service.confirmRequest('owner', 'req-1', {}),
-      ).rejects.toThrow(
+      await expect(service.confirmRequest('owner', 'req-1')).rejects.toThrow(
         'This listing has been hidden by moderators and cannot be confirmed',
       );
       expect(manager.save).not.toHaveBeenCalled();

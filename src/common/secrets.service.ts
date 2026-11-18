@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { requireJwtSecret } from '../auth/jwt-secret';
 
 /**
  * Secrets Manager Service
@@ -25,9 +24,10 @@ export class SecretsService {
 
   /**
    * Get a secret value
-   * In production, this would fetch from AWS Secrets Manager
+   * In production, this would fetch from AWS Secrets Manager. Returns a
+   * promise already so callers don't change when it does.
    */
-  async getSecret(key: string): Promise<string | undefined> {
+  getSecret(key: string): Promise<string | undefined> {
     if (this.isProduction) {
       // TODO: Implement AWS Secrets Manager integration
       // const client = new SecretsManagerClient({ region: 'us-east-1' });
@@ -39,7 +39,7 @@ export class SecretsService {
       );
     }
 
-    return this.configService.get<string>(key);
+    return Promise.resolve(this.configService.get<string>(key));
   }
 
   /**
@@ -53,14 +53,6 @@ export class SecretsService {
       password: await this.getSecret('DB_PASSWORD'),
       database: await this.getSecret('DB_DATABASE'),
     };
-  }
-
-  /**
-   * Get JWT secret
-   */
-  async getJwtSecret(): Promise<string> {
-    // The same rule as the token code, so a blank secret is refused here too.
-    return requireJwtSecret(await this.getSecret('JWT_SECRET'));
   }
 
   /**

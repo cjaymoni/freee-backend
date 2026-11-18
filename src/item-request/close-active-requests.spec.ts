@@ -106,11 +106,15 @@ describe('closeActiveRequests', () => {
 
     const closed = await run({ userId: 'a' });
 
-    expect(manager.update.mock.calls[0][2]).toMatchObject({
-      pickup_marked_by: null,
-      pickup_marked_at: null,
-      pickup_reminded_at: null,
-    });
+    expect(manager.update).toHaveBeenCalledWith(
+      ItemRequestEntity,
+      expect.anything(),
+      expect.objectContaining({
+        pickup_marked_by: null,
+        pickup_marked_at: null,
+        pickup_reminded_at: null,
+      }),
+    );
     expect(closed).toEqual([
       { id: 'r2', owner_id: 'owner', requester_id: 'a' },
     ]);

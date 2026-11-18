@@ -85,6 +85,11 @@ const haversineKm = (
   power(sin(radians(${alias}.longitude - CAST(:lng AS double precision)) / 2), 2)
 )))`;
 
+/**
+ * The poster's live listing count, attached to a loaded user for the item
+ * card (see ItemResponseDto.fromEntity, which reads it back).
+ */
+type WithItemsCount<T> = T & { items_count?: number };
 @Injectable()
 export class ItemService {
   constructor(
@@ -909,7 +914,7 @@ export class ItemService {
     ]);
     pageItems.forEach((entity) => {
       if (entity.user) {
-        (entity.user as any).items_count =
+        (entity.user as WithItemsCount<typeof entity.user>).items_count =
           itemsCountByUser.get(entity.user_id) ?? 0;
       }
     });
@@ -972,9 +977,11 @@ export class ItemService {
     ) {
       throw new NotFoundException(`Item with ID ${id} not found`);
     }
-    const raw = item.raw[0];
+    const raw = item.raw[0] as { user_items_count?: string } | undefined;
     if (entity.user) {
-      (entity.user as any).items_count = Number(raw?.user_items_count ?? 0);
+      (entity.user as WithItemsCount<typeof entity.user>).items_count = Number(
+        raw?.user_items_count ?? 0,
+      );
     }
 
     const savedIds = await this.getSavedItemIds(viewerId);

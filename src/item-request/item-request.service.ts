@@ -23,7 +23,6 @@ import {
   RequestStatus,
 } from './entities/item-request.entity';
 import { CreateItemRequestDto } from './dto/create-item-request.dto';
-import { UpdateItemRequestDto } from './dto/update-item-request.dto';
 import { CancelRequestDto } from './dto/cancel-request.dto';
 import {
   ItemEntity,
@@ -488,7 +487,6 @@ export class ItemRequestService {
   async confirmRequest(
     ownerId: string,
     requestId: string,
-    updateDto: UpdateItemRequestDto,
   ): Promise<ServiceResponseDto<ItemRequestResponseDto>> {
     try {
       const result = await this.dataSource.transaction(async (manager) => {
