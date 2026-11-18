@@ -429,6 +429,8 @@ Retries are safe. Confirming again after the pickup completed, or declining
 again when there's no mark left, returns **200** with the request as it is.
 Tapping "Picked up" again re-sends the other person the reminder (socket event
 and push) at most every 5 minutes; taps in between are accepted and do nothing.
+The response is the same either way, so don't tell the user a reminder was
+sent; show the waiting state.
 
 If confirm or decline returns **400** or **409**, the request changed under the
 user (the other side cancelled, the item was removed). Re-fetch the request and

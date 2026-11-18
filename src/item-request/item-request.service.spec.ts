@@ -802,7 +802,10 @@ describe('ItemRequestService', () => {
       });
 
       it('raises the sheet again when the marker taps after the cooldown', async () => {
-        const { request, chat } = setup(markedBy('finder'));
+        const { request, chat } = setup({
+          pickup_marked_by: 'finder',
+          pickup_marked_at: new Date(Date.now() - 6 * 60_000),
+        });
 
         await service.markPickedUp('finder', 'req-1');
 
@@ -839,6 +842,26 @@ describe('ItemRequestService', () => {
         expect(mockNotifications.notify).not.toHaveBeenCalled();
       });
 
+      it.each([
+        ['4m59s', 4 * 60_000 + 59_000, false],
+        ['5m01s', 5 * 60_000 + 1_000, true],
+      ])(
+        'a tap %s after the last reminder reminds again: %s',
+        async (_label, ago, reminds) => {
+          setup({
+            pickup_marked_by: 'finder',
+            pickup_marked_at: new Date(Date.now() - 60 * 60_000),
+            pickup_reminded_at: new Date(Date.now() - ago),
+          });
+
+          await service.markPickedUp('finder', 'req-1');
+
+          expect(mockNotifications.notify).toHaveBeenCalledTimes(
+            reminds ? 1 : 0,
+          );
+        },
+      );
+
       it('sends no push for a tap minutes after the last reminder', async () => {
         const { manager } = setup({
           pickup_marked_by: 'finder',
@@ -874,6 +897,7 @@ describe('ItemRequestService', () => {
           service.markPickedUp('finder', 'req-1'),
         ).rejects.toMatchObject({ status: 500 });
         expect(mockNotifications.notify).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUser).not.toHaveBeenCalled();
       });
 
       it('answers a tap after the pickup completed with the finished request', async () => {

@@ -24,6 +24,14 @@ export class AddPickupConfirmation1806000000000 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "item_requests" ADD CONSTRAINT "FK_item_requests_pickup_marked_by" FOREIGN KEY ("pickup_marked_by") REFERENCES "users"("id") ON DELETE SET NULL`,
     );
+    // A mark always has a time; see the entity. Not the reverse, because the
+    // foreign key nulls the marker on account deletion and keeps the time.
+    await queryRunner.query(
+      `ALTER TABLE "item_requests" DROP CONSTRAINT IF EXISTS "CHK_item_requests_pickup_mark_has_time"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "item_requests" ADD CONSTRAINT "CHK_item_requests_pickup_mark_has_time" CHECK ("pickup_marked_by" IS NULL OR "pickup_marked_at" IS NOT NULL)`,
+    );
     // The reminder job scans only confirmed requests someone has marked, and
     // filters and sorts on when the waiting party was last nudged.
     await queryRunner.query(
@@ -34,6 +42,9 @@ export class AddPickupConfirmation1806000000000 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_item_requests_pickup_awaiting"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "item_requests" DROP CONSTRAINT IF EXISTS "CHK_item_requests_pickup_mark_has_time"`,
     );
     await queryRunner.query(
       `ALTER TABLE "item_requests" DROP CONSTRAINT IF EXISTS "FK_item_requests_pickup_marked_by"`,

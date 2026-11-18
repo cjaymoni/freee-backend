@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  Check,
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
@@ -36,6 +37,12 @@ export enum RequestStatus {
 // describe, so it lives in AddPickupConfirmation alone; declaring the name
 // with synchronize off stops `synchronize` from dropping it.
 @Index('IDX_item_requests_pickup_awaiting', { synchronize: false })
+// A mark always has a time. The reverse is allowed: deleting the marker's
+// account nulls pickup_marked_by through its foreign key and leaves the time.
+@Check(
+  'CHK_item_requests_pickup_mark_has_time',
+  '"pickup_marked_by" IS NULL OR "pickup_marked_at" IS NOT NULL',
+)
 export class ItemRequestEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

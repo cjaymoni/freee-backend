@@ -67,7 +67,7 @@ const PICKUP_REMINDER_CONCURRENCY = 10;
  * for notifications: one side can't buzz the other's phone by tapping. The
  * sheet can't be dismissed, so an open app is still showing it meanwhile.
  */
-const PICKUP_RERAISE_COOLDOWN_MS = 5 * 60 * 1000;
+const PICKUP_RETAP_REMINDER_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** One row claimed by the reminder job. */
 interface PickupReminderRow {
@@ -229,9 +229,17 @@ export class ItemRequestService {
   }
 
   /**
-   * Re-read a request once its item's lock is held. Under READ COMMITTED each
-   * statement takes a fresh snapshot, so this read reflects anything a
-   * transaction that held the lock before us committed.
+   * Re-read a request once its item's lock is held, and lock the request row
+   * too. Under READ COMMITTED each statement takes a fresh snapshot, so this
+   * read reflects anything a transaction that held the lock before us
+   * committed.
+   *
+   * The row lock is for the pickup reminder job, the one writer that skips
+   * the item lock: with the row locked its SKIP LOCKED claim passes over it,
+   * and if the job got there first this read waits and sees its fresh
+   * pickup_reminded_at - so a re-tap and a timed reminder can't both push.
+   * Always taken after the item lock, and the job takes no item lock, so the
+   * order is item then request everywhere.
    */
   private async loadRequestUnderLock(
     manager: EntityManager,
@@ -239,6 +247,7 @@ export class ItemRequestService {
   ): Promise<ItemRequestEntity> {
     const request = await manager.findOne(ItemRequestEntity, {
       where: { id: requestId },
+      lock: { mode: 'pessimistic_write' },
     });
 
     if (!request) {
@@ -892,7 +901,7 @@ export class ItemRequestService {
    * If the other party had already marked it, this is them agreeing and the
    * pickup completes. Tapping again after marking sends the other party a
    * reminder - socket event and push - at most once per
-   * PICKUP_RERAISE_COOLDOWN_MS, and the next timed one is a full interval
+   * PICKUP_RETAP_REMINDER_COOLDOWN_MS, and the next timed one is a full interval
    * later. A tap after the pickup completed returns the completed request.
    *
    * @throws ForbiddenException when the caller is not one of the two parties.
@@ -921,7 +930,7 @@ export class ItemRequestService {
           )?.getTime();
           if (
             lastRaised !== undefined &&
-            Date.now() - lastRaised < PICKUP_RERAISE_COOLDOWN_MS
+            Date.now() - lastRaised < PICKUP_RETAP_REMINDER_COOLDOWN_MS
           ) {
             return { kind: 'already_marked' as const, request, item };
           }
@@ -1242,6 +1251,7 @@ export class ItemRequestService {
              LIMIT $3
              FOR UPDATE SKIP LOCKED
           )
+      -- Must match PickupReminderRow, which toReminderRow also builds.
       RETURNING r.id, r.item_id, r.owner_id, r.requester_id, r.status,
                 r.pickup_marked_by, r.pickup_marked_at, i.title AS item_title`,
       [
@@ -1266,8 +1276,9 @@ export class ItemRequestService {
   }
 
   /**
-   * The reminder for a request someone has marked, in the shape the cron
-   * claims. Shared so the cron and a re-tap deliver identically.
+   * A {@link PickupReminderRow} built from a loaded request, so a re-tap
+   * delivers through the same remindPickupConfirmation as the cron. The cron
+   * builds its rows from its RETURNING list instead; keep the two in step.
    *
    * @throws Error when the request has no mark, which no caller should pass.
    */

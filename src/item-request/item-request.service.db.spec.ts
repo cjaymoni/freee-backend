@@ -300,5 +300,42 @@ describeWithDatabase(
         expect(forFinder.data[0].pickup_marked_by).toBe(owner.id);
       });
     });
+
+    describe('marking', () => {
+      it('refuses a mark with no time at the database', async () => {
+        const id = await seed(0, { markedBy: null });
+
+        await expect(
+          ds.query(
+            'UPDATE item_requests SET pickup_marked_by = $1 WHERE id = $2',
+            [finder.id, id],
+          ),
+        ).rejects.toThrow(/CHK_item_requests_pickup_mark_has_time/);
+      });
+
+      it('does not push on a re-tap while the reminder job is claiming the row', async () => {
+        const id = await seed(0, { markedBy: 'finder' });
+
+        // The job's claim, held open: it has stamped the row but not yet
+        // committed, as when it is mid-run.
+        const job = ds.createQueryRunner();
+        await job.connect();
+        await job.startTransaction();
+        await job.query(
+          `UPDATE item_requests SET pickup_reminded_at = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') WHERE id = $1`,
+          [id],
+        );
+
+        const tap = service.markPickedUp(finder.id, id);
+        // Long enough for the tap to reach the request row and wait on it.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await job.commitTransaction();
+        await job.release();
+        await tap;
+
+        // The job sends that reminder; the tap must see its stamp and stay quiet.
+        expect(notify).not.toHaveBeenCalled();
+      });
+    });
   },
 );
