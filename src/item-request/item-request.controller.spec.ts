@@ -5,11 +5,11 @@ import { ItemRequestController } from './item-request.controller';
 import { ItemRequestService } from './item-request.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiExceptionFilter } from '../common/filters/api-exception.filter';
-import { createGlobalPipes } from '../common/pipes/global-pipes';
+import { configureGlobals } from '../app-setup';
 import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
-describe('ItemRequestController paging', () => {
+describe('ItemRequestController (HTTP)', () => {
   let app: INestApplication;
   const service = {
     getUserRequests: jest.fn().mockResolvedValue({ state: true, data: [] }),
@@ -27,7 +27,12 @@ describe('ItemRequestController paging', () => {
     getRequestById: jest.fn().mockResolvedValue({ state: true }),
   };
 
-  beforeAll(async () => {
+  /**
+   * The controller with the guard stubbed to sign in as u1. `withGlobals`
+   * adds the app's own pipes and filter via configureGlobals, exactly as
+   * production runs; without it only the error filter is installed.
+   */
+  const buildApp = async (withGlobals: boolean) => {
     const module = await Test.createTestingModule({
       controllers: [ItemRequestController],
       providers: [
@@ -48,9 +53,19 @@ describe('ItemRequestController paging', () => {
         },
       })
       .compile();
-    app = module.createNestApplication({ logger: false });
-    app.useGlobalFilters(new ApiExceptionFilter());
-    await app.init();
+    const built = module.createNestApplication({ logger: false });
+    if (withGlobals) {
+      configureGlobals(built);
+    } else {
+      built.useGlobalFilters(new ApiExceptionFilter());
+    }
+    await built.init();
+    return built;
+  };
+
+  // Without the global pipes, for the paging cases: see the note on them.
+  beforeAll(async () => {
+    app = await buildApp(false);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -62,6 +77,9 @@ describe('ItemRequestController paging', () => {
   it.each([
     ['/item-requests/my-requests?page=0'],
     ['/item-requests/my-requests?page=-1'],
+    // Holds only without the global pipes: under them the ValidationPipe
+    // turns 'abc' into NaN and DefaultValuePipe swaps in page 1. App-wide
+    // and older than this suite; tracked separately.
     ['/item-requests/my-requests?page=abc'],
     ['/item-requests/received?limit=0'],
     ['/item-requests/received?limit=1000'],
@@ -121,38 +139,12 @@ describe('ItemRequestController paging', () => {
   });
 
   describe('acts as the signed-in user', () => {
-    // Its own app with the app's real global pipes, so body handling is what
-    // clients get. (The paging cases above run without them: under the global
-    // ValidationPipe, ?page=abc becomes NaN and DefaultValuePipe turns that
-    // into page 1 rather than a 400 - a separate, app-wide issue.)
+    // An app with production's globals, so body handling is what clients get.
     let piped: INestApplication;
     const itemId = '123e4567-e89b-12d3-a456-426614174000';
 
     beforeAll(async () => {
-      const module = await Test.createTestingModule({
-        controllers: [ItemRequestController],
-        providers: [
-          { provide: ItemRequestService, useValue: service },
-          {
-            provide: PlatformSettingsService,
-            useValue: stubPlatformSettings(),
-          },
-        ],
-      })
-        .overrideGuard(JwtAuthGuard)
-        .useValue({
-          canActivate: (ctx: ExecutionContext) => {
-            ctx.switchToHttp().getRequest<{ user: object }>().user = {
-              userId: 'u1',
-            };
-            return true;
-          },
-        })
-        .compile();
-      piped = module.createNestApplication({ logger: false });
-      piped.useGlobalFilters(new ApiExceptionFilter());
-      piped.useGlobalPipes(...createGlobalPipes());
-      await piped.init();
+      piped = await buildApp(true);
     });
 
     afterAll(() => piped.close());
@@ -170,12 +162,23 @@ describe('ItemRequestController paging', () => {
       });
     });
 
+    it('refuses an unknown field where a body is read', async () => {
+      // The control for the confirm case below: it shows the global
+      // whitelist is really installed in this app.
+      const res = await server()
+        .post('/item-requests')
+        .send({ item_id: itemId, extra: 1 });
+      expect(res.status).toBe(400);
+      expect(service.createRequest).not.toHaveBeenCalled();
+    });
+
     it('confirming a request, ignoring any body', async () => {
       const res = await server().patch('/item-requests/r1/confirm').send({
         status: 'confirmed',
         pickup_notes: 'from an older client',
       });
       expect(res.status).toBe(200);
+      expect(service.confirmRequest).toHaveBeenCalledTimes(1);
       expect(service.confirmRequest).toHaveBeenCalledWith('u1', 'r1');
     });
 
