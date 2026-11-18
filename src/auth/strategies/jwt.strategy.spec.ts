@@ -41,3 +41,18 @@ describe('JwtStrategy.validate', () => {
     });
   });
 });
+
+describe('JwtStrategy secret', () => {
+  it.each([undefined, '', '  '])(
+    'refuses to start with JWT_SECRET %p rather than using a default',
+    (secret) => {
+      expect(
+        () =>
+          new JwtStrategy(
+            { get: () => secret } as unknown as ConfigService,
+            {} as AuthService,
+          ),
+      ).toThrow('JWT_SECRET is not set');
+    },
+  );
+});

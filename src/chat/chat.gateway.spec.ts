@@ -232,30 +232,46 @@ describe('ChatGateway token secret', () => {
     expect(() => build(undefined)).toThrow('JWT_SECRET is not set');
   });
 
-  it('verifies handshakes with the configured secret', async () => {
-    const verifyAsync = jest
-      .fn()
-      .mockRejectedValue(new Error('stop after verify'));
+  describe('on a handshake', () => {
+    const jwt = new JwtService({});
+    const validateSession = jest.fn().mockResolvedValue(false);
     const gateway = new ChatGateway(
       {} as ChatService,
       new ChatRealtimeService(),
-      { verifyAsync } as unknown as JwtService,
+      jwt,
       { get: () => 'configured-secret' } as unknown as ConfigService,
-      {} as AuthService,
+      { validateSession } as unknown as AuthService,
     );
-    const client = {
-      id: 'sock-1',
-      data: {},
-      handshake: { auth: { token: 't' }, headers: {}, query: {} },
-      emit: jest.fn(),
-      disconnect: jest.fn(),
+    const connect = async (secret: string) => {
+      const token = await jwt.signAsync(
+        { sub: 'u1', session_token: 's1' },
+        { secret },
+      );
+      const client = {
+        id: 'sock-1',
+        data: {},
+        handshake: { auth: { token }, headers: {}, query: {} },
+        emit: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      await gateway.handleConnection(client as never);
+      return client;
     };
 
-    await gateway.handleConnection(client as never);
+    afterEach(() => validateSession.mockClear());
 
-    expect(verifyAsync).toHaveBeenCalledWith('t', {
-      secret: 'configured-secret',
+    it('accepts a token signed with the configured secret', async () => {
+      await connect('configured-secret');
+
+      // Past the signature check: on to the session lookup.
+      expect(validateSession).toHaveBeenCalledWith('s1');
     });
-    expect(client.disconnect).toHaveBeenCalled();
+
+    it('turns away a token signed with any other key', async () => {
+      const client = await connect('defaultSecret');
+
+      expect(validateSession).not.toHaveBeenCalled();
+      expect(client.disconnect).toHaveBeenCalled();
+    });
   });
 });

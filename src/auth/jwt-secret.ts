@@ -12,7 +12,16 @@ import type { ConfigService } from '@nestjs/config';
  * @throws Error when JWT_SECRET is unset or blank.
  */
 export function jwtSecret(config: ConfigService): string {
-  const secret = config.get<string>('JWT_SECRET');
+  return requireJwtSecret(config.get<string>('JWT_SECRET'));
+}
+
+/**
+ * The rule {@link jwtSecret} applies, for a value read some other way, so
+ * every reader of the secret refuses the same things.
+ *
+ * @throws Error when the value is unset or blank.
+ */
+export function requireJwtSecret(secret: string | undefined): string {
   if (!secret?.trim()) {
     throw new Error('JWT_SECRET is not set; refusing to sign or verify tokens');
   }

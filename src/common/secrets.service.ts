@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { requireJwtSecret } from '../auth/jwt-secret';
 
 /**
  * Secrets Manager Service
@@ -58,11 +59,8 @@ export class SecretsService {
    * Get JWT secret
    */
   async getJwtSecret(): Promise<string> {
-    const secret = await this.getSecret('JWT_SECRET');
-    if (!secret) {
-      throw new Error('JWT_SECRET is required');
-    }
-    return secret;
+    // The same rule as the token code, so a blank secret is refused here too.
+    return requireJwtSecret(await this.getSecret('JWT_SECRET'));
   }
 
   /**
