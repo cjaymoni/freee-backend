@@ -1093,8 +1093,11 @@ export class UserService {
 
       // After the commit, so a rollback never strands rows pointing at deleted
       // assets, and so a socket event never reports a cancel that rolled back.
-      // With a caller-supplied manager the commit is the caller's, so both are
-      // left for it to handle; no caller passes one for a delete today.
+      // With a caller-supplied manager the commit is the caller's: the files
+      // are left for it, and the pickup-resolved events are not sent at all,
+      // so an open confirm sheet only closes when its app re-fetches. No
+      // caller passes a manager for a delete today; one that does should
+      // return pendingPickups and emit them after its own commit.
       if (!manager) {
         // The other party's confirm sheet has nothing left to answer.
         emitPickupResolved(this.realtime, pendingPickups, 'cancelled');

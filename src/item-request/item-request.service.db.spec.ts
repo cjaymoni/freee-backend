@@ -219,9 +219,13 @@ describeWithDatabase(
 
         expect(sent).toBe(1);
         expect(notify).toHaveBeenCalledTimes(1);
-        expect(notify.mock.calls[0][1]).toMatchObject({
-          data: { request_id: due },
-        });
+        expect(notify).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            data: expect.objectContaining({ request_id: due }) as unknown,
+          }),
+          expect.anything(),
+        );
       });
 
       it('never claims completed, cancelled or unmarked requests', async () => {

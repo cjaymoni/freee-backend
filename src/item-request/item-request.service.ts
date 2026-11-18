@@ -177,6 +177,13 @@ export class ItemRequestService {
    * transitions for a given item are strictly ordered and no two of them can
    * deadlock against each other.
    *
+   * One exception: the pickup reminder job stamps pickup_reminded_at on
+   * request rows without the item lock (see sendPickupConfirmationReminders).
+   * It is safe because it takes those row locks with SKIP LOCKED, so it never
+   * waits on a transition, and its UPDATE re-checks status and the mark, so a
+   * settle that commits first is left alone. At worst a reminder crosses an
+   * answer, which the app handles by re-fetching before raising the sheet.
+   *
    * Relations are deliberately not joined - Postgres rejects FOR UPDATE
    * against the nullable side of an outer join.
    */
@@ -680,8 +687,16 @@ export class ItemRequestService {
           return { wrongCode: true as const, request };
         }
 
+        // Completing by code also answers a "Picked up" still waiting on
+        // either side, whose sheet has to close.
+        const hadPendingPickup =
+          partyAwaitingPickupConfirmation(request) !== null;
         const completed = await this.completePickup(manager, request);
-        return { wrongCode: false as const, request: completed };
+        return {
+          wrongCode: false as const,
+          request: completed,
+          hadPendingPickup,
+        };
       });
 
       if (outcome.wrongCode) {
@@ -704,6 +719,9 @@ export class ItemRequestService {
         itemId: result.item_id,
         requestId: result.id,
       });
+      if (outcome.hadPendingPickup) {
+        this.emitPickupResolved(result, 'confirmed');
+      }
 
       return {
         message: 'Pickup confirmed successfully',
@@ -964,8 +982,26 @@ export class ItemRequestService {
           requestId: request.id,
         });
       }
-      if (outcome.kind !== 'already_marked') {
+      if (outcome.kind === 'marked') {
         this.emitPickupConfirmationRequested(request, item.title ?? null);
+      }
+      // A re-tap stands in for the next timed reminder, so it has to deliver
+      // like one: the push matters most when the other app is closed.
+      if (
+        outcome.kind === 'reraised' &&
+        request.pickup_marked_by &&
+        request.pickup_marked_at
+      ) {
+        await this.remindPickupConfirmation({
+          id: request.id,
+          item_id: request.item_id,
+          owner_id: request.owner_id,
+          requester_id: request.requester_id,
+          status: request.status,
+          pickup_marked_by: request.pickup_marked_by,
+          pickup_marked_at: request.pickup_marked_at,
+          item_title: item.title ?? null,
+        });
       }
 
       return {
@@ -1155,6 +1191,8 @@ export class ItemRequestService {
           { userId },
         )
         .orderBy('request.pickup_marked_at', 'ASC')
+        // A tie-break, so equal timestamps can't swap between pages.
+        .addOrderBy('request.id', 'ASC')
         .skip((page - 1) * limit)
         .take(limit)
         .getManyAndCount();

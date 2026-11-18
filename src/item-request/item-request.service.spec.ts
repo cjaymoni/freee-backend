@@ -35,6 +35,7 @@ const buildQueryBuilder = (data: unknown[], total: number) => ({
   where: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
+  addOrderBy: jest.fn().mockReturnThis(),
   skip: jest.fn().mockReturnThis(),
   take: jest.fn().mockReturnThis(),
   getManyAndCount: jest.fn().mockResolvedValue([data, total]),
@@ -813,6 +814,15 @@ describe('ItemRequestService', () => {
           ChatEvents.PICKUP_CONFIRMATION_REQUESTED,
           expect.anything(),
         );
+        // Delivered like a reminder: the push reaches a closed app too.
+        expect(mockNotifications.notify).toHaveBeenCalledWith(
+          'freer',
+          expect.objectContaining({
+            title: 'Was it picked up?',
+            data: expect.objectContaining({ request_id: 'req-1' }) as unknown,
+          }),
+          { skipDevicesOf: [] },
+        );
       });
 
       it('ignores a repeat tap within the cooldown', async () => {
@@ -826,6 +836,7 @@ describe('ItemRequestService', () => {
         expect(result.statusCode).toBe(200);
         expect(manager.save).not.toHaveBeenCalled();
         expect(mockRealtime.emitToUser).not.toHaveBeenCalled();
+        expect(mockNotifications.notify).not.toHaveBeenCalled();
       });
 
       it('answers a tap after the pickup completed with the finished request', async () => {
@@ -1020,6 +1031,22 @@ describe('ItemRequestService', () => {
       });
     });
 
+    it('closes a pending sheet when the pickup completes by code', async () => {
+      setup({
+        ...markedBy('freer'),
+        confirmation_code: 'ABC234',
+        pickup_attempts: 0,
+      });
+
+      await service.confirmPickup('finder', 'req-1', 'ABC234');
+
+      expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+        ['freer', 'finder'],
+        ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+        { request_id: 'req-1', outcome: 'confirmed' },
+      );
+    });
+
     it("closes the other phone's sheet when a marked request is cancelled", async () => {
       const { request } = setup(markedBy('finder'));
 
@@ -1088,6 +1115,7 @@ describe('ItemRequestService', () => {
         '(request.owner_id = :userId OR request.requester_id = :userId)',
         { userId: 'freer' },
       );
+      expect(qb.addOrderBy).toHaveBeenCalledWith('request.id', 'ASC');
       expect(result).toMatchObject({ data: [], total: 0, page: 1, limit: 20 });
     });
   });
