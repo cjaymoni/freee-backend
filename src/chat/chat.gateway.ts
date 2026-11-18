@@ -30,6 +30,7 @@ import {
 } from './dto/ws-events.dto';
 import { AuthService } from '../auth/auth.service';
 import { WsHttpExceptionFilter } from './ws-http-exception.filter';
+import { jwtSecret } from '../auth/jwt-secret';
 
 /** What we hang off the socket once its token has been verified. */
 interface AuthenticatedSocket extends Socket {
@@ -76,13 +77,21 @@ export class ChatGateway
   @WebSocketServer()
   server: Server;
 
+  /**
+   * Read once in the constructor, so a missing secret stops the app at boot
+   * rather than failing every socket handshake later.
+   */
+  private readonly tokenSecret: string;
+
   constructor(
     private readonly chatService: ChatService,
     private readonly realtime: ChatRealtimeService,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
+    configService: ConfigService,
     private readonly authService: AuthService,
-  ) {}
+  ) {
+    this.tokenSecret = jwtSecret(configService);
+  }
 
   afterInit(server: Server): void {
     // Hands the server to the service layer, which is how ChatService pushes
@@ -137,7 +146,7 @@ export class ChatGateway
       }
 
       const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
-        secret: this.configService.get<string>('JWT_SECRET') || 'defaultSecret',
+        secret: this.tokenSecret,
       });
 
       if (!payload?.session_token) {

@@ -217,3 +217,45 @@ describe('ChatGateway payloads over a real socket', () => {
     ).resolves.toMatchObject({ state: false, statusCode: 400 });
   });
 });
+
+describe('ChatGateway token secret', () => {
+  const build = (secret: string | undefined) =>
+    new ChatGateway(
+      {} as ChatService,
+      new ChatRealtimeService(),
+      {} as JwtService,
+      { get: () => secret } as unknown as ConfigService,
+      {} as AuthService,
+    );
+
+  it('refuses to start without a JWT secret rather than using a default', () => {
+    expect(() => build(undefined)).toThrow('JWT_SECRET is not set');
+  });
+
+  it('verifies handshakes with the configured secret', async () => {
+    const verifyAsync = jest
+      .fn()
+      .mockRejectedValue(new Error('stop after verify'));
+    const gateway = new ChatGateway(
+      {} as ChatService,
+      new ChatRealtimeService(),
+      { verifyAsync } as unknown as JwtService,
+      { get: () => 'configured-secret' } as unknown as ConfigService,
+      {} as AuthService,
+    );
+    const client = {
+      id: 'sock-1',
+      data: {},
+      handshake: { auth: { token: 't' }, headers: {}, query: {} },
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+    };
+
+    await gateway.handleConnection(client as never);
+
+    expect(verifyAsync).toHaveBeenCalledWith('t', {
+      secret: 'configured-secret',
+    });
+    expect(client.disconnect).toHaveBeenCalled();
+  });
+});

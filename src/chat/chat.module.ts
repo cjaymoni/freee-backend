@@ -17,6 +17,7 @@ import { ItemRequestEntity } from '../item-request/entities/item-request.entity'
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { AuthModule } from '../auth/auth.module';
+import { jwtSecret } from '../auth/jwt-secret';
 
 @Module({
   imports: [
@@ -38,7 +39,7 @@ import { AuthModule } from '../auth/auth.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'defaultSecret',
+        secret: jwtSecret(configService),
       }),
     }),
   ],
