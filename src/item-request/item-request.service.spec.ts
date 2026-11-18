@@ -12,6 +12,9 @@ import { ChatService } from '../chat/chat.service';
 import { SystemEvent } from '../chat/entities/message.entity';
 import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
+import { ChatEvents } from '../chat/chat.constants';
+import { NotificationService } from '../notification/notification.service';
 import {
   numberDefinitionOf,
   type SettingValues,
@@ -40,6 +43,12 @@ const buildQueryBuilder = (data: unknown[], total: number) => ({
 describe('ItemRequestService', () => {
   let service: ItemRequestService;
   const mockRequestRepo = { createQueryBuilder: jest.fn() };
+  const mockRealtime = {
+    emitToUser: jest.fn(),
+    emitToUsers: jest.fn(),
+    foregroundSessions: jest.fn().mockReturnValue([]),
+  };
+  const mockNotifications = { notify: jest.fn() };
 
   /** Rebuilds the service, optionally with limits staff have changed. */
   const build = async (settings: Partial<SettingValues> = {}) => {
@@ -57,6 +66,8 @@ describe('ItemRequestService', () => {
         { provide: getRepositoryToken(ItemEntity), useValue: {} },
         { provide: DataSource, useValue: {} },
         { provide: ChatService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: mockRealtime },
+        { provide: NotificationService, useValue: mockNotifications },
       ],
     }).compile();
 
@@ -676,6 +687,473 @@ describe('ItemRequestService', () => {
         expect.stringContaining('pg_advisory_xact_lock'),
         expect.anything(),
       );
+    });
+  });
+
+  describe('two-sided pickup', () => {
+    const setup = (
+      requestOverrides: object = {},
+      itemOverrides: object = {},
+    ) => {
+      const item = {
+        id: 'item-1',
+        title: 'Chair',
+        is_deleted: false,
+        status: 'reserved',
+        ...itemOverrides,
+      };
+      const request = {
+        id: 'req-1',
+        item_id: 'item-1',
+        requester_id: 'finder',
+        owner_id: 'freer',
+        status: RequestStatus.CONFIRMED,
+        pickup_marked_by: null as string | null,
+        pickup_marked_at: null as Date | null,
+        pickup_reminded_at: null as Date | null,
+        is_picked_up: false,
+        ...requestOverrides,
+      };
+      const waiting = {
+        id: 'req-2',
+        item_id: 'item-1',
+        requester_id: 'someone-else',
+        status: RequestStatus.PENDING,
+      };
+      const manager = {
+        findOne: jest.fn((entity: unknown) =>
+          Promise.resolve(entity === ItemEntity ? item : request),
+        ),
+        find: jest.fn().mockResolvedValue([waiting]),
+        update: jest.fn(),
+        save: jest.fn((row: object) => Promise.resolve(row)),
+        query: jest.fn(),
+      };
+      const chat = { createSystemMessage: jest.fn() };
+      (service as unknown as { dataSource: object }).dataSource = {
+        transaction: (work: (m: typeof manager) => unknown) => work(manager),
+      };
+      (service as unknown as { chatService: object }).chatService = chat;
+      return { request, manager, chat };
+    };
+
+    const markedBy = (userId: string) => ({
+      pickup_marked_by: userId,
+      pickup_marked_at: new Date('2026-11-17T10:00:00.000Z'),
+    });
+
+    describe('markPickedUp', () => {
+      it.each([
+        ['the finder', 'finder', 'freer'],
+        ['the freer', 'freer', 'finder'],
+      ])(
+        'lets %s mark it and asks the other party to confirm',
+        async (_who, actor, other) => {
+          const { request, manager, chat } = setup();
+
+          const result = await service.markPickedUp(actor, 'req-1');
+
+          expect(request.pickup_marked_by).toBe(actor);
+          expect(request.pickup_marked_at).toBeInstanceOf(Date);
+          expect(result.data.status).toBe(RequestStatus.CONFIRMED);
+          expect(result.data.awaiting_pickup_confirmation).toBe(false);
+          // Not completed: the item stays reserved until the other side agrees.
+          expect(manager.update).not.toHaveBeenCalled();
+          expect(chat.createSystemMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              actorId: actor,
+              otherUserId: other,
+              event: SystemEvent.PICKUP_MARKED,
+            }),
+          );
+          expect(mockRealtime.emitToUser).toHaveBeenCalledWith(
+            other,
+            ChatEvents.PICKUP_CONFIRMATION_REQUESTED,
+            expect.objectContaining({
+              request_id: 'req-1',
+              item_title: 'Chair',
+              marked_by: actor,
+            }),
+          );
+        },
+      );
+
+      it('completes the pickup when the other party already marked it', async () => {
+        const { request, manager, chat } = setup(markedBy('freer'));
+
+        const result = await service.markPickedUp('finder', 'req-1');
+
+        expect(request.status).toBe(RequestStatus.COMPLETED);
+        expect(result.data.is_picked_up).toBe(true);
+        expect(manager.update).toHaveBeenCalledWith(
+          ItemEntity,
+          { id: 'item-1' },
+          { status: 'picked_up', picked_by_id: 'finder' },
+        );
+        expect(chat.createSystemMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ event: SystemEvent.PICKUP_CONFIRMED }),
+        );
+        expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+          ['freer', 'finder'],
+          ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+          { request_id: 'req-1', outcome: 'confirmed' },
+        );
+      });
+
+      it('raises the sheet again when the marker taps after the cooldown', async () => {
+        const { request, chat } = setup(markedBy('finder'));
+
+        await service.markPickedUp('finder', 'req-1');
+
+        // A re-raise counts as a reminder, so the timed one waits again.
+        expect(request.pickup_reminded_at).toBeInstanceOf(Date);
+        expect(chat.createSystemMessage).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUser).toHaveBeenCalledWith(
+          'freer',
+          ChatEvents.PICKUP_CONFIRMATION_REQUESTED,
+          expect.anything(),
+        );
+      });
+
+      it('ignores a repeat tap within the cooldown', async () => {
+        const { manager } = setup({
+          pickup_marked_by: 'finder',
+          pickup_marked_at: new Date(Date.now() - 5_000),
+        });
+
+        const result = await service.markPickedUp('finder', 'req-1');
+
+        expect(result.statusCode).toBe(200);
+        expect(manager.save).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUser).not.toHaveBeenCalled();
+      });
+
+      it('answers a tap after the pickup completed with the finished request', async () => {
+        const { manager, chat } = setup(
+          { ...markedBy('finder'), status: RequestStatus.COMPLETED },
+          { status: 'picked_up' },
+        );
+
+        const result = await service.markPickedUp('finder', 'req-1');
+
+        expect(result.data.status).toBe(RequestStatus.COMPLETED);
+        expect(manager.save).not.toHaveBeenCalled();
+        expect(chat.createSystemMessage).not.toHaveBeenCalled();
+      });
+
+      it('refuses anyone outside the request', async () => {
+        const { manager } = setup();
+
+        await expect(
+          service.markPickedUp('stranger', 'req-1'),
+        ).rejects.toMatchObject({ status: 403 });
+        expect(manager.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses a request that is not confirmed yet', async () => {
+        setup({ status: RequestStatus.PENDING }, { status: 'available' });
+
+        await expect(
+          service.markPickedUp('finder', 'req-1'),
+        ).rejects.toMatchObject({
+          status: 400,
+          message: 'Request must be confirmed first',
+        });
+      });
+
+      it('refuses once the item has been removed', async () => {
+        setup({}, { is_deleted: true });
+
+        await expect(
+          service.markPickedUp('finder', 'req-1'),
+        ).rejects.toMatchObject({
+          status: 409,
+          message: 'This item has been removed',
+        });
+      });
+    });
+
+    describe('confirmPickedUp', () => {
+      it('completes the request and closes the others waiting on the item', async () => {
+        const { request, manager, chat } = setup(markedBy('finder'));
+
+        const result = await service.confirmPickedUp('freer', 'req-1');
+
+        expect(request.status).toBe(RequestStatus.COMPLETED);
+        expect(result.data.is_picked_up).toBe(true);
+        expect(result.data.awaiting_pickup_confirmation).toBe(false);
+        expect(manager.update).toHaveBeenCalledWith(
+          ItemEntity,
+          { id: 'item-1' },
+          { status: 'picked_up', picked_by_id: 'finder' },
+        );
+        expect(manager.update).toHaveBeenCalledWith(
+          ItemRequestEntity,
+          expect.anything(),
+          expect.objectContaining({ status: RequestStatus.CANCELLED }),
+        );
+        expect(chat.createSystemMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            actorId: 'freer',
+            otherUserId: 'finder',
+            event: SystemEvent.PICKUP_CONFIRMED,
+          }),
+        );
+        expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+          ['freer', 'finder'],
+          ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+          { request_id: 'req-1', outcome: 'confirmed' },
+        );
+      });
+
+      it('answers a retry after it completed without repeating anything', async () => {
+        const { manager, chat } = setup(
+          { ...markedBy('finder'), status: RequestStatus.COMPLETED },
+          { status: 'picked_up' },
+        );
+
+        const result = await service.confirmPickedUp('freer', 'req-1');
+
+        expect(result.statusCode).toBe(200);
+        expect(result.data.status).toBe(RequestStatus.COMPLETED);
+        expect(manager.update).not.toHaveBeenCalled();
+        expect(chat.createSystemMessage).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUsers).not.toHaveBeenCalled();
+      });
+
+      it('still refuses a completed request to anyone outside it', async () => {
+        setup(
+          { ...markedBy('finder'), status: RequestStatus.COMPLETED },
+          { status: 'picked_up' },
+        );
+
+        await expect(
+          service.confirmPickedUp('stranger', 'req-1'),
+        ).rejects.toMatchObject({ status: 403 });
+      });
+
+      it('refuses the party who marked it', async () => {
+        const { manager } = setup(markedBy('finder'));
+
+        await expect(
+          service.confirmPickedUp('finder', 'req-1'),
+        ).rejects.toMatchObject({ status: 400 });
+        expect(manager.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses when nobody has marked it', async () => {
+        setup();
+
+        await expect(
+          service.confirmPickedUp('freer', 'req-1'),
+        ).rejects.toMatchObject({
+          status: 400,
+          message: 'Nobody has marked this item as picked up yet',
+        });
+      });
+
+      it('refuses once the item is no longer reserved', async () => {
+        setup(markedBy('finder'), { status: 'available' });
+
+        await expect(
+          service.confirmPickedUp('freer', 'req-1'),
+        ).rejects.toMatchObject({ status: 409 });
+      });
+    });
+
+    describe('declinePickedUp', () => {
+      it('clears the mark and keeps the item reserved for the request', async () => {
+        const { request, manager, chat } = setup({
+          ...markedBy('freer'),
+          pickup_reminded_at: new Date('2026-11-17T12:00:00.000Z'),
+        });
+
+        const result = await service.declinePickedUp('finder', 'req-1');
+
+        expect(request.status).toBe(RequestStatus.CONFIRMED);
+        expect(request.pickup_marked_by).toBeNull();
+        expect(request.pickup_marked_at).toBeNull();
+        expect(request.pickup_reminded_at).toBeNull();
+        expect(result.data.awaiting_pickup_confirmation).toBe(false);
+        expect(manager.update).not.toHaveBeenCalled();
+        expect(chat.createSystemMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            actorId: 'finder',
+            otherUserId: 'freer',
+            event: SystemEvent.PICKUP_DECLINED,
+          }),
+        );
+        expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+          ['freer', 'finder'],
+          ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+          { request_id: 'req-1', outcome: 'declined' },
+        );
+      });
+
+      it('answers a retried decline without repeating the card', async () => {
+        const { manager, chat } = setup();
+
+        const result = await service.declinePickedUp('finder', 'req-1');
+
+        expect(result.statusCode).toBe(200);
+        expect(result.data.status).toBe(RequestStatus.CONFIRMED);
+        expect(manager.save).not.toHaveBeenCalled();
+        expect(chat.createSystemMessage).not.toHaveBeenCalled();
+        expect(mockRealtime.emitToUsers).not.toHaveBeenCalled();
+      });
+
+      it('lets either side mark it again after a decline', async () => {
+        const { request } = setup(markedBy('freer'));
+        await service.declinePickedUp('finder', 'req-1');
+
+        await service.markPickedUp('freer', 'req-1');
+
+        expect(request.pickup_marked_by).toBe('freer');
+      });
+
+      it('refuses the party who marked it', async () => {
+        setup(markedBy('freer'));
+
+        await expect(
+          service.declinePickedUp('freer', 'req-1'),
+        ).rejects.toMatchObject({ status: 400 });
+      });
+    });
+
+    it("closes the other phone's sheet when a marked request is cancelled", async () => {
+      const { request } = setup(markedBy('finder'));
+
+      await service.cancelRequest('freer', 'req-1', {});
+
+      expect(request.pickup_marked_by).toBeNull();
+      expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+        ['freer', 'finder'],
+        ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+        { request_id: 'req-1', outcome: 'cancelled' },
+      );
+    });
+
+    it('sends no pickup event when a cancelled request had no mark', async () => {
+      setup();
+
+      await service.cancelRequest('freer', 'req-1', {});
+
+      expect(mockRealtime.emitToUsers).not.toHaveBeenCalled();
+    });
+
+    it('flags the pending confirmation for the waiting party only', async () => {
+      const marked = {
+        id: 'req-1',
+        item_id: 'item-1',
+        requester_id: 'finder',
+        owner_id: 'freer',
+        status: RequestStatus.CONFIRMED,
+        is_picked_up: false,
+        ...markedBy('finder'),
+      };
+      (
+        service as unknown as { itemRequestRepository: object }
+      ).itemRequestRepository = {
+        findOne: jest.fn().mockResolvedValue(marked),
+      };
+
+      const asFreer = await service.getRequestById('req-1', 'freer');
+      const asFinder = await service.getRequestById('req-1', 'finder');
+
+      expect(asFreer.data.awaiting_pickup_confirmation).toBe(true);
+      expect(asFinder.data.awaiting_pickup_confirmation).toBe(false);
+      expect(asFinder.data.pickup_marked_by).toBe('finder');
+    });
+  });
+
+  describe('getPendingPickupConfirmations', () => {
+    it('lists only confirmed requests the other party marked', async () => {
+      const qb = buildQueryBuilder([], 0);
+      mockRequestRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.getPendingPickupConfirmations(
+        'freer',
+        1,
+        20,
+      );
+
+      expect(qb.where).toHaveBeenCalledWith('request.status = :status', {
+        status: RequestStatus.CONFIRMED,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'request.pickup_marked_by <> :userId',
+        { userId: 'freer' },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '(request.owner_id = :userId OR request.requester_id = :userId)',
+        { userId: 'freer' },
+      );
+      expect(result).toMatchObject({ data: [], total: 0, page: 1, limit: 20 });
+    });
+  });
+
+  describe('sendPickupConfirmationReminders', () => {
+    const row = {
+      id: 'req-1',
+      item_id: 'item-1',
+      owner_id: 'freer',
+      requester_id: 'finder',
+      status: RequestStatus.CONFIRMED,
+      pickup_marked_by: 'finder',
+      pickup_marked_at: new Date('2026-11-17T10:00:00.000Z'),
+      item_title: 'Chair',
+    };
+    let query: jest.Mock;
+
+    beforeEach(() => {
+      query = jest.fn().mockResolvedValue([[row], 1]);
+      (service as unknown as { dataSource: object }).dataSource = { query };
+    });
+
+    it('pushes the waiting party and raises their sheet again', async () => {
+      mockRealtime.foregroundSessions.mockReturnValueOnce(['session-open']);
+
+      const sent = await service.sendPickupConfirmationReminders();
+
+      expect(sent).toBe(1);
+      expect(mockNotifications.notify).toHaveBeenCalledWith(
+        'freer',
+        expect.objectContaining({
+          title: 'Was it picked up?',
+          data: {
+            type: 'pickup_confirmation',
+            request_id: 'req-1',
+            item_id: 'item-1',
+          },
+        }),
+        { skipDevicesOf: ['session-open'] },
+      );
+      expect(mockRealtime.emitToUser).toHaveBeenCalledWith(
+        'freer',
+        ChatEvents.PICKUP_CONFIRMATION_REQUESTED,
+        expect.objectContaining({ request_id: 'req-1', marked_by: 'finder' }),
+      );
+    });
+
+    it('claims rows using the interval staff have set', async () => {
+      await build({ 'requests.pickup_reminder_minutes': 45 });
+      (service as unknown as { dataSource: object }).dataSource = { query };
+
+      await service.sendPickupConfirmationReminders();
+
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('FOR UPDATE SKIP LOCKED'),
+        [RequestStatus.CONFIRMED, 45, expect.any(Number)],
+      );
+    });
+
+    it('sends nothing when no confirmation is due', async () => {
+      query.mockResolvedValue([[], 0]);
+
+      const sent = await service.sendPickupConfirmationReminders();
+
+      expect(sent).toBe(0);
+      expect(mockNotifications.notify).not.toHaveBeenCalled();
     });
   });
 });

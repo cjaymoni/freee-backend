@@ -1,4 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
+import { ChatEvents } from '../chat/chat.constants';
+import {
+  ItemRequestEntity,
+  RequestStatus,
+} from '../item-request/entities/item-request.entity';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -322,6 +328,7 @@ describe('ItemService', () => {
 
   const mockSearchService = { record: jest.fn().mockResolvedValue(undefined) };
   const mockNotifications = { notify: jest.fn().mockResolvedValue(undefined) };
+  const mockRealtime = { emitToUsers: jest.fn() };
   const mockStaffInbox = { toAllStaff: jest.fn().mockResolvedValue(undefined) };
 
   const mockItemViewService = {
@@ -361,6 +368,7 @@ describe('ItemService', () => {
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
         { provide: NotificationService, useValue: mockNotifications },
+        { provide: ChatRealtimeService, useValue: mockRealtime },
         { provide: StaffInboxService, useValue: mockStaffInbox },
         {
           provide: LocationNamesService,
@@ -1332,6 +1340,49 @@ describe('ItemService', () => {
         is_hidden: false,
         hidden_reason: null,
       });
+    });
+  });
+
+  describe('remove with a pickup waiting', () => {
+    it('closes the confirm sheet on both phones once the delete commits', async () => {
+      mockItemRepo.findOne.mockResolvedValueOnce({
+        id: 'item-1',
+        user_id: 'owner',
+        is_deleted: false,
+      });
+      const marked = {
+        id: 'req-1',
+        item_id: 'item-1',
+        owner_id: 'owner',
+        requester_id: 'finder',
+        status: RequestStatus.CONFIRMED,
+        pickup_marked_by: 'finder',
+      };
+      const manager = {
+        getRepository: (entity: unknown) =>
+          entity === ItemEntity
+            ? { save: jest.fn((row: unknown) => Promise.resolve(row)) }
+            : { find: jest.fn().mockResolvedValue([]), update: jest.fn() },
+        find: jest.fn().mockResolvedValue([marked]),
+        update: jest.fn(),
+        query: jest.fn(),
+      };
+      mockDataSource.transaction.mockImplementationOnce(
+        (work: (m: unknown) => Promise<unknown>) => work(manager),
+      );
+
+      await service.remove('owner', 'item-1');
+
+      expect(manager.update).toHaveBeenCalledWith(
+        ItemRequestEntity,
+        expect.anything(),
+        expect.objectContaining({ pickup_marked_by: null }),
+      );
+      expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+        ['owner', 'finder'],
+        ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+        { request_id: 'req-1', outcome: 'cancelled' },
+      );
     });
   });
 

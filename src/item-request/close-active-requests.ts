@@ -4,6 +4,10 @@ import {
   ItemRequestEntity,
   RequestStatus,
 } from './entities/item-request.entity';
+import {
+  partyAwaitingPickupConfirmation,
+  type PickupParties,
+} from './pickup-events';
 
 const ACTIVE = [RequestStatus.PENDING, RequestStatus.CONFIRMED];
 
@@ -14,14 +18,20 @@ const ACTIVE = [RequestStatus.PENDING, RequestStatus.CONFIRMED];
  * and an item reserved by a cancelled confirmed request is released - unless
  * the item itself is deleted, which must never come back as available.
  *
+ * A pickup one party had marked is cleared with it. Those requests are
+ * returned so the caller can close the other party's confirm sheet with
+ * emitPickupResolved once its transaction has committed.
+ *
  * Runs in the caller's transaction so it commits with the deletion.
+ *
+ * @returns the closed requests that had a pickup waiting to be confirmed.
  */
 export async function closeActiveRequests(
   manager: EntityManager,
   scope: { itemIds: string[] } | { userId: string },
   closedBy: string,
   reason: string,
-): Promise<void> {
+): Promise<PickupParties[]> {
   const where =
     'itemIds' in scope
       ? scope.itemIds.length
@@ -31,10 +41,14 @@ export async function closeActiveRequests(
           { owner_id: scope.userId, status: In(ACTIVE) },
           { requester_id: scope.userId, status: In(ACTIVE) },
         ];
-  if (!where.length) return;
+  if (!where.length) return [];
 
   const requests = await manager.find(ItemRequestEntity, { where });
-  if (!requests.length) return;
+  if (!requests.length) return [];
+
+  const pendingPickups = requests
+    .filter((request) => partyAwaitingPickupConfirmation(request) !== null)
+    .map(({ id, owner_id, requester_id }) => ({ id, owner_id, requester_id }));
 
   await manager.update(
     ItemRequestEntity,
@@ -44,6 +58,9 @@ export async function closeActiveRequests(
       cancelled_at: new Date(),
       cancelled_by: closedBy,
       cancellation_reason: reason,
+      pickup_marked_by: null,
+      pickup_marked_at: null,
+      pickup_reminded_at: null,
     },
   );
 
@@ -64,4 +81,6 @@ export async function closeActiveRequests(
       { status: ItemStatus.AVAILABLE },
     );
   }
+
+  return pendingPickups;
 }

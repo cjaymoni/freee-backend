@@ -303,7 +303,8 @@ export function statusHistory(
       sortAt: r.cancelled_at,
     });
   }
-  // The requester confirms the pickup (see ItemRequestService.confirmPickup).
+  // Only a fallback for requests with no pickup_confirmed card, which names
+  // the confirming party; older requests were always confirmed by the requester.
   if (r.picked_up_at && !has(RequestStatus.COMPLETED)) {
     events.push({
       status: RequestStatus.COMPLETED,

@@ -1,4 +1,5 @@
 import { NotificationModule } from '../notification/notification.module';
+import { RealtimeModule } from '../chat/realtime.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ItemService } from './item.service';
@@ -29,6 +30,8 @@ import { LocationsModule } from '../locations/locations.module';
     SearchModule,
     NotificationModule,
     LocationsModule,
+    // Closing requests on a deleted listing closes any open confirm sheet.
+    RealtimeModule,
   ],
   controllers: [ItemController, ItemImageController],
   providers: [ItemService, ItemImageService],

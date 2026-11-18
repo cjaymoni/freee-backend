@@ -307,6 +307,10 @@ export class ChatService {
           return 'Request cancelled';
         case SystemEvent.PICKUP_CONFIRMED:
           return 'Item picked up';
+        case SystemEvent.PICKUP_MARKED:
+          return 'Pickup waiting for confirmation';
+        case SystemEvent.PICKUP_DECLINED:
+          return 'Pickup not confirmed';
         case SystemEvent.PICKUP_CODE_REQUESTED:
           return 'New pickup code requested';
         default:

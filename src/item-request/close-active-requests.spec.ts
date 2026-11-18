@@ -73,4 +73,28 @@ describe('closeActiveRequests', () => {
     await run({ itemIds: [] });
     expect(manager.find).not.toHaveBeenCalled();
   });
+
+  it('clears pickup marks and returns the requests that had one waiting', async () => {
+    const marked = {
+      ...confirmed,
+      owner_id: 'owner',
+      pickup_marked_by: 'a',
+    };
+    manager.find.mockResolvedValue([pending, marked]);
+
+    const closed = await run({ userId: 'a' });
+
+    expect(manager.update.mock.calls[0][2]).toMatchObject({
+      pickup_marked_by: null,
+      pickup_marked_at: null,
+      pickup_reminded_at: null,
+    });
+    expect(closed).toEqual([
+      { id: 'r2', owner_id: 'owner', requester_id: 'a' },
+    ]);
+  });
+
+  it('returns nothing when no request had a pickup waiting', async () => {
+    await expect(run({ userId: 'a' })).resolves.toEqual([]);
+  });
 });

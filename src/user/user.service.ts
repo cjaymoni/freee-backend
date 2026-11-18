@@ -36,6 +36,8 @@ import { AppError } from 'src/common/app-error';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { closeActiveRequests } from '../item-request/close-active-requests';
+import { emitPickupResolved } from '../item-request/pickup-events';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { isItemImagePublicId } from '../item/item-image-upload.options';
 import { normalizeEmail } from '../common/email';
 import {
@@ -87,6 +89,7 @@ export class UserService {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly dataSource: DataSource,
     private readonly firebaseService: FirebaseService,
+    private readonly realtime: ChatRealtimeService,
   ) {}
 
   private readonly logger = new Logger(UserService.name);
@@ -1003,7 +1006,7 @@ export class UserService {
       const run = <T>(work: (em: EntityManager) => Promise<T>) =>
         manager ? work(manager) : this.dataSource.transaction(work);
 
-      const { user, deletedUser, imageIds } = await run(
+      const { user, deletedUser, imageIds, pendingPickups } = await run(
         async (entityManager) => {
           const user = await entityManager.findOne(UserEntity, {
             where: { id, is_deleted: false },
@@ -1067,7 +1070,7 @@ export class UserService {
             },
           );
 
-          await closeActiveRequests(
+          const pendingPickups = await closeActiveRequests(
             entityManager,
             { userId: id },
             deletedById ?? id,
@@ -1080,6 +1083,7 @@ export class UserService {
           return {
             user,
             deletedUser,
+            pendingPickups,
             imageIds: images
               .map((image) => image.cloudinary_public_id)
               .filter(isItemImagePublicId),
@@ -1088,9 +1092,12 @@ export class UserService {
       );
 
       // After the commit, so a rollback never strands rows pointing at deleted
-      // assets. With a caller-supplied manager the commit is the caller's, so
-      // the files are left for it to handle.
+      // assets, and so a socket event never reports a cancel that rolled back.
+      // With a caller-supplied manager the commit is the caller's, so both are
+      // left for it to handle; no caller passes one for a delete today.
       if (!manager) {
+        // The other party's confirm sheet has nothing left to answer.
+        emitPickupResolved(this.realtime, pendingPickups, 'cancelled');
         await this.cloudinaryService.deleteImagesQuietly([
           ...imageIds,
           user.cloudinary_avatar_public_id,

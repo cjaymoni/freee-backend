@@ -13,6 +13,13 @@ describe('ItemRequestController paging', () => {
   const service = {
     getUserRequests: jest.fn().mockResolvedValue({ state: true, data: [] }),
     getItemRequests: jest.fn().mockResolvedValue({ state: true, data: [] }),
+    getPendingPickupConfirmations: jest
+      .fn()
+      .mockResolvedValue({ state: true, data: [] }),
+    markPickedUp: jest.fn().mockResolvedValue({ state: true }),
+    confirmPickedUp: jest.fn().mockResolvedValue({ state: true }),
+    declinePickedUp: jest.fn().mockResolvedValue({ state: true }),
+    confirmPickup: jest.fn(),
   };
 
   beforeAll(async () => {
@@ -69,5 +76,42 @@ describe('ItemRequestController paging', () => {
       20,
       undefined,
     );
+  });
+
+  const patch = (path: string) =>
+    request(app.getHttpServer() as Parameters<typeof request>[0]).patch(path);
+
+  it.each([
+    ['/item-requests/r1/picked-up', 'markPickedUp'],
+    ['/item-requests/r1/picked-up/confirm', 'confirmPickedUp'],
+    ['/item-requests/r1/picked-up/decline', 'declinePickedUp'],
+  ] as const)('%s acts as the signed-in user', async (path, method) => {
+    const res = await patch(path);
+    expect(res.status).toBe(200);
+    expect(service[method]).toHaveBeenCalledWith('u1', 'r1');
+  });
+
+  it('lists pending pickup confirmations for the signed-in user', async () => {
+    const res = await get('/item-requests/pickup-confirmations');
+    expect(res.status).toBe(200);
+    expect(service.getPendingPickupConfirmations).toHaveBeenCalledWith(
+      'u1',
+      1,
+      20,
+    );
+  });
+
+  it('rejects bad paging on pending pickup confirmations', async () => {
+    const res = await get('/item-requests/pickup-confirmations?limit=0');
+    expect(res.status).toBe(400);
+    expect(service.getPendingPickupConfirmations).not.toHaveBeenCalled();
+  });
+
+  it('no longer serves the code-entry pickup', async () => {
+    const res = await patch('/item-requests/r1/pickup').send({
+      confirmation_code: 'ABC234',
+    });
+    expect(res.status).toBe(404);
+    expect(service.confirmPickup).not.toHaveBeenCalled();
   });
 });

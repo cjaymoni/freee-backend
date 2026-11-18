@@ -45,7 +45,7 @@ export const GROUP_LABELS: Record<SettingGroup, string> = {
 
 export const GROUP_DESCRIPTIONS: Record<SettingGroup, string> = {
   listings: 'What a user may post, and whether staff see it first.',
-  requests: 'How many items a user may ask for, and the pickup code.',
+  requests: 'How many items a user may ask for, and pickup confirmations.',
   chat: 'Limits on messages and their attachments.',
   rate_limits: 'How often one caller may hit the sign-in endpoints.',
   auth: 'Sign-in attempts, lockouts, and one-time codes.',
@@ -186,6 +186,17 @@ export const SETTINGS = {
       'How long a locked-out requester waits before they may ask for a fresh code. It can only be lengthened: a longer wait is the tighter setting.',
     default: 60,
     min: 60,
+    max: 1440,
+    unit: 'minutes',
+  },
+  'requests.pickup_reminder_minutes': {
+    group: 'requests',
+    type: 'number',
+    label: 'Pickup confirmation reminders',
+    description:
+      'How often someone is reminded to confirm a pickup the other party has marked, until they answer.',
+    default: 120,
+    min: 30,
     max: 1440,
     unit: 'minutes',
   },

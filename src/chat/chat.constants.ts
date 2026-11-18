@@ -36,6 +36,13 @@ export const ChatEvents = {
   TYPING: 'typing',
   PRESENCE: 'presence',
   UNREAD_COUNT: 'unread:count',
+  /**
+   * The other party said the item was picked up: show the confirm sheet.
+   * Sent again with every reminder until it is answered.
+   */
+  PICKUP_CONFIRMATION_REQUESTED: 'pickup:confirmation_requested',
+  /** A pending pickup confirmation was answered or the request closed. */
+  PICKUP_CONFIRMATION_RESOLVED: 'pickup:confirmation_resolved',
   ERROR: 'error',
 } as const;
 

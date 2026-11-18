@@ -28,7 +28,12 @@ export enum SystemEvent {
   ITEM_REQUESTED = 'item_requested',
   REQUEST_CONFIRMED = 'request_confirmed',
   REQUEST_CANCELLED = 'request_cancelled',
+  /** Both parties agreed the item was picked up; the request is complete. */
   PICKUP_CONFIRMED = 'pickup_confirmed',
+  /** One party tapped "Picked up" and the other has to confirm. */
+  PICKUP_MARKED = 'pickup_marked',
+  /** The other party said the pickup did not happen; still reserved. */
+  PICKUP_DECLINED = 'pickup_declined',
   /** Requester locked out by wrong codes, asking the owner for a new one. */
   PICKUP_CODE_REQUESTED = 'pickup_code_requested',
 }

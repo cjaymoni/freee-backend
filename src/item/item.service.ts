@@ -33,6 +33,8 @@ import {
   isItemImagePublicId,
 } from './item-image-upload.options';
 import { closeActiveRequests } from '../item-request/close-active-requests';
+import { emitPickupResolved } from '../item-request/pickup-events';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { NotificationService } from '../notification/notification.service';
 import { listingRemovedNotice } from '../notification/notices';
 import { StaffInboxService } from '../notification/staff-inbox.service';
@@ -102,6 +104,7 @@ export class ItemService {
     private readonly locationNames: LocationNamesService,
     private readonly staffInbox: StaffInboxService,
     private readonly settings: PlatformSettingsService,
+    private readonly realtime: ChatRealtimeService,
   ) {}
 
   /**
@@ -1164,8 +1167,8 @@ export class ItemService {
     item.deletion_reason = reason;
     item.status = ItemStatus.UNAVAILABLE;
 
-    const { deleted, images } = await this.dataSource.transaction(
-      async (manager) => {
+    const { deleted, images, pendingPickups } =
+      await this.dataSource.transaction(async (manager) => {
         const images = await manager
           .getRepository(ItemImageEntity)
           .find({ where: { item_id: item.id, is_deleted: false } });
@@ -1180,15 +1183,17 @@ export class ItemService {
         const deleted = await manager.getRepository(ItemEntity).save(item);
         // Otherwise a later cancel would flip the deleted item back to
         // available and it could be requested and handed over again.
-        await closeActiveRequests(
+        const pendingPickups = await closeActiveRequests(
           manager,
           { itemIds: [item.id] },
           deletedBy,
           'Item was removed',
         );
-        return { deleted, images };
-      },
-    );
+        return { deleted, images, pendingPickups };
+      });
+
+    // A confirm sheet up on either phone has nothing left to answer.
+    emitPickupResolved(this.realtime, pendingPickups, 'cancelled');
 
     await this.cloudinaryService.deleteImagesQuietly(
       images

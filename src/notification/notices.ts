@@ -152,3 +152,26 @@ export function complaintAnsweredNotice(
     },
   };
 }
+
+/**
+ * Re-sent on a timer to the party who still has to answer "Was it picked up?"
+ * after the other one marked it. The app opens the confirm sheet from
+ * `request_id`.
+ */
+export function pickupConfirmationReminderNotice(pickup: {
+  requestId: string;
+  itemId: string;
+  itemTitle: string | null;
+}): Notice {
+  const what = pickup.itemTitle ? `"${pickup.itemTitle}"` : 'your item';
+  return {
+    category: NotificationCategory.ITEM_REQUESTS,
+    title: 'Was it picked up?',
+    body: `Confirm whether ${what} has been picked up.`,
+    data: {
+      type: 'pickup_confirmation',
+      request_id: pickup.requestId,
+      item_id: pickup.itemId,
+    },
+  };
+}
