@@ -1876,16 +1876,7 @@
                 }
               ]
             },
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pickup_date\": \"2026-06-01T10:00:00Z\",\n  \"pickup_notes\": \"Please call before coming\"\n}"
-            }
+            "header": []
           }
         },
         {

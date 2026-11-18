@@ -5,6 +5,7 @@ import { ItemRequestController } from './item-request.controller';
 import { ItemRequestService } from './item-request.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiExceptionFilter } from '../common/filters/api-exception.filter';
+import { createGlobalPipes } from '../common/pipes/global-pipes';
 import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { stubPlatformSettings } from '../platform-settings/testing/stub-platform-settings';
 
@@ -20,6 +21,10 @@ describe('ItemRequestController paging', () => {
     confirmPickedUp: jest.fn().mockResolvedValue({ state: true }),
     declinePickedUp: jest.fn().mockResolvedValue({ state: true }),
     confirmPickup: jest.fn(),
+    createRequest: jest.fn().mockResolvedValue({ state: true }),
+    confirmRequest: jest.fn().mockResolvedValue({ state: true }),
+    cancelRequest: jest.fn().mockResolvedValue({ state: true }),
+    getRequestById: jest.fn().mockResolvedValue({ state: true }),
   };
 
   beforeAll(async () => {
@@ -113,5 +118,92 @@ describe('ItemRequestController paging', () => {
     });
     expect(res.status).toBe(404);
     expect(service.confirmPickup).not.toHaveBeenCalled();
+  });
+
+  describe('acts as the signed-in user', () => {
+    // Its own app with the app's real global pipes, so body handling is what
+    // clients get. (The paging cases above run without them: under the global
+    // ValidationPipe, ?page=abc becomes NaN and DefaultValuePipe turns that
+    // into page 1 rather than a 400 - a separate, app-wide issue.)
+    let piped: INestApplication;
+    const itemId = '123e4567-e89b-12d3-a456-426614174000';
+
+    beforeAll(async () => {
+      const module = await Test.createTestingModule({
+        controllers: [ItemRequestController],
+        providers: [
+          { provide: ItemRequestService, useValue: service },
+          {
+            provide: PlatformSettingsService,
+            useValue: stubPlatformSettings(),
+          },
+        ],
+      })
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate: (ctx: ExecutionContext) => {
+            ctx.switchToHttp().getRequest<{ user: object }>().user = {
+              userId: 'u1',
+            };
+            return true;
+          },
+        })
+        .compile();
+      piped = module.createNestApplication({ logger: false });
+      piped.useGlobalFilters(new ApiExceptionFilter());
+      piped.useGlobalPipes(...createGlobalPipes());
+      await piped.init();
+    });
+
+    afterAll(() => piped.close());
+
+    const server = () =>
+      request(piped.getHttpServer() as Parameters<typeof request>[0]);
+
+    it('creating a request', async () => {
+      const res = await server()
+        .post('/item-requests')
+        .send({ item_id: itemId });
+      expect(res.status).toBe(201);
+      expect(service.createRequest).toHaveBeenCalledWith('u1', {
+        item_id: itemId,
+      });
+    });
+
+    it('confirming a request, ignoring any body', async () => {
+      const res = await server().patch('/item-requests/r1/confirm').send({
+        status: 'confirmed',
+        pickup_notes: 'from an older client',
+      });
+      expect(res.status).toBe(200);
+      expect(service.confirmRequest).toHaveBeenCalledWith('u1', 'r1');
+    });
+
+    it('cancelling a request', async () => {
+      const res = await server().patch('/item-requests/r1/cancel').send({
+        cancellation_reason: 'No longer needed',
+      });
+      expect(res.status).toBe(200);
+      expect(service.cancelRequest).toHaveBeenCalledWith('u1', 'r1', {
+        cancellation_reason: 'No longer needed',
+      });
+    });
+
+    it('listing requests received', async () => {
+      const res = await server().get('/item-requests/received');
+      expect(res.status).toBe(200);
+      expect(service.getItemRequests).toHaveBeenCalledWith(
+        'u1',
+        1,
+        20,
+        undefined,
+      );
+    });
+
+    it('reading one request', async () => {
+      const res = await server().get('/item-requests/r1');
+      expect(res.status).toBe(200);
+      expect(service.getRequestById).toHaveBeenCalledWith('r1', 'u1');
+    });
   });
 });
