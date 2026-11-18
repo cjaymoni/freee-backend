@@ -24,6 +24,14 @@ const ACTIVE = [RequestStatus.PENDING, RequestStatus.CONFIRMED];
  *
  * Runs in the caller's transaction so it commits with the deletion.
  *
+ * Lock order matches every request transition - item, then request - so it
+ * can't deadlock against one: the affected items are locked first, in id
+ * order, and the requests are re-read under those locks before anything is
+ * written. That re-read is also what stops it cancelling a request a
+ * transition completed in the meantime; the update re-checks status as well,
+ * for the one writer that skips item locks (the pickup reminder job, which
+ * never changes status).
+ *
  * @returns the closed requests that had a pickup waiting to be confirmed.
  */
 export async function closeActiveRequests(
@@ -43,6 +51,18 @@ export async function closeActiveRequests(
         ];
   if (!where.length) return [];
 
+  const candidates = await manager.find(ItemRequestEntity, {
+    where,
+    select: { id: true, item_id: true },
+  });
+  if (!candidates.length) return [];
+
+  await lockItemsInOrder(
+    manager,
+    candidates.map((request) => request.item_id),
+  );
+
+  // Under the item locks no transition can move these requests any more.
   const requests = await manager.find(ItemRequestEntity, { where });
   if (!requests.length) return [];
 
@@ -52,7 +72,7 @@ export async function closeActiveRequests(
 
   await manager.update(
     ItemRequestEntity,
-    { id: In(requests.map((request) => request.id)) },
+    { id: In(requests.map((request) => request.id)), status: In(ACTIVE) },
     {
       status: RequestStatus.CANCELLED,
       cancelled_at: new Date(),
@@ -83,4 +103,19 @@ export async function closeActiveRequests(
   }
 
   return pendingPickups;
+}
+
+/**
+ * Take the write lock on each item, in id order, so two callers locking
+ * overlapping sets can't each hold one the other needs.
+ */
+async function lockItemsInOrder(
+  manager: EntityManager,
+  itemIds: string[],
+): Promise<void> {
+  const ordered = [...new Set(itemIds)].sort();
+  await manager.query(
+    'SELECT id FROM items WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
+    [ordered],
+  );
 }

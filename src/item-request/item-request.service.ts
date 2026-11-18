@@ -125,9 +125,9 @@ export class ItemRequestService {
    * requester, so two requests racing cannot both find room under the cap.
    *
    * Lock order: the caller has already taken the item row's write lock (see
-   * lockItem), so this advisory lock is always the second of the two on this
-   * path. Any other path that takes both must take them in the same order,
-   * or two transactions can deadlock holding one each.
+   * lockItem), so this advisory lock comes after it. Any other path that
+   * takes both must take them in the same order, or two transactions can
+   * deadlock holding one each.
    *
    * A cap of 0 means no limit.
    *
@@ -175,16 +175,18 @@ export class ItemRequestService {
    *
    * The item is the single contended resource: a request's status, the item's
    * status and items.requester_ids all have to move together. Every writer
-   * takes this one lock first and no writer takes a second row lock, so the
-   * transitions for a given item are strictly ordered and no two of them can
-   * deadlock against each other.
+   * takes this lock first, so the transitions for a given item are strictly
+   * ordered.
    *
-   * One exception: the pickup reminder job stamps pickup_reminded_at on
-   * request rows without the item lock (see sendPickupConfirmationReminders).
-   * It is safe because it takes those row locks with SKIP LOCKED, so it never
-   * waits on a transition, and its UPDATE re-checks status and the mark, so a
-   * settle that commits first is left alone. At worst a reminder crosses an
-   * answer, which the app handles by re-fetching before raising the sheet.
+   * The lock order everywhere is: item, then the request row (see
+   * loadRequestUnderLock), then the advisory request-cap lock in
+   * createRequest. closeActiveRequests follows it too, locking its items in
+   * id order before touching any request. Keep to it: a path that takes a
+   * request before its item can deadlock against any transition.
+   *
+   * The pickup reminder job is the one writer that takes no item lock. It
+   * only stamps pickup_reminded_at, and only with SKIP LOCKED, so it never
+   * waits on anything and passes over a row a transition holds.
    *
    * Relations are deliberately not joined - Postgres rejects FOR UPDATE
    * against the nullable side of an outer join.
@@ -240,6 +242,10 @@ export class ItemRequestService {
    * pickup_reminded_at - so a re-tap and a timed reminder can't both push.
    * Always taken after the item lock, and the job takes no item lock, so the
    * order is item then request everywhere.
+   *
+   * The cost: a reminder that falls due while some transition holds its row
+   * (for milliseconds) is skipped by that run of the job and sent by the
+   * next, up to 10 minutes later.
    */
   private async loadRequestUnderLock(
     manager: EntityManager,

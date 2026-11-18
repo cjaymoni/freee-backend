@@ -47,12 +47,34 @@ describe('closeActiveRequests', () => {
     ];
     expect(entity).toBe(ItemRequestEntity);
     expect(criteria.id.value).toEqual(['r1', 'r2']);
+    // Re-checked by Postgres after any wait, so a request completed
+    // meanwhile is left alone.
+    expect(criteria).toHaveProperty('status');
     expect(patch).toMatchObject({
       status: RequestStatus.CANCELLED,
       cancelled_by: 'admin',
       cancellation_reason: 'Item was removed',
     });
-    expect(manager.query).toHaveBeenCalledTimes(2);
+    // The item lock, then one requester_ids update per request.
+    expect(manager.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('locks the items, in id order, before writing any request', async () => {
+    manager.find.mockResolvedValue([
+      { ...pending, item_id: 'item-b' },
+      { ...confirmed, item_id: 'item-a' },
+    ]);
+
+    await run({ userId: 'a' });
+
+    const [sql, params] = manager.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('FOR UPDATE');
+    expect(params).toEqual([['item-a', 'item-b']]);
+    expect(manager.query.mock.invocationCallOrder[0]).toBeLessThan(
+      manager.update.mock.invocationCallOrder[0],
+    );
+    // Read once to find the items, again under their locks.
+    expect(manager.find).toHaveBeenCalledTimes(2);
   });
 
   it('releases a reservation only on items that are not deleted', async () => {

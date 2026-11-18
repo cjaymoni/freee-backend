@@ -862,6 +862,24 @@ describe('ItemRequestService', () => {
         },
       );
 
+      it('reminds again at exactly the end of the cooldown', async () => {
+        const now = Date.parse('2026-11-18T12:00:00.000Z');
+        const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+        try {
+          setup({
+            pickup_marked_by: 'finder',
+            pickup_marked_at: new Date(now - 60 * 60_000),
+            pickup_reminded_at: new Date(now - 5 * 60_000),
+          });
+
+          await service.markPickedUp('finder', 'req-1');
+
+          expect(mockNotifications.notify).toHaveBeenCalledTimes(1);
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
       it('sends no push for a tap minutes after the last reminder', async () => {
         const { manager } = setup({
           pickup_marked_by: 'finder',
