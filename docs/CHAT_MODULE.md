@@ -98,8 +98,10 @@ snapshot of the item.
 | `item_requested` | A user requests an item |
 | `request_confirmed` | The owner confirms the request |
 | `request_cancelled` | Either party cancels |
-| `pickup_confirmed` | The requester confirms pickup |
-| `pickup_code_requested` | A requester locked out by wrong pickup codes asks the owner for a new one |
+| `pickup_marked` | One party taps "Picked up"; the other has to confirm |
+| `pickup_declined` | The other party says the pickup did not happen; the item stays reserved |
+| `pickup_confirmed` | Both parties agree the item was picked up; the request is complete |
+| `pickup_code_requested` | Code-entry pickup, switched off for now. Not raised. |
 
 **One row renders two ways.** `sender_id` is whoever caused the event, so use
 `is_mine` to pick the wording. For `item_requested`:
@@ -112,10 +114,10 @@ It is a **snapshot** taken when the event happened, so the card still renders
 correctly after the item is edited or deleted — use it rather than re-fetching
 the item.
 
-For `pickup_code_requested`, the owner's side (`is_mine: false`) is the one
-that needs an action: offer **"Issue new code"**, which calls
-`PATCH /item-requests/:requestId/pickup-code` with `metadata.request_id`. The
-card never carries the code.
+For `pickup_marked`, the side with `is_mine: false` is the one that has to
+answer. The card is a record; the confirm sheet is driven by the
+`pickup:confirmation_requested` socket event and the request's
+`awaiting_pickup_confirmation` flag (see ANDROID_INTEGRATION.md §7).
 
 System messages count toward unread like any other message, and cannot be
 deleted. Each one also sends the other party a push, under the item-requests
@@ -147,6 +149,8 @@ same way it rejects REST calls. A socket that fails to authenticate receives
 | `typing` | `{ conversation_id, user_id, is_typing }` |
 | `presence` | `{ user_id, is_online, last_active }` |
 | `unread:count` | Sent once on connect. |
+| `pickup:confirmation_requested` | `{ request_id, item_id, item_title, marked_by, marked_at }` — to the party who has to confirm. Re-fetch the request and raise the confirm sheet if `awaiting_pickup_confirmation` is still true. Sent again with every reminder. |
+| `pickup:confirmation_resolved` | `{ request_id, outcome: 'confirmed' \| 'declined' \| 'cancelled' }` — to both parties. Close the sheet / clear "waiting". |
 | `error` | `{ message }` |
 
 ### Client → server

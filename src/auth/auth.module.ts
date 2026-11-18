@@ -21,6 +21,7 @@ import { SmsAuthService } from './sms/sms-auth.service';
 import { TwilioVerifyClient } from './sms/twilio-verify.client';
 import { EmailAuthController } from './email/email-auth.controller';
 import { EmailAuthService } from './email/email-auth.service';
+import { jwtSecret } from './jwt-secret';
 
 @Module({
   imports: [
@@ -39,7 +40,7 @@ import { EmailAuthService } from './email/email-auth.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'defaultSecret',
+        secret: jwtSecret(configService),
         signOptions: { expiresIn: '15m' },
       }),
     }),

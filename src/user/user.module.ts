@@ -1,3 +1,4 @@
+import { RealtimeModule } from '../chat/realtime.module';
 import { NotificationModule } from '../notification/notification.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -23,6 +24,8 @@ import { CategoryEntity } from '../category/entities/category.entity';
     ]),
     CloudinaryModule,
     NotificationModule,
+    // Closing a deleted account's requests closes any open confirm sheet.
+    RealtimeModule,
   ],
   controllers: [
     UserLocationController,

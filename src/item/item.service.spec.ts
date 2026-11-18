@@ -1,4 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
+import { ChatEvents } from '../chat/chat.constants';
+import {
+  ItemRequestEntity,
+  RequestStatus,
+} from '../item-request/entities/item-request.entity';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -40,10 +46,10 @@ const mockUser: UserEntity & { items_count?: number } = {
   member_since: new Date('2024-01-01T00:00:00.000Z'),
   phone_number: '+233243225121',
   items_count: 3,
-} as any;
+} as unknown as UserEntity & { items_count?: number };
 
 const mockLocation = (lat: number, lng: number) =>
-  ({ latitude: lat, longitude: lng }) as any;
+  ({ latitude: lat, longitude: lng }) as LocationEntity;
 
 const mockItemEntity: ItemEntity = {
   id: 'item-1',
@@ -74,7 +80,7 @@ const mockItemEntity: ItemEntity = {
   user: mockUser,
   category: null,
   deletedByUser: null,
-} as any;
+} as unknown as ItemEntity;
 
 const mockImage = (
   id: string,
@@ -160,13 +166,16 @@ describe('ItemResponseDto.fromEntity', () => {
     const entity = {
       ...mockItemEntity,
       user: { ...mockUser, first_name: null, last_name: null },
-    } as any;
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.name).toBe('');
   });
 
   it('sets user to undefined when user relation is not loaded', () => {
-    const entity = { ...mockItemEntity, user: undefined } as any;
+    const entity = {
+      ...mockItemEntity,
+      user: undefined,
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user).toBeUndefined();
   });
@@ -181,7 +190,7 @@ describe('ItemResponseDto.fromEntity', () => {
     const entity = {
       ...mockItemEntity,
       user: { ...mockUser, items_count: undefined },
-    } as any;
+    } as unknown as ItemEntity;
     const dto = ItemResponseDto.fromEntity(entity);
     expect(dto.user!.items_count).toBe(0);
   });
@@ -322,6 +331,7 @@ describe('ItemService', () => {
 
   const mockSearchService = { record: jest.fn().mockResolvedValue(undefined) };
   const mockNotifications = { notify: jest.fn().mockResolvedValue(undefined) };
+  const mockRealtime = { emitToUsers: jest.fn() };
   const mockStaffInbox = { toAllStaff: jest.fn().mockResolvedValue(undefined) };
 
   const mockItemViewService = {
@@ -361,6 +371,7 @@ describe('ItemService', () => {
         { provide: DataSource, useValue: mockDataSource },
         { provide: SearchService, useValue: mockSearchService },
         { provide: NotificationService, useValue: mockNotifications },
+        { provide: ChatRealtimeService, useValue: mockRealtime },
         { provide: StaffInboxService, useValue: mockStaffInbox },
         {
           provide: LocationNamesService,
@@ -1335,6 +1346,49 @@ describe('ItemService', () => {
     });
   });
 
+  describe('remove with a pickup waiting', () => {
+    it('closes the confirm sheet on both phones once the delete commits', async () => {
+      mockItemRepo.findOne.mockResolvedValueOnce({
+        id: 'item-1',
+        user_id: 'owner',
+        is_deleted: false,
+      });
+      const marked = {
+        id: 'req-1',
+        item_id: 'item-1',
+        owner_id: 'owner',
+        requester_id: 'finder',
+        status: RequestStatus.CONFIRMED,
+        pickup_marked_by: 'finder',
+      };
+      const manager = {
+        getRepository: (entity: unknown) =>
+          entity === ItemEntity
+            ? { save: jest.fn((row: unknown) => Promise.resolve(row)) }
+            : { find: jest.fn().mockResolvedValue([]), update: jest.fn() },
+        find: jest.fn().mockResolvedValue([marked]),
+        update: jest.fn(),
+        query: jest.fn(),
+      };
+      mockDataSource.transaction.mockImplementationOnce(
+        (work: (m: unknown) => Promise<unknown>) => work(manager),
+      );
+
+      await service.remove('owner', 'item-1');
+
+      expect(manager.update).toHaveBeenCalledWith(
+        ItemRequestEntity,
+        expect.anything(),
+        expect.objectContaining({ pickup_marked_by: null }),
+      );
+      expect(mockRealtime.emitToUsers).toHaveBeenCalledWith(
+        ['owner', 'finder'],
+        ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+        { request_id: 'req-1', outcome: 'cancelled' },
+      );
+    });
+  });
+
   describe('adminRemove', () => {
     it('tells the owner their listing was removed, and why', async () => {
       mockItemRepo.findOne.mockResolvedValueOnce({ ...mockItemEntity });
@@ -1387,8 +1441,8 @@ describe('ItemService', () => {
 
         await service.findAll({ query: '  Chaisé ', searcher_key: 'user-9' });
 
-        const call = mockQueryBuilder.andWhere.mock.calls.find(
-          ([sql]: [string]) => sql.includes(':search'),
+        const call = (mockQueryBuilder.andWhere.mock.calls as unknown[][]).find(
+          ([sql]) => typeof sql === 'string' && sql.includes(':search'),
         );
         expect(call).toBeDefined();
         const [sql, params] = call as [string, { search: string }];
@@ -1575,7 +1629,10 @@ describe('ItemService', () => {
     });
 
     it('does not set user when user relation is not loaded', async () => {
-      const entityWithoutUser = { ...mockItemEntity, user: undefined } as any;
+      const entityWithoutUser = {
+        ...mockItemEntity,
+        user: undefined,
+      } as unknown as ItemEntity;
       mockQueryBuilder = buildQueryBuilder(
         [entityWithoutUser],
         [{ user_items_count: '0' }],

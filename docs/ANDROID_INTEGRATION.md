@@ -377,50 +377,73 @@ Four states, and each transition is a different endpoint with a different caller
 | Method | Endpoint | Who calls it | Effect |
 | --- | --- | --- | --- |
 | `POST` | `/item-requests` | Requester | Creates a `pending` request. One active request per person per item. |
-| `PATCH` | `/item-requests/{id}/confirm` | Owner | The owner picks who gets the item. Becomes `confirmed`, item becomes `reserved`, a 6-character pickup code is generated. |
-| `PATCH` | `/item-requests/{id}/pickup` | Requester | Body `{"confirmation_code": "…"}`. Becomes `completed`, item becomes `picked_up`, and every other request on the item is cancelled. |
-| `PATCH` | `/item-requests/{id}/pickup-code` | Owner | Issues a new pickup code and unlocks a locked-out requester. The old code stops working. |
-| `PATCH` | `/item-requests/{id}/pickup-code/request` | Requester | Only while locked out. Asks the owner for a new code by chat card and push. Returns no code. |
+| `PATCH` | `/item-requests/{id}/confirm` | Owner | The owner picks who gets the item. Becomes `confirmed`, item becomes `reserved`. |
+| `PATCH` | `/item-requests/{id}/picked-up` | Either party | "Picked up". Stays `confirmed` and asks the other party to confirm. If the other party already marked it, completes the pickup instead. |
+| `PATCH` | `/item-requests/{id}/picked-up/confirm` | The other party | "Yes" on the confirm sheet. Becomes `completed`, item becomes `picked_up`, every other request on the item is cancelled. |
+| `PATCH` | `/item-requests/{id}/picked-up/decline` | The other party | "No" on the confirm sheet. The mark is cleared; stays `confirmed`, item stays `reserved`. |
+| `GET` | `/item-requests/pickup-confirmations` | Either party | Pickups waiting on this user to confirm, oldest first. |
 | `PATCH` | `/item-requests/{id}/cancel` | Either party | Becomes `cancelled`. `cancellation_reason` is optional. A confirmed request releases the item back to `available`. |
 | `GET` | `/item-requests/my-requests` | Requester | Requests this user has made. |
 | `GET` | `/item-requests/received` | Owner | Requests on this user's items. |
-| `GET` | `/item-requests/{id}` | Either party | 403 for anyone else. Carries the pickup code for the owner only. |
+| `GET` | `/item-requests/{id}` | Either party | 403 for anyone else. |
 
 Only one request per item can be confirmed at a time — a second confirm returns
 **409**. Once confirmed, the item is reserved until that request is completed or
 cancelled.
 
-### The pickup code
+### Confirming the pickup
 
-The code is how both sides know the hand-off happened, so **only the owner
-ever sees it**. `confirmation_code` is filled in on the owner's copy of a
-request and is always `null` on the requester's, on every endpoint.
+A pickup only completes when both people say it happened.
 
-1. **Owner's screen:** once a request is `confirmed`, show `confirmation_code`
-   so the owner can read it out or show it at the hand-off.
-2. **Requester's screen:** show a code input, not a code. Submit it to
-   `PATCH /item-requests/{id}/pickup`. Case and surrounding spaces are
-   ignored, and codes never contain `0`, `O`, `1` or `I`.
+1. After the hand-off, either the freer or the finder taps **"Picked up"** and
+   confirms → `PATCH /item-requests/{id}/picked-up`. Their copy of the request
+   now has `pickup_marked_by` = their own id; show a "waiting for the other
+   person" state.
+2. The other person gets a `pickup_marked` chat card, a push, and the socket
+   event `pickup:confirmation_requested`. On that event, fetch
+   `GET /item-requests/{request_id}` and, if `awaiting_pickup_confirmation` is
+   still true, **slide up the confirm sheet. It cannot be dismissed** — no swipe-down, no tap-outside, no back
+   button. It only goes away when they tap one of its two buttons:
+   - **Yes** → `PATCH /item-requests/{id}/picked-up/confirm`. The request
+     completes.
+   - **No** → `PATCH /item-requests/{id}/picked-up/decline`. The item stays
+     reserved for this pair; either side can tap "Picked up" again later, or
+     cancel.
+3. Both sides then get `pickup:confirmation_resolved` with the outcome — close
+   the sheet / clear the waiting state on every device.
 
-**Wrong codes are capped at 5 per code.**
+**The sheet has to come back until it is answered.** Every request carries
+`awaiting_pickup_confirmation`, true only on the copy of the person who has to
+answer. On app launch and on return to foreground, call
+`GET /item-requests/pickup-confirmations` and raise the sheet for each result.
+While it stays unanswered the server re-sends a push (FCM `data.type` =
+`pickup_confirmation`, with `request_id`) and the socket event every 2 hours by
+default (`requests.pickup_reminder_minutes` in the back office). Opening that
+push should raise the sheet for `request_id`.
 
-| Response | Meaning | What to show |
-| --- | --- | --- |
-| **400** `"Invalid confirmation code. 2 attempts left"` | Wrong code. | The message as-is. |
-| **400** `"Invalid confirmation code. No attempts left: …"` | That was the fifth wrong code. | The locked state below. |
-| **429** `"Too many wrong codes. …"` | Locked. Even the right code is refused. | The locked state below. |
+The fetch before raising matters: a reminder can cross with an answer, so an
+event may arrive for a pickup that was settled a moment ago. Do the same check
+when a `pickup_confirmation` push is opened.
 
-Every request carries `pickup_locked`. When it is `true`:
+Retries are safe. Confirming again after the pickup completed, or declining
+again when there's no mark left, returns **200** with the request as it is.
+Tapping "Picked up" again re-sends the other person the reminder (socket event
+and push) at most every 5 minutes; taps in between are accepted and do nothing.
+The response is the same either way, so don't tell the user a reminder was
+sent; show the waiting state.
 
-- **Requester:** hide the code input and show **"Ask for a new code"**, which
-  calls `PATCH /item-requests/{id}/pickup-code/request`. That posts a
-  `pickup_code_requested` card in the chat and pushes the owner. It can be
-  repeated once an hour; sooner returns **429** with the wait in the message.
-  A **400** means the requester isn't locked out.
-- **Owner:** show **"Issue new code"**, which calls
-  `PATCH /item-requests/{id}/pickup-code`. The response carries the new code
-  and `pickup_locked: false`. The owner can also do this at any time, for
-  example if they think someone else saw the code.
+If confirm or decline returns **400** or **409**, the request changed under the
+user (the other side cancelled, the item was removed). Re-fetch the request and
+close the sheet if `awaiting_pickup_confirmation` is now false. Deleting a
+listing or an account with a pickup waiting also sends
+`pickup:confirmation_resolved` with `cancelled`.
+
+### The pickup code (switched off)
+
+The code-entry pickup (`PATCH /item-requests/{id}/pickup`,
+`/pickup-code`, `/pickup-code/request`) is switched off and returns **404**.
+`confirmation_code` and `pickup_locked` are still on the response for now;
+ignore them.
 
 ---
 

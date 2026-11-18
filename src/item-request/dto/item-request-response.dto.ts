@@ -32,7 +32,7 @@ export class ItemRequestResponseDto {
 
   @ApiPropertyOptional({
     description:
-      'Pickup code. Returned to the item owner only (null for the requester): the owner hands it over at collection and the requester submits it to confirm pickup.',
+      'Deprecated: the code-entry pickup is switched off in favour of both parties tapping "Picked up". Still generated and returned to the owner only.',
   })
   confirmation_code?: string | null;
 
@@ -41,6 +41,29 @@ export class ItemRequestResponseDto {
       'True once too many wrong pickup codes were entered. Pickup is refused until the owner issues a new code.',
   })
   pickup_locked: boolean;
+
+  @ApiProperty({
+    description:
+      'Who tapped "Picked up". While the request is confirmed, the other party has to confirm or decline. Kept after completion as the record of who marked it; null when nobody has, after a decline, or once the request is cancelled.',
+    type: String,
+    nullable: true,
+  })
+  pickup_marked_by: string | null;
+
+  @ApiProperty({
+    description:
+      'When "Picked up" was tapped. Cleared and kept on the same terms as pickup_marked_by.',
+    type: String,
+    nullable: true,
+    example: '2026-06-28T16:28:43.399Z',
+  })
+  pickup_marked_at: Date | null;
+
+  @ApiProperty({
+    description:
+      'True when the other party marked the item picked up and the viewer has to confirm or decline. While true the app shows the undismissable confirm sheet.',
+  })
+  awaiting_pickup_confirmation: boolean;
 
   @ApiProperty({ description: 'Whether the item has been picked up' })
   is_picked_up: boolean;

@@ -75,6 +75,9 @@ const ELASTIC: SettingKey[] = [
   // How far back popular terms are counted: a product choice either way, and
   // the nightly purge keeps the widest window's data so it stays reversible.
   'platform.popular_search_window_days',
+  // How often a pending pickup confirmation is re-pushed: a nuisance-versus-
+  // nudge trade-off, not a security bound.
+  'requests.pickup_reminder_minutes',
 ];
 
 describe('settings registry', () => {

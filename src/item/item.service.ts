@@ -33,6 +33,8 @@ import {
   isItemImagePublicId,
 } from './item-image-upload.options';
 import { closeActiveRequests } from '../item-request/close-active-requests';
+import { emitPickupResolved } from '../item-request/pickup-events';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { NotificationService } from '../notification/notification.service';
 import { listingRemovedNotice } from '../notification/notices';
 import { StaffInboxService } from '../notification/staff-inbox.service';
@@ -83,6 +85,11 @@ const haversineKm = (
   power(sin(radians(${alias}.longitude - CAST(:lng AS double precision)) / 2), 2)
 )))`;
 
+/**
+ * The poster's live listing count, attached to a loaded user for the item
+ * card (see ItemResponseDto.fromEntity, which reads it back).
+ */
+type WithItemsCount<T> = T & { items_count?: number };
 @Injectable()
 export class ItemService {
   constructor(
@@ -102,6 +109,7 @@ export class ItemService {
     private readonly locationNames: LocationNamesService,
     private readonly staffInbox: StaffInboxService,
     private readonly settings: PlatformSettingsService,
+    private readonly realtime: ChatRealtimeService,
   ) {}
 
   /**
@@ -906,7 +914,7 @@ export class ItemService {
     ]);
     pageItems.forEach((entity) => {
       if (entity.user) {
-        (entity.user as any).items_count =
+        (entity.user as WithItemsCount<typeof entity.user>).items_count =
           itemsCountByUser.get(entity.user_id) ?? 0;
       }
     });
@@ -969,9 +977,11 @@ export class ItemService {
     ) {
       throw new NotFoundException(`Item with ID ${id} not found`);
     }
-    const raw = item.raw[0];
+    const raw = item.raw[0] as { user_items_count?: string } | undefined;
     if (entity.user) {
-      (entity.user as any).items_count = Number(raw?.user_items_count ?? 0);
+      (entity.user as WithItemsCount<typeof entity.user>).items_count = Number(
+        raw?.user_items_count ?? 0,
+      );
     }
 
     const savedIds = await this.getSavedItemIds(viewerId);
@@ -1164,8 +1174,8 @@ export class ItemService {
     item.deletion_reason = reason;
     item.status = ItemStatus.UNAVAILABLE;
 
-    const { deleted, images } = await this.dataSource.transaction(
-      async (manager) => {
+    const { deleted, images, pendingPickups } =
+      await this.dataSource.transaction(async (manager) => {
         const images = await manager
           .getRepository(ItemImageEntity)
           .find({ where: { item_id: item.id, is_deleted: false } });
@@ -1180,15 +1190,17 @@ export class ItemService {
         const deleted = await manager.getRepository(ItemEntity).save(item);
         // Otherwise a later cancel would flip the deleted item back to
         // available and it could be requested and handed over again.
-        await closeActiveRequests(
+        const pendingPickups = await closeActiveRequests(
           manager,
           { itemIds: [item.id] },
           deletedBy,
           'Item was removed',
         );
-        return { deleted, images };
-      },
-    );
+        return { deleted, images, pendingPickups };
+      });
+
+    // A confirm sheet up on either phone has nothing left to answer.
+    emitPickupResolved(this.realtime, pendingPickups, 'cancelled');
 
     await this.cloudinaryService.deleteImagesQuietly(
       images

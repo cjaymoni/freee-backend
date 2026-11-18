@@ -217,3 +217,61 @@ describe('ChatGateway payloads over a real socket', () => {
     ).resolves.toMatchObject({ state: false, statusCode: 400 });
   });
 });
+
+describe('ChatGateway token secret', () => {
+  const build = (secret: string | undefined) =>
+    new ChatGateway(
+      {} as ChatService,
+      new ChatRealtimeService(),
+      {} as JwtService,
+      { get: () => secret } as unknown as ConfigService,
+      {} as AuthService,
+    );
+
+  it('refuses to start without a JWT secret rather than using a default', () => {
+    expect(() => build(undefined)).toThrow('JWT_SECRET is not set');
+  });
+
+  describe('on a handshake', () => {
+    const jwt = new JwtService({});
+    const validateSession = jest.fn().mockResolvedValue(false);
+    const gateway = new ChatGateway(
+      {} as ChatService,
+      new ChatRealtimeService(),
+      jwt,
+      { get: () => 'configured-secret' } as unknown as ConfigService,
+      { validateSession } as unknown as AuthService,
+    );
+    const connect = async (secret: string) => {
+      const token = await jwt.signAsync(
+        { sub: 'u1', session_token: 's1' },
+        { secret },
+      );
+      const client = {
+        id: 'sock-1',
+        data: {},
+        handshake: { auth: { token }, headers: {}, query: {} },
+        emit: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      await gateway.handleConnection(client as never);
+      return client;
+    };
+
+    afterEach(() => validateSession.mockClear());
+
+    it('accepts a token signed with the configured secret', async () => {
+      await connect('configured-secret');
+
+      // Past the signature check: on to the session lookup.
+      expect(validateSession).toHaveBeenCalledWith('s1');
+    });
+
+    it('turns away a token signed with any other key', async () => {
+      const client = await connect('defaultSecret');
+
+      expect(validateSession).not.toHaveBeenCalled();
+      expect(client.disconnect).toHaveBeenCalled();
+    });
+  });
+});

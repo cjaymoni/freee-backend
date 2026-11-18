@@ -7,7 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
-import { ChatRealtimeService } from './chat-realtime.service';
+import { RealtimeModule } from './realtime.module';
 import { ConversationEntity } from './entities/conversation.entity';
 import { MessageEntity } from './entities/message.entity';
 
@@ -17,6 +17,7 @@ import { ItemRequestEntity } from '../item-request/entities/item-request.entity'
 import { BlockedUser } from '../moderation/entities/blocked-user.entity';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { AuthModule } from '../auth/auth.module';
+import { jwtSecret } from '../auth/jwt-secret';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { AuthModule } from '../auth/auth.module';
     ]),
     CloudinaryModule,
     NotificationModule,
+    RealtimeModule,
     // The gateway authenticates handshakes itself rather than through the
     // passport strategy, which is HTTP-only. Same secret, same session check.
     AuthModule,
@@ -37,14 +39,14 @@ import { AuthModule } from '../auth/auth.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'defaultSecret',
+        secret: jwtSecret(configService),
       }),
     }),
   ],
   controllers: [ChatController],
-  providers: [ChatService, ChatGateway, ChatRealtimeService],
+  providers: [ChatService, ChatGateway],
   // ChatService so the item-request flow can drop system messages into a
   // thread; ChatRealtimeService so the back office can drop a user's sockets.
-  exports: [ChatService, ChatRealtimeService],
+  exports: [ChatService, RealtimeModule],
 })
 export class ChatModule {}

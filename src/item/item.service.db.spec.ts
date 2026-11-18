@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -94,6 +95,7 @@ describeDb('ItemService.findAll on Postgres', () => {
           useValue: { record: () => Promise.resolve() },
         },
         { provide: NotificationService, useValue: { notify: jest.fn() } },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
         { provide: StaffInboxService, useValue: { toAllStaff: jest.fn() } },
         {
           provide: LocationNamesService,

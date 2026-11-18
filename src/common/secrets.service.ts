@@ -24,9 +24,10 @@ export class SecretsService {
 
   /**
    * Get a secret value
-   * In production, this would fetch from AWS Secrets Manager
+   * In production, this would fetch from AWS Secrets Manager. Returns a
+   * promise already so callers don't change when it does.
    */
-  async getSecret(key: string): Promise<string | undefined> {
+  getSecret(key: string): Promise<string | undefined> {
     if (this.isProduction) {
       // TODO: Implement AWS Secrets Manager integration
       // const client = new SecretsManagerClient({ region: 'us-east-1' });
@@ -38,7 +39,7 @@ export class SecretsService {
       );
     }
 
-    return this.configService.get<string>(key);
+    return Promise.resolve(this.configService.get<string>(key));
   }
 
   /**
@@ -52,17 +53,6 @@ export class SecretsService {
       password: await this.getSecret('DB_PASSWORD'),
       database: await this.getSecret('DB_DATABASE'),
     };
-  }
-
-  /**
-   * Get JWT secret
-   */
-  async getJwtSecret(): Promise<string> {
-    const secret = await this.getSecret('JWT_SECRET');
-    if (!secret) {
-      throw new Error('JWT_SECRET is required');
-    }
-    return secret;
   }
 
   /**

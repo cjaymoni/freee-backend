@@ -1,4 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ChatRealtimeService } from '../chat/chat-realtime.service';
+import {
+  ItemRequestEntity,
+  RequestStatus,
+} from '../item-request/entities/item-request.entity';
+import { ChatEvents } from '../chat/chat.constants';
 import { UserService } from './user.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UserEntity } from './entities/user.entity';
@@ -46,6 +52,7 @@ describe('UserService', () => {
           },
         },
         { provide: FirebaseService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
       ],
     }).compile();
 
@@ -79,6 +86,7 @@ describe('UserService.update verification flags', () => {
         { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
         { provide: DataSource, useValue: {} },
         { provide: FirebaseService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
       ],
     }).compile();
     service = module.get<UserService>(UserService);
@@ -204,6 +212,7 @@ describe('UserService.remove', () => {
           },
         },
         { provide: FirebaseService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
       ],
     }).compile();
     const service = module.get<UserService>(UserService);
@@ -270,6 +279,7 @@ describe('UserService.create from POST /user (actingUserId)', () => {
         { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
         { provide: DataSource, useValue: {} },
         { provide: FirebaseService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
       ],
     }).compile();
     service = module.get<UserService>(UserService);
@@ -502,6 +512,7 @@ describe('UserService linking identifiers from Firebase', () => {
           },
         },
         { provide: FirebaseService, useValue: firebase },
+        { provide: ChatRealtimeService, useValue: { emitToUsers: jest.fn() } },
       ],
     }).compile();
 
@@ -744,5 +755,64 @@ describe('UserService linking identifiers from Firebase', () => {
       expect(result.message).toBe('Email is already up to date');
       expect(update).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('UserService.remove with a pickup waiting', () => {
+  it('closes the confirm sheet on both phones once the delete commits', async () => {
+    const marked = {
+      id: 'req-1',
+      item_id: 'item-1',
+      owner_id: 'u1',
+      requester_id: 'finder',
+      status: RequestStatus.CONFIRMED,
+      pickup_marked_by: 'finder',
+    };
+    const manager = {
+      findOne: jest.fn().mockResolvedValue({ id: 'u1' }),
+      update: jest.fn().mockResolvedValue(undefined),
+      find: jest.fn().mockResolvedValue([marked]),
+      query: jest.fn(),
+      createQueryBuilder: jest.fn(() => ({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      })),
+    };
+    const realtime = { emitToUsers: jest.fn() };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(UserEntity), useValue: {} },
+        {
+          provide: CloudinaryService,
+          useValue: { deleteImagesQuietly: jest.fn() },
+        },
+        { provide: CACHE_MANAGER, useValue: { del: jest.fn() } },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: (work: (m: typeof manager) => unknown) =>
+              work(manager),
+          },
+        },
+        { provide: FirebaseService, useValue: {} },
+        { provide: ChatRealtimeService, useValue: realtime },
+      ],
+    }).compile();
+
+    await module.get(UserService).remove('u1', 'u1');
+
+    expect(manager.update).toHaveBeenCalledWith(
+      ItemRequestEntity,
+      expect.anything(),
+      expect.objectContaining({ pickup_marked_by: null }),
+    );
+    expect(realtime.emitToUsers).toHaveBeenCalledWith(
+      ['u1', 'finder'],
+      ChatEvents.PICKUP_CONFIRMATION_RESOLVED,
+      { request_id: 'req-1', outcome: 'cancelled' },
+    );
   });
 });
